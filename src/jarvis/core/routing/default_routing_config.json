@@ -1,0 +1,66 @@
+{
+  "version": "1.0.0",
+  "domain_rules": {
+    "monitor": ["monitor", "alert", "watch", "track", "remind", "cron", "schedule"],
+    "recall": ["recall", "memory", "remember", "history", "previous", "last time"],
+    "act": ["run", "execute", "modify", "edit", "fix", "patch", "apply", "deploy"],
+    "create": ["create", "generate", "draft", "write", "build"],
+    "inform": ["search", "find", "lookup", "read", "docs", "news", "summarize"],
+    "think": ["analyze", "reason", "plan", "compare", "diagnose"]
+  },
+  "intent_rules": {
+    "retrieval.read": ["read", "docs", "search", "lookup", "find"],
+    "code.fix": ["fix", "bug", "patch", "replace", "edit"],
+    "code.test": ["test", "pytest", "assertion", "failure"],
+    "ops.command": ["command", "run", "execute", "shell"],
+    "analysis.plan": ["plan", "analyze", "reason", "investigate"],
+    "memory.recall": ["recall", "remember", "memory", "history"]
+  },
+  "policy_rules": {
+    "domain": {
+      "inform": ["multi-search-engine"],
+      "act": ["safe-action-guard"],
+      "think": ["structured-reasoning"]
+    },
+    "intent_contains": {
+      "retrieval": ["citation-style-search"],
+      "code": ["plan-before-act"]
+    }
+  },
+  "default_skills": {
+    "inform": ["skill.command_verify"],
+    "act": ["skill.repo_fix"],
+    "think": ["skill.repo_fix"]
+  },
+  "source_preferences": {
+    "inform": "repo_reader",
+    "act": "file_editor",
+    "think": "test_runner"
+  },
+  "approval_risk_config": {
+    "default_tier": "low",
+    "tiers": ["low", "medium", "high", "critical"],
+    "action_category_map": {
+      "command_runner.run": "system_command",
+      "file_editor.replace_text": "file_write",
+      "file_editor.insert_text": "file_write",
+      "repo_reader.search_files": "repo_read",
+      "repo_reader.search_symbol": "repo_read",
+      "test_runner.run_test": "test_execution",
+      "failure_analyzer.analyze": "analysis"
+    },
+    "matrix": {
+      "repo_read": { "tier": "low", "approval": "allow" },
+      "analysis": { "tier": "low", "approval": "allow" },
+      "test_execution": { "tier": "medium", "approval": "allow" },
+      "file_write": { "tier": "medium", "approval": "allow" },
+      "system_command": { "tier": "high", "approval": "require_confirmation" }
+    }
+  },
+  "fallbacks": {
+    "domain": "think",
+    "intent": "analysis.plan",
+    "policy": "safe-default-policy",
+    "low_confidence_threshold": 0.5
+  }
+}

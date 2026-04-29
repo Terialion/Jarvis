@@ -1,0 +1,22 @@
+{
+  "version": "1.0.0",
+  "default_tier": "low",
+  "tiers": ["low", "medium", "high", "critical"],
+  "action_category_map": {
+    "command_runner.run": "system_command",
+    "file_editor.replace_text": "file_write",
+    "file_editor.insert_text": "file_write",
+    "repo_reader.search_files": "repo_read",
+    "repo_reader.search_symbol": "repo_read",
+    "test_runner.run_test": "test_execution",
+    "failure_analyzer.analyze": "analysis"
+  },
+  "matrix": {
+    "repo_read": { "tier": "low", "approval": "allow" },
+    "analysis": { "tier": "low", "approval": "allow" },
+    "test_execution": { "tier": "low", "approval": "allow" },
+    "file_write": { "tier": "medium", "approval": "allow" },
+    "system_command": { "tier": "high", "approval": "require_confirmation" }
+  }
+}
+
