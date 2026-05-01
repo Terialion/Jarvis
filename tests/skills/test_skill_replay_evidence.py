@@ -1,4 +1,4 @@
-from src.jarvis.api.server import JarvisApiState, route_request
+from jarvis.api.server import JarvisApiState, route_request
 
 
 def test_skill_selection_writes_replay_and_evidence():

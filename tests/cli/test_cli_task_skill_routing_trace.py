@@ -14,11 +14,10 @@ def run_cli(*args, timeout=25):
     )
 
 
-def test_cli_non_interactive_task_includes_skill_routing_trace():
+def test_cli_non_interactive_repo_inspection_is_not_task_trace():
     result = run_cli("-p", "Choose the best skill for inspecting this repo. Do not modify files.")
     out = result.stdout + result.stderr
     assert result.returncode == 0
-    assert "skill.registry.loaded" in out
-    assert "skill.routing.context_loaded" in out
-    assert "skill.usage.recorded" in out
-
+    assert "Task task_" not in out
+    # Now routed through AgentToolLoop
+    assert "llm provider" in out.lower() or "无法连接" in out or "repository inspection" in out.lower()

@@ -118,3 +118,8 @@ ffmpeg-8.1-full_build/
 temp/
 tmp/
 *.tmp
+
+hermes-agent/
+openclaw/
+codex/
+claude-code/

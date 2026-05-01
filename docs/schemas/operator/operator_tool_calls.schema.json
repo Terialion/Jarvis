@@ -1,0 +1,22 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Operator Tool Calls",
+  "type": "object",
+  "properties": {
+    "tool_name": {
+      "type": "string"
+    },
+    "call_count": {
+      "type": "integer"
+    },
+    "avg_duration_ms": {
+      "type": "number"
+    }
+  },
+  "required": [
+    "tool_name",
+    "call_count",
+    "avg_duration_ms"
+  ],
+  "x-schema-version": "1.0.0"
+}

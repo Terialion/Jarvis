@@ -1,9 +1,6 @@
 import sys
 from pathlib import Path
 
-
+# NOTE: tests/conftest.py handles path setup. This conftest is kept for
+# backward compatibility but delegates to the root conftest.
 _repo_root = Path(__file__).resolve().parents[2]
-if str(_repo_root) in sys.path:
-    sys.path.remove(str(_repo_root))
-sys.path.insert(0, str(_repo_root))
-

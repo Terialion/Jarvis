@@ -1,5 +1,4 @@
 ﻿import os, sys
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "src"))
 from jarvis.core.skill_harness.trust import evaluate_skill_trust
 from jarvis.core.skill_harness.audit import build_skill_audit_record
 

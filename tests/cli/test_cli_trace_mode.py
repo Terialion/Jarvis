@@ -20,6 +20,7 @@ def test_trace_off_by_default():
     output = result.stdout + result.stderr
     assert result.returncode == 0
     assert "skill.registry.loaded" not in output
+    assert "Task task_" not in output
 
 
 def test_trace_on_shows_internal_events():
@@ -27,7 +28,9 @@ def test_trace_on_shows_internal_events():
     output = result.stdout + result.stderr
     assert result.returncode == 0
     assert "Trace mode: on" in output or "trace on" in output.lower()
-    assert "skill.registry.loaded" in output or "skill.policy.checked" in output
+    assert "Task task_" not in output
+    # Now routed through AgentToolLoop
+    assert "llm provider" in output.lower() or "无法连接" in output or "repository inspection" in output.lower()
 
 
 def test_trace_off_hides_internal_events_again():
@@ -35,5 +38,5 @@ def test_trace_off_hides_internal_events_again():
     output = result.stdout + result.stderr
     assert result.returncode == 0
     assert "Trace mode: off" in output or "trace off" in output.lower()
-    tail = output.rsplit("Inspect this repo. Do not modify files.", 1)[-1]
+    tail = output.rsplit("Do not modify files.", 1)[-1]
     assert "skill.registry.loaded" not in tail

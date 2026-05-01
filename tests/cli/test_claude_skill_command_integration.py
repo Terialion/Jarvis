@@ -45,9 +45,10 @@ def test_permissions_mentions_trust_quarantine():
     assert "trust/quarantine" in out.lower()
 
 
-def test_natural_language_has_skill_registry_event():
+def test_natural_language_repo_inspection_not_task():
     result = run_cli("-p", "Inspect this repo. Do not modify files.")
     out = result.stdout + result.stderr
     assert result.returncode == 0
-    assert "skill.registry.loaded" in out or "skill.selection.empty" in out or "skill.selected" in out
-
+    assert "Task task_" not in out
+    # Now routed through AgentToolLoop (returns LLM fallback or work acknowledgement)
+    assert "llm provider" in out.lower() or "无法连接" in out or "repository inspection" in out.lower()

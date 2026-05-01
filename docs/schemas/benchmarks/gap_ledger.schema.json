@@ -1,0 +1,50 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Jarvis Gap Ledger",
+  "type": "object",
+  "required": ["version", "entries"],
+  "properties": {
+    "version": { "type": "string" },
+    "entries": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "capability_id",
+          "capability_group",
+          "reference_system",
+          "reference_capability",
+          "jarvis_current_status",
+          "gap_level",
+          "target_acceptance",
+          "implementation_status",
+          "tests",
+          "owner_module",
+          "stop_condition",
+          "evidence",
+          "reuse_classification",
+          "reuse_reason",
+          "replacement_path"
+        ],
+        "properties": {
+          "capability_id": { "type": "string" },
+          "capability_group": { "type": "string" },
+          "reference_system": { "type": "string" },
+          "reference_capability": { "type": "string" },
+          "jarvis_current_status": { "type": "string" },
+          "gap_level": { "type": "string", "enum": ["none", "minor", "medium", "major", "critical"] },
+          "target_acceptance": { "type": "array", "items": { "type": "string" } },
+          "implementation_status": { "type": "string" },
+          "tests": { "type": "array", "items": { "type": "string" } },
+          "owner_module": { "type": "string" },
+          "stop_condition": { "type": "string" },
+          "evidence": { "type": "array", "items": { "type": "string" } },
+          "reuse_classification": { "type": "string" },
+          "reuse_reason": { "type": "string" },
+          "replacement_path": { "type": "string" },
+          "next_sprint_plan": { "type": ["string", "null"] }
+        }
+      }
+    }
+  }
+}

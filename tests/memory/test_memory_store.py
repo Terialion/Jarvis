@@ -1,5 +1,4 @@
 ﻿import os, sys
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "src"))
 from jarvis.core.memory.store import PersistentMemoryStore
 
 def test_memory_write_and_secret_redaction(tmp_path):

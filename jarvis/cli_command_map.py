@@ -34,8 +34,10 @@ def _slash_specs() -> List[CliCommandSpec]:
         CliCommandSpec("/settings", [], "config", "/settings", "Show masked config", "implemented", "safe", "shell_config", ["/settings"]),
         CliCommandSpec("/tools", [], "skills", "/tools", "List tools and capabilities", "implemented", "safe", "shell_tools", ["/tools"]),
         CliCommandSpec("/skills", [], "skills", "/skills", "List discovered skills", "implemented", "safe", "shell_skills", ["/skills"]),
+        CliCommandSpec("/skill", [], "skills", "/skills", "Run or inspect a specific skill command", "implemented", "safe", "shell_skill", ["/skill", "/skill list", "/skill <skill-name> <task>"]),
         CliCommandSpec("/commands", [], "misc", "/commands", "Show command map", "implemented", "safe", "shell_commands", ["/commands", "/commands skills"]),
         CliCommandSpec("/permissions", [], "permissions", "/permissions", "Show current permission policy", "implemented", "safe", "shell_permissions", ["/permissions"]),
+        CliCommandSpec("/sandbox-add-read-dir", [], "permissions", "/permissions", "Register an additional read-only sandbox directory", "skeleton", "ask", None, ["/sandbox-add-read-dir D:/tmp"]),
         CliCommandSpec("/allowed-tools", [], "permissions", "/permissions", "Show allowed tools and skills", "implemented", "safe", "shell_allowed_tools", ["/allowed-tools"]),
         CliCommandSpec("/approvals", [], "approval", "/permissions", "List pending approvals", "implemented", "safe", "shell_approvals", ["/approvals"]),
         CliCommandSpec("/approve", [], "approval", "/permissions", "Approve pending action", "implemented", "approval_required", "shell_approve", ["/approve approval_0001"]),
@@ -158,8 +160,21 @@ def resolve_command(name: str) -> Optional[CliCommandSpec]:
 
 
 def suggest_commands(name: str, limit: int = 3) -> List[str]:
-    names = sorted({spec.name for spec in _COMMAND_SPECS})
-    return get_close_matches(name.strip().lower(), [n.lower() for n in names], n=limit)
+    needle = name.strip().lower()
+    slash_only = needle.startswith("/")
+    names = sorted({spec.name for spec in _COMMAND_SPECS if not slash_only or spec.name.startswith("/")})
+    matches = get_close_matches(needle, [n.lower() for n in names], n=max(limit * 3, limit))
+    deduped: List[str] = []
+    seen: set[str] = set()
+    for item in matches:
+        display = item if item.startswith("/") or not slash_only else f"/{item}"
+        if display in seen:
+            continue
+        seen.add(display)
+        deduped.append(display)
+        if len(deduped) >= limit:
+            break
+    return deduped
 
 
 def command_specs_json(category: Optional[str] = None) -> List[Dict[str, object]]:

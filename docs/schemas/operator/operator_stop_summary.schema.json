@@ -1,0 +1,22 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Operator Stop Summary",
+  "type": "object",
+  "properties": {
+    "run_id": {
+      "type": "string"
+    },
+    "stop_reason": {
+      "type": "string"
+    },
+    "final_summary": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "run_id",
+    "stop_reason",
+    "final_summary"
+  ],
+  "x-schema-version": "1.0.0"
+}

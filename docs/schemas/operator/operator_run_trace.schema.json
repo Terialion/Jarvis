@@ -1,0 +1,22 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Operator Run Trace",
+  "type": "object",
+  "properties": {
+    "run_id": {
+      "type": "string"
+    },
+    "events": {
+      "type": "array"
+    },
+    "total_duration_ms": {
+      "type": "number"
+    }
+  },
+  "required": [
+    "run_id",
+    "events",
+    "total_duration_ms"
+  ],
+  "x-schema-version": "1.0.0"
+}

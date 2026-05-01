@@ -1,5 +1,4 @@
 ﻿import os, sys
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "src"))
 from jarvis.core.skill_harness.registry import SkillRegistry
 from jarvis.core.skill_harness.matcher import SkillMatcher
 

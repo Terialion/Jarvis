@@ -50,6 +50,14 @@ _CODING_FIXTURE_DIR = _ROOT / "examples" / "coding_fixture"
 _CODING_FIXTURE_FILE = _CODING_FIXTURE_DIR / "calculator.py"
 _CODING_FIXTURE_TEST = _CODING_FIXTURE_DIR / "test_calculator.py"
 _CLI_SURFACE_DOC = _ROOT / "docs" / "product" / "cli_surface.md"
+_LIBRARY_PROJECT_FILES = [
+    "library_system/__init__.py",
+    "library_system/storage.py",
+    "library_system/library.py",
+    "library_system/cli.py",
+    "library_system/tests/test_library.py",
+    "library_system/README.md",
+]
 _DIAG_STATE: Dict[str, Any] = {
     "schema_version": "jarvis.cli.stderr_diagnostics.v1",
     "generated_at": "",
@@ -57,6 +65,7 @@ _DIAG_STATE: Dict[str, Any] = {
 }
 
 _CLI_STATE_SCHEMA_VERSION = "jarvis.cli.coding_state.v2"
+_INTENT_TRACE_PATH = _ROOT / "temp" / "intent_routes" / "routes.jsonl"
 
 
 class InputKind(Enum):
@@ -235,6 +244,38 @@ def _read_stdin_text() -> str:
     except Exception:
         return ""
     return ""
+
+
+def _load_local_env_file(env_path: Path) -> None:
+    """Load .env key/value pairs into process env when keys are not preset.
+
+    Minimal parser by design:
+    - ignores comments/empty lines
+    - accepts KEY=VALUE
+    - trims optional surrounding single/double quotes
+    - does not override existing environment variables
+    """
+    if not env_path.exists():
+        return
+    try:
+        for raw_line in env_path.read_text(encoding="utf-8", errors="replace").splitlines():
+            line = raw_line.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            key, value = line.split("=", 1)
+            key = key.strip()
+            value = value.strip()
+            if not key:
+                continue
+            if value and len(value) >= 2 and (
+                (value.startswith('"') and value.endswith('"'))
+                or (value.startswith("'") and value.endswith("'"))
+            ):
+                value = value[1:-1]
+            if key not in os.environ or not str(os.environ.get(key, "")).strip():
+                os.environ[key] = value
+    except Exception:
+        return
 
 
 def _load_cli_coding_state() -> Dict[str, Any]:
@@ -486,6 +527,11 @@ def _is_cli_surface_doc_request(text: str) -> bool:
     return "docs/product/cli_surface.md" in lowered or "cli coding state maintenance" in lowered
 
 
+def _is_library_project_request(text: str) -> bool:
+    lowered = (text or "").lower()
+    return "图书馆管理系统" in text or "library management system" in lowered or "library_system" in lowered
+
+
 def _get_adapter(api_base: Optional[str] = None):
     from src.jarvis.ui.app.mock_adapter import AppDataAdapter
 
@@ -515,14 +561,59 @@ def _safe_skill_registry(refresh: bool = False):
         return None
 
 
-def _render_shell_header(cwd: str, mode: str, model: str = "unknown", provider_status: str = "configured") -> str:
+def _build_provider_status_line() -> tuple[str, Any | None]:
+    try:
+        from src.jarvis.core.llm.runtime_provider import build_runtime_llm_provider, load_llm_provider_config
+
+        cfg = load_llm_provider_config()
+        provider = build_runtime_llm_provider(cfg)
+    except Exception:
+        return "LLM provider: unavailable, fallback mode enabled, reason=provider_loader_error", None
+
+    provider_name = cfg.provider or "unknown"
+    key_state = "present" if cfg.api_key else "missing"
+    if provider is not None:
+        line = (
+            f"LLM provider: {provider_name} model={cfg.model or '<missing>'} "
+            f"base_url={cfg.base_url or '<missing>'} status=available api_key={key_state}"
+        )
+        return line, provider
+
+    reasons: List[str] = []
+    if provider_name != "openai_compatible":
+        reasons.append(f"unknown provider={provider_name}")
+    else:
+        missing_fields: List[str] = []
+        if not cfg.base_url:
+            missing_fields.append("base_url")
+        if not cfg.model:
+            missing_fields.append("model")
+        if not cfg.api_key:
+            missing_fields.append("api_key")
+        if missing_fields:
+            reasons.append("missing " + ",".join(missing_fields))
+    if not reasons:
+        reasons.append("provider_unavailable")
+    return (
+        f"LLM provider: unavailable, fallback mode enabled, reason={'; '.join(reasons)} api_key={key_state}",
+        None,
+    )
+
+
+def _render_shell_header(
+    cwd: str,
+    mode: str,
+    model: str = "unknown",
+    provider_status: str = "configured",
+    provider_line: str = "",
+) -> str:
     lines = [
         SHELL_HEADER_TEMPLATE.format(mode=mode, cwd=cwd),
         f"Model: {model} | Provider: {provider_status} | Web: {DEFAULT_WEB_URL}",
-        SHELL_HELP_HINT,
-        "",
-        SHELL_PROMPT,
     ]
+    if provider_line:
+        lines.append(provider_line)
+    lines.extend([SHELL_HELP_HINT, "", SHELL_PROMPT])
     return "\n".join(lines)
 
 
@@ -1290,6 +1381,7 @@ class ShellState:
         self.approval_counter = 0
         self.task_records: Dict[str, Dict[str, Any]] = {}
         self.latest_task_id: str = ""
+        self.provider_status_line, self.llm_provider = _build_provider_status_line()
 
 
 def _next_task_id(state: ShellState) -> str:
@@ -1346,13 +1438,18 @@ def _build_plan(user_input: str) -> List[str]:
 
 
 def classify_user_input(text: str) -> InputKind:
+    from src.jarvis.core.routing.input_gateway import build_input_envelope
+
     raw = str(text or "").strip()
     low = raw.lower()
+    envelope = build_input_envelope(raw, workspace_root=Path.cwd(), session_id="cli_shell")
     if not raw:
         return InputKind.CASUAL_CHAT
-    if raw.startswith("/"):
+    if envelope.slash.is_slash_command:
         return InputKind.SLASH_COMMAND
-    if low in {"hi", "hello", "hey", "good evening", "good morning", "good afternoon"} or raw in {"你好", "您好", "晚上好", "早上好"}:
+    if low in {"hi", "hello", "hey", "good evening", "good morning", "good afternoon"} or any(
+        token in raw for token in {"你好", "您好", "晚上好", "早上好", "你好啊"}
+    ):
         return InputKind.GREETING
     capability_exact = {"what can you do", "who are you", "capabilities", "help", "你能做什么", "你是谁", "你会什么"}
     if low in capability_exact or raw in capability_exact:
@@ -1371,6 +1468,159 @@ def classify_user_input(text: str) -> InputKind:
     if imperative:
         return InputKind.UNKNOWN_TASK
     return InputKind.UNKNOWN_TASK
+
+
+def _detect_intent_route(user_input: str) -> Dict[str, Any]:
+    from src.jarvis.core.routing.cli_adapter import build_cli_route
+
+    kind = classify_user_input(user_input)
+    result = build_cli_route(user_input, mode="safe", input_kind=kind.value)
+    return dict(result.get("route_before_safety") or {})
+
+
+def _apply_route_safety(route: Dict[str, Any], user_input: str, mode: str) -> Dict[str, Any]:
+    from src.jarvis.core.routing.schema import IntentRoute
+    from src.jarvis.core.routing.safety_gate import apply_route_safety
+
+    routed = apply_route_safety(IntentRoute(**route), user_input, mode=mode)
+    return routed.to_dict()
+
+
+def _append_intent_route_trace(
+    *,
+    state: ShellState,
+    user_input: str,
+    route_before_safety: Dict[str, Any],
+    route_after_safety: Dict[str, Any],
+    final_response_mode: str,
+    entered_task_flow: bool,
+    notes: str = "",
+) -> None:
+    from src.jarvis.core.routing.cli_adapter import write_cli_trace
+
+    try:
+        write_cli_trace(
+            trace_path=_INTENT_TRACE_PATH,
+            timestamp=_iso_now(),
+            user_input=user_input,
+            route_before_safety=route_before_safety,
+            route_after_safety=route_after_safety,
+            final_response_mode=final_response_mode,
+            entered_task_flow=entered_task_flow,
+            notes=notes,
+        )
+    except Exception:
+        pass
+
+
+def _run_existing_task_flow(state: ShellState, user_input: str) -> str:
+    state.message_count += 1
+    task_id = _next_task_id(state)
+    events = ["task.created", "input.received", f"policy.checked: {state.mode}"]
+    if re.search(r"\b(pytest|test|tests)\b", user_input.lower()) or ("测试" in user_input):
+        approval_id = _next_approval_id(state)
+        command = "python -m pytest examples/coding_fixture -q"
+        state.approvals[approval_id] = {
+            "action": f"shell: {command}",
+            "reason": "Running tests executes local commands.",
+            "kind": "run_test",
+            "command": command,
+            "task_id": task_id,
+        }
+        _record_shell_task(
+            state,
+            task_id,
+            user_input=user_input,
+            plan=["Scope test command", "Request approval", "Run only after approval"],
+            events=[
+                {"type": "task.created", "detail": {"task_id": task_id}, "ts": _iso_now()},
+                {"type": "test.proposed", "detail": {"command": command}, "ts": _iso_now()},
+                {"type": "approval.requested", "detail": {"approval_id": approval_id}, "ts": _iso_now()},
+            ],
+            evidence=[{"kind": "test_command", "detail": command}],
+        )
+        return _render_approval(approval_id, f"shell: {command}", "Running tests executes local commands.")
+    selected_skill = None
+    selected_reason = ""
+    registry = _safe_skill_registry()
+    if registry is not None:
+        try:
+            from src.jarvis.core.skill_harness.executor import execute_skill
+            from src.jarvis.core.skill_harness.selector import select_skills_for_task
+            from src.jarvis.core.skill_harness.telemetry import SkillTelemetryStore, SkillUsageRecord
+
+            events.append("skill.registry.loaded")
+            selection = select_skills_for_task(
+                user_input,
+                registry,
+                policy={
+                    "mode": state.mode,
+                    "network_mode": "disabled",
+                    "network_enabled": False,
+                    "safe_mode": state.mode == "safe",
+                },
+            )
+            instruction_sources = list(dict(selection.policy).get("instruction_context", {}).get("sources", []))
+            events.append("skill.routing.context_loaded")
+            if instruction_sources:
+                events.append(f"skill.routing.instructions:{len(instruction_sources)}")
+            usage_outcome = "selection_empty"
+            usage_reason = selection.reason
+            if selection.selected:
+                selected = selection.selected[0]
+                selected_skill = selected.id
+                selected_reason = selection.reason
+                events.append(f"skill.selected: {selected.id}")
+                events.append("skill.policy.checked")
+                dry = execute_skill(
+                    selected.id,
+                    user_input,
+                    dry_run=True,
+                    policy={
+                        "mode": state.mode,
+                        "network_mode": "disabled",
+                        "network_enabled": False,
+                        "shell_enabled": False,
+                        "file_write_enabled": False,
+                    },
+                    registry=registry,
+                )
+                events.append(f"skill.execution.{dry.get('status', 'dry_run')}")
+                usage_outcome = str(dry.get("status") or "dry_run")
+                usage_reason = str(dry.get("reason") or selection.reason)
+            else:
+                events.append("skill.selection.empty")
+            SkillTelemetryStore().append(
+                SkillUsageRecord(
+                    skill_id=selected_skill or "none",
+                    input_preview=user_input[:160],
+                    selected=bool(selected_skill),
+                    executed=False,
+                    mode=state.mode,
+                    outcome=usage_outcome,
+                    reason=usage_reason,
+                    policy=dict(selection.policy),
+                    instruction_sources=instruction_sources,
+                )
+            )
+            events.append("skill.usage.recorded")
+        except Exception:
+            events.append("skill.registry.error")
+    plan = _build_coding_fixture_plan() if _is_coding_fixture_request(user_input) else _build_plan(user_input)
+    result = "Completed in safe mode. No files were modified."
+    if selected_skill:
+        result = f"Completed in safe mode with skill dry-run: {selected_skill}. {selected_reason}".strip()
+    events.append("task.completed")
+    events_map = [{"type": ev.split(":")[0], "detail": {"raw": ev}, "ts": _iso_now()} for ev in events]
+    _record_shell_task(
+        state,
+        task_id,
+        user_input=user_input,
+        plan=plan,
+        events=events_map,
+        evidence=[{"kind": "result_summary", "detail": result}],
+    )
+    return _render_task_output(task_id, state.mode, user_input, plan, events, result, include_events=state.trace_enabled)
 
 
 def render_conversational_response(kind: InputKind, text: str = "") -> str:
@@ -1987,6 +2237,171 @@ def _shell_skills(args: Optional[List[str]] = None) -> str:
     return table
 
 
+def _skill_usage() -> str:
+    return "\n".join(
+        [
+            "Usage: /skill <name> [task]",
+            "",
+            "Examples:",
+            "  /skill list",
+            "  /skill show code-generator",
+            "  /skill jarvis-code-agent fix greeting bug",
+            "",
+            "Skill commands keep raw args intact. Write, shell, and network actions stay approval-gated.",
+        ]
+    )
+
+
+def _skill_items() -> List[Dict[str, Any]]:
+    registry = _safe_skill_registry()
+    if registry is None:
+        return []
+    try:
+        return list((registry.snapshot().get("data") or {}).get("items") or [])
+    except Exception:
+        return []
+
+
+def _find_skill_item(name: str) -> Optional[Dict[str, Any]]:
+    needle = str(name or "").strip().lower()
+    if not needle:
+        return None
+    for item in _skill_items():
+        aliases = {
+            str(item.get("id") or "").strip().lower(),
+            str(item.get("name") or "").strip().lower(),
+            str(item.get("skill_id") or "").strip().lower(),
+            str(item.get("skill_name") or "").strip().lower(),
+        }
+        metadata = dict(item.get("metadata") or {})
+        aliases.add(str(metadata.get("command_name") or "").strip().lower())
+        if needle in aliases:
+            return dict(item)
+    return None
+
+
+def _skill_body_has_policy_violation(item: Dict[str, Any]) -> bool:
+    candidates = [
+        item.get("skill_md_path"),
+        (dict(item.get("metadata") or {})).get("body_path"),
+    ]
+    for candidate in candidates:
+        if not candidate:
+            continue
+        try:
+            text = Path(str(candidate)).read_text(encoding="utf-8", errors="replace").lower()
+        except Exception:
+            continue
+        if any(token in text for token in (".env", ".npmrc", ".ssh", "id_rsa", "id_ed25519", "private key", "token")):
+            return True
+        if ("curl " in text or "wget " in text) and ("| sh" in text or "| bash" in text):
+            return True
+        if "invoke-webrequest" in text and ("| iex" in text or "invoke-expression" in text):
+            return True
+    return False
+
+
+def _skill_request_is_sensitive(raw_args: str) -> bool:
+    low = str(raw_args or "").lower()
+    if any(token in low for token in (".env", ".npmrc", ".ssh", "id_rsa", "id_ed25519", "private key", "token", "secret")):
+        return True
+    if ("curl " in low or "wget " in low) and ("| sh" in low or "| bash" in low):
+        return True
+    if "invoke-webrequest" in low and ("| iex" in low or "invoke-expression" in low):
+        return True
+    return False
+
+
+def _skill_route_label(skill_name: str, raw_args: str, response_mode: str) -> str:
+    low = f"{skill_name} {raw_args}".lower()
+    if any(token in low for token in ("code", "coding", "fix", "bug", "write", "create", "新建", "修复", "写")):
+        return "coding_loop"
+    if response_mode == "skill_tool_dispatch":
+        return "tool"
+    return "skill_agent"
+
+
+def _render_skill_invocation(skill_route: Any, *, item: Optional[Dict[str, Any]] = None, trigger: str = "/skill") -> str:
+    from src.jarvis.core.cli_response.natural_responses import render_refusal_safety
+
+    raw_args = str(getattr(skill_route, "raw_args", "") or "")
+    skill_name = str(getattr(skill_route, "candidate_skill", "") or "")
+    if _skill_request_is_sensitive(raw_args):
+        return render_refusal_safety()
+    if item and _skill_body_has_policy_violation(item):
+        return "\n".join(
+            [
+                f"Skill refused: {skill_name}",
+                "Reason: skill instructions request sensitive files or dangerous shell/network execution.",
+                "No shell command was run and no sensitive file was read.",
+            ]
+        )
+    allowed_tools = [str(t) for t in list((item or {}).get("allowed_tools") or [])]
+    tool_risk = any(t.lower() in {"write", "bash", "shell", "edit"} for t in allowed_tools)
+    network_risk = str(skill_name).lower().startswith("web-") or any(t.lower() in {"web", "webfetch", "websearch"} for t in allowed_tools)
+    requires_approval = bool(getattr(skill_route, "requires_approval", False) or tool_risk or network_risk)
+    dispatch = "tool" if getattr(skill_route, "response_mode", "") == "skill_tool_dispatch" else "skill_agent"
+    route_label = _skill_route_label(skill_name, raw_args, str(getattr(skill_route, "response_mode", "")))
+    lines = [
+        f"Skill command recognized: {trigger}",
+        f"Dispatch: {dispatch}",
+        f"Route: {route_label}",
+        f"Skill: {skill_name}",
+        f"Args: {raw_args or '(none)'}",
+        f"Requires approval: {'true' if requires_approval else 'false'}",
+    ]
+    tools = list(getattr(skill_route, "requires_tools", None) or [])
+    if tools:
+        lines.append("Tools: " + ", ".join(str(t) for t in tools))
+    if allowed_tools:
+        lines.append("Allowed tools: " + ", ".join(allowed_tools))
+    if requires_approval:
+        lines.append("Safety: approval required before write, shell, or network execution.")
+    else:
+        lines.append("Safety: no privileged action executed by this routing step.")
+    return "\n".join(lines)
+
+
+def _render_skill_show(name: str) -> str:
+    item = _find_skill_item(name)
+    if item is None:
+        return f"skill-not-found: {name}\nUse /skills to list available skills."
+    return "\n".join(
+        [
+            f"Skill: {item.get('skill_id') or item.get('id') or name}",
+            f"Status: {item.get('status', '-')}",
+            f"Trust: {item.get('trust', '-')}",
+            f"Source: {item.get('source', '-')}",
+            f"Description: {item.get('description', '-')}",
+            "Allowed tools: " + (", ".join([str(t) for t in list(item.get("allowed_tools") or [])]) or "none"),
+        ]
+    )
+
+
+def _shell_skill(args: List[str], envelope: Any) -> str:
+    from src.jarvis.core.routing.skill_command_router import route_skill_command
+
+    if not args or args[0].lower() in {"help", "--help", "-h"}:
+        return _skill_usage()
+    action = args[0].lower()
+    if action == "list":
+        return _shell_skills([])
+    if action == "show":
+        if len(args) < 2:
+            return "Usage: /skill show <name>"
+        return _render_skill_show(args[1])
+
+    item = _find_skill_item(args[0])
+    if item is None:
+        return f"skill-not-found: {args[0]}\nUse /skills to list available skills."
+    if str(item.get("status") or "").lower() not in {"enabled", "available"}:
+        return f"skill-unavailable: {args[0]}\nStatus: {item.get('status', '-')}"
+    skill_route = route_skill_command(envelope)
+    if not skill_route.handled:
+        return f"skill-not-found: {args[0]}\nUse /skills to list available skills."
+    return _render_skill_invocation(skill_route, item=item, trigger=f"/skill {args[0]}")
+
+
 def _shell_commands(args: List[str]) -> str:
     category = args[0] if args else None
     return render_command_table(list_command_specs(category=category))
@@ -2068,11 +2483,53 @@ def _shell_approve(state: ShellState, args: List[str]) -> str:
     if not args:
         return "Usage: /approve <id>"
     approval_id = args[0]
+    if approval_id.lower() == "last":
+        approval_id = next(reversed(state.approvals), "") if state.approvals else ""
     if approval_id not in state.approvals:
-        return f"Approval not found: {approval_id}"
+        return f"Approval not found: {args[0]}"
     info = dict(state.approvals.pop(approval_id, {}))
     task_id = str(info.get("task_id") or "")
     kind = str(info.get("kind") or "")
+    if kind == "library_project":
+        _append_shell_event(state, task_id, "approval.resolved", {"approval_id": approval_id, "decision": "approved"})
+        apply_result = _apply_library_project(state, task_id)
+        if task_id in state.task_records:
+            rec = state.task_records[task_id]
+            rec["changed_files"] = list(apply_result.get("changed_files") or [])
+            rec["tests"] = {
+                "status": apply_result.get("test_status", "not_run"),
+                "command": apply_result.get("command", ""),
+                "exit_code": apply_result.get("exit_code"),
+                "summary": apply_result.get("summary", ""),
+            }
+            rec["diff_summary"] = "created library_system project files"
+            rec.setdefault("evidence", []).append({"kind": "scoped_test", "detail": rec["tests"]})
+            if apply_result.get("rethink_records"):
+                rec.setdefault("evidence", []).append({"kind": "rethink_records", "detail": apply_result["rethink_records"]})
+            _append_shell_event(state, task_id, "task.completed", {"status": apply_result.get("status")})
+        lines = [
+            f"Approved: {approval_id}",
+            "Library project created.",
+            "",
+            "Changed files",
+        ]
+        lines.extend([f"  - {item}" for item in list(apply_result.get("changed_files") or [])] or ["  - none"])
+        lines.extend(
+            [
+                "",
+                "Scoped test command",
+                f"  {apply_result.get('command')}",
+                "",
+                "Test status",
+                f"  {apply_result.get('test_status')}",
+            ]
+        )
+        if apply_result.get("rethink_records"):
+            lines.extend(["", "Rethink/Replan"])
+            lines.extend([f"  - {item.get('trigger')}: {item.get('action')}" for item in apply_result["rethink_records"]])
+        if apply_result.get("summary"):
+            lines.extend(["", "Test output", str(apply_result.get("summary"))[:1200]])
+        return "\n".join(lines)
     if kind in {"edit_file", "edit_docs"}:
         apply_result = _apply_coding_fixture_patch() if kind == "edit_file" else _apply_cli_surface_doc_patch()
         changed_path = str(info.get("path", "examples/coding_fixture/calculator.py"))
@@ -2122,8 +2579,10 @@ def _shell_reject(state: ShellState, args: List[str]) -> str:
     if not args:
         return "Usage: /reject <id>"
     approval_id = args[0]
+    if approval_id.lower() == "last":
+        approval_id = next(reversed(state.approvals), "") if state.approvals else ""
     if approval_id not in state.approvals:
-        return f"Approval not found: {approval_id}"
+        return f"Approval not found: {args[0]}"
     info = dict(state.approvals.pop(approval_id, {}))
     task_id = str(info.get("task_id") or "")
     if task_id in state.task_records:
@@ -2181,124 +2640,462 @@ def _clear_state(state: ShellState) -> str:
     return "Context cleared."
 
 
-def _handle_natural_language(state: ShellState, user_input: str) -> str:
-    kind = classify_user_input(user_input)
-    if kind in {InputKind.GREETING, InputKind.CAPABILITY_QUESTION, InputKind.CASUAL_CHAT}:
-        return render_conversational_response(kind, user_input)
+def _run_repo_inspection(user_input: str) -> Dict[str, Any]:
+    from src.jarvis.core.repo_inspection import RepoInspectionRequest, inspect_repo
 
-    state.message_count += 1
-    task_id = _next_task_id(state)
-    events = ["task.created", "input.received", f"policy.checked: {state.mode}"]
-    if re.search(r"\b(pytest|test|tests)\b", user_input.lower()):
-        approval_id = _next_approval_id(state)
-        command = "python -m pytest examples/coding_fixture -q"
-        state.approvals[approval_id] = {
-            "action": f"shell: {command}",
-            "reason": "Running tests executes local commands.",
-            "kind": "run_test",
-            "command": command,
-            "task_id": task_id,
-        }
-        _record_shell_task(
-            state,
-            task_id,
+    result = inspect_repo(
+        RepoInspectionRequest(
+            workspace_root=Path.cwd(),
             user_input=user_input,
-            plan=["Scope test command", "Request approval", "Run only after approval"],
-            events=[
-                {"type": "task.created", "detail": {"task_id": task_id}, "ts": _iso_now()},
-                {"type": "test.proposed", "detail": {"command": command}, "ts": _iso_now()},
-                {"type": "approval.requested", "detail": {"approval_id": approval_id}, "ts": _iso_now()},
-            ],
-            evidence=[{"kind": "test_command", "detail": command}],
-        )
-        return _render_approval(approval_id, f"shell: {command}", "Running tests executes local commands.")
-    selected_skill = None
-    selected_reason = ""
-    registry = _safe_skill_registry()
-    if registry is not None:
-        try:
-            from src.jarvis.core.skill_harness.executor import execute_skill
-            from src.jarvis.core.skill_harness.selector import select_skills_for_task
-            from src.jarvis.core.skill_harness.telemetry import SkillTelemetryStore, SkillUsageRecord
+        ),
+        session_id="cli_shell",
+    )
+    return result.to_dict()
 
-            events.append("skill.registry.loaded")
-            selection = select_skills_for_task(
-                user_input,
-                registry,
-                policy={
-                    "mode": state.mode,
-                    "network_mode": "disabled",
-                    "network_enabled": False,
-                    "safe_mode": state.mode == "safe",
-                },
-            )
-            instruction_sources = list(dict(selection.policy).get("instruction_context", {}).get("sources", []))
-            events.append("skill.routing.context_loaded")
-            if instruction_sources:
-                events.append(f"skill.routing.instructions:{len(instruction_sources)}")
-            usage_outcome = "selection_empty"
-            usage_reason = selection.reason
-            if selection.selected:
-                selected = selection.selected[0]
-                selected_skill = selected.id
-                selected_reason = selection.reason
-                events.append(f"skill.selected: {selected.id}")
-                events.append("skill.policy.checked")
-                dry = execute_skill(
-                    selected.id,
-                    user_input,
-                    dry_run=True,
-                    policy={
-                        "mode": state.mode,
-                        "network_mode": "disabled",
-                        "network_enabled": False,
-                        "shell_enabled": False,
-                        "file_write_enabled": False,
-                    },
-                    registry=registry,
-                )
-                events.append(f"skill.execution.{dry.get('status', 'dry_run')}")
-                usage_outcome = str(dry.get("status") or "dry_run")
-                usage_reason = str(dry.get("reason") or selection.reason)
-            else:
-                events.append("skill.selection.empty")
-            SkillTelemetryStore().append(
-                SkillUsageRecord(
-                    skill_id=selected_skill or "none",
-                    input_preview=user_input[:160],
-                    selected=bool(selected_skill),
-                    executed=False,
-                    mode=state.mode,
-                    outcome=usage_outcome,
-                    reason=usage_reason,
-                    policy=dict(selection.policy),
-                    instruction_sources=instruction_sources,
-                )
-            )
-            events.append("skill.usage.recorded")
-        except Exception:
-            events.append("skill.registry.error")
-    plan = _build_coding_fixture_plan() if _is_coding_fixture_request(user_input) else _build_plan(user_input)
-    result = "Completed in safe mode. No files were modified."
-    if selected_skill:
-        result = f"Completed in safe mode with skill dry-run: {selected_skill}. {selected_reason}".strip()
-    events.append("task.completed")
-    events_map = [{"type": ev.split(":")[0], "detail": {"raw": ev}, "ts": _iso_now()} for ev in events]
+
+def _run_coding_loop(user_input: str) -> Dict[str, Any]:
+    from src.jarvis.core.coding_loop.orchestrator import run_coding_loop
+
+    return run_coding_loop(
+        user_input,
+        Path.cwd(),
+        max_rounds=3,
+        auto_approve=False,
+    )
+
+
+def _queue_library_project_approval(state: ShellState, user_input: str) -> str:
+    task_id = _next_task_id(state)
+    approval_id = _next_approval_id(state)
+    plan = [
+        "Create only files under library_system/.",
+        "Implement Book, JSON storage, and Library operations.",
+        "Add a simple CLI menu.",
+        "Add pytest coverage for add, remove, borrow, return, search, list, persistence, and failure cases.",
+        "After approval, run only: python -m pytest library_system/tests -q",
+    ]
+    state.approvals[approval_id] = {
+        "action": "write library_system files and run scoped tests",
+        "reason": "Coding project creation requires approval before file writes or shell tests.",
+        "kind": "library_project",
+        "task_id": task_id,
+        "files": list(_LIBRARY_PROJECT_FILES),
+        "command": "python -m pytest library_system/tests -q",
+    }
     _record_shell_task(
         state,
         task_id,
         user_input=user_input,
         plan=plan,
-        events=events_map,
-        evidence=[{"kind": "result_summary", "detail": result}],
+        events=[
+            {"type": "task.created", "detail": {"task_id": task_id}, "ts": _iso_now()},
+            {"type": "coding_loop.entered", "detail": {"requires_write": True, "requires_shell": True}, "ts": _iso_now()},
+            {"type": "plan.created", "detail": {"files": list(_LIBRARY_PROJECT_FILES)}, "ts": _iso_now()},
+            {"type": "approval.requested", "detail": {"approval_id": approval_id}, "ts": _iso_now()},
+        ],
+        evidence=[{"kind": "planned_files", "detail": list(_LIBRARY_PROJECT_FILES)}],
     )
-    return _render_task_output(task_id, state.mode, user_input, plan, events, result, include_events=state.trace_enabled)
+    lines = [
+        "Coding loop pending approval.",
+        "",
+        "Flags",
+        "  requires_write=true",
+        "  requires_shell=true",
+        "  requires_approval=true",
+        "",
+        "Plan",
+    ]
+    lines.extend([f"  {idx}. {step}" for idx, step in enumerate(plan, 1)])
+    lines.extend(["", "Files"])
+    lines.extend([f"  - {item}" for item in _LIBRARY_PROJECT_FILES])
+    lines.extend(["", _render_approval(approval_id, "write library_system files and run scoped tests", "No files or shell commands run before approval.")])
+    return "\n".join(lines)
 
 
-def _handle_slash_command(state: ShellState, raw: str) -> Optional[str]:
-    parts = raw.strip().split()
-    cmd = parts[0].lower()
-    args = parts[1:]
+def _library_project_file_payloads() -> Dict[str, str]:
+    return {
+        "library_system/__init__.py": '"""Library management system package."""\n\nfrom .library import Book, Library\n\n__all__ = ["Book", "Library"]\n',
+        "library_system/storage.py": '''from __future__ import annotations
+
+import json
+from pathlib import Path
+from typing import Any
+
+
+def read_json(path: str | Path) -> list[dict[str, Any]]:
+    target = Path(path)
+    if not target.exists():
+        return []
+    with target.open("r", encoding="utf-8") as handle:
+        data = json.load(handle)
+    if not isinstance(data, list):
+        raise ValueError("library data must be a list")
+    return [dict(item) for item in data]
+
+
+def write_json(path: str | Path, rows: list[dict[str, Any]]) -> None:
+    target = Path(path)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    with target.open("w", encoding="utf-8") as handle:
+        json.dump(rows, handle, ensure_ascii=False, indent=2)
+        handle.write("\\n")
+''',
+        "library_system/library.py": '''from __future__ import annotations
+
+from dataclasses import asdict, dataclass
+from pathlib import Path
+
+from .storage import read_json, write_json
+
+
+@dataclass
+class Book:
+    id: str
+    title: str
+    author: str
+    year: int
+    available: bool = True
+
+
+class Library:
+    def __init__(self, storage_path: str | Path) -> None:
+        self.storage_path = Path(storage_path)
+        self.books: dict[str, Book] = {}
+        self.load()
+
+    def load(self) -> None:
+        self.books = {}
+        for row in read_json(self.storage_path):
+            book = Book(
+                id=str(row["id"]),
+                title=str(row["title"]),
+                author=str(row["author"]),
+                year=int(row["year"]),
+                available=bool(row.get("available", True)),
+            )
+            self.books[book.id] = book
+
+    def save(self) -> None:
+        rows = [asdict(book) for book in sorted(self.books.values(), key=lambda item: item.id)]
+        write_json(self.storage_path, rows)
+
+    def add_book(self, book: Book) -> None:
+        if book.id in self.books:
+            raise ValueError(f"book already exists: {book.id}")
+        self.books[book.id] = book
+        self.save()
+
+    def remove_book(self, book_id: str) -> bool:
+        if book_id not in self.books:
+            return False
+        del self.books[book_id]
+        self.save()
+        return True
+
+    def borrow_book(self, book_id: str) -> bool:
+        book = self.books.get(book_id)
+        if book is None or not book.available:
+            return False
+        book.available = False
+        self.save()
+        return True
+
+    def return_book(self, book_id: str) -> bool:
+        book = self.books.get(book_id)
+        if book is None or book.available:
+            return False
+        book.available = True
+        self.save()
+        return True
+
+    def search_by_title(self, query: str) -> list[Book]:
+        needle = query.casefold()
+        return [book for book in self.books.values() if needle in book.title.casefold()]
+
+    def list_available_books(self) -> list[Book]:
+        return [book for book in self.books.values() if book.available]
+''',
+        "library_system/cli.py": '''from __future__ import annotations
+
+from pathlib import Path
+
+from .library import Book, Library
+
+
+def prompt_book() -> Book:
+    return Book(
+        id=input("id: ").strip(),
+        title=input("title: ").strip(),
+        author=input("author: ").strip(),
+        year=int(input("year: ").strip()),
+    )
+
+
+def main() -> int:
+    library = Library(Path("library.json"))
+    actions = {
+        "1": ("Add book", lambda: library.add_book(prompt_book())),
+        "2": ("Remove book", lambda: print(library.remove_book(input("id: ").strip()))),
+        "3": ("Borrow book", lambda: print(library.borrow_book(input("id: ").strip()))),
+        "4": ("Return book", lambda: print(library.return_book(input("id: ").strip()))),
+        "5": ("Search by title", lambda: [print(book) for book in library.search_by_title(input("title: ").strip())]),
+        "6": ("List available", lambda: [print(book) for book in library.list_available_books()]),
+        "0": ("Exit", None),
+    }
+    while True:
+        for key, (label, _) in actions.items():
+            print(f"{key}. {label}")
+        choice = input("> ").strip()
+        if choice == "0":
+            return 0
+        action = actions.get(choice)
+        if action is None:
+            print("Unknown option")
+            continue
+        handler = action[1]
+        if handler is not None:
+            handler()
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
+''',
+        "library_system/tests/test_library.py": '''from __future__ import annotations
+
+import pytest
+
+from library_system.library import Book, Library
+
+
+def make_library(tmp_path):
+    return Library(tmp_path / "library.json")
+
+
+def test_add_book(tmp_path):
+    library = make_library(tmp_path)
+    library.add_book(Book("1", "Dune", "Frank Herbert", 1965))
+    assert library.books["1"].title == "Dune"
+
+
+def test_remove_book(tmp_path):
+    library = make_library(tmp_path)
+    library.add_book(Book("1", "Dune", "Frank Herbert", 1965))
+    assert library.remove_book("1") is True
+    assert library.remove_book("missing") is False
+
+
+def test_borrow_book(tmp_path):
+    library = make_library(tmp_path)
+    library.add_book(Book("1", "Dune", "Frank Herbert", 1965))
+    assert library.borrow_book("1") is True
+    assert library.books["1"].available is False
+
+
+def test_return_book(tmp_path):
+    library = make_library(tmp_path)
+    library.add_book(Book("1", "Dune", "Frank Herbert", 1965, available=False))
+    assert library.return_book("1") is True
+    assert library.books["1"].available is True
+
+
+def test_search_by_title(tmp_path):
+    library = make_library(tmp_path)
+    library.add_book(Book("1", "Dune", "Frank Herbert", 1965))
+    library.add_book(Book("2", "The Left Hand of Darkness", "Ursula K. Le Guin", 1969))
+    assert [book.id for book in library.search_by_title("dune")] == ["1"]
+
+
+def test_list_available_books(tmp_path):
+    library = make_library(tmp_path)
+    library.add_book(Book("1", "Dune", "Frank Herbert", 1965, available=True))
+    library.add_book(Book("2", "Neuromancer", "William Gibson", 1984, available=False))
+    assert [book.id for book in library.list_available_books()] == ["1"]
+
+
+def test_persistence_roundtrip(tmp_path):
+    path = tmp_path / "library.json"
+    library = Library(path)
+    library.add_book(Book("1", "Dune", "Frank Herbert", 1965))
+    loaded = Library(path)
+    assert loaded.books["1"].author == "Frank Herbert"
+
+
+def test_borrow_unavailable_book_should_fail(tmp_path):
+    library = make_library(tmp_path)
+    library.add_book(Book("1", "Dune", "Frank Herbert", 1965, available=False))
+    assert library.borrow_book("1") is False
+
+
+def test_return_unknown_book_should_fail(tmp_path):
+    library = make_library(tmp_path)
+    assert library.return_book("missing") is False
+
+
+def test_duplicate_book_should_fail(tmp_path):
+    library = make_library(tmp_path)
+    library.add_book(Book("1", "Dune", "Frank Herbert", 1965))
+    with pytest.raises(ValueError):
+        library.add_book(Book("1", "Dune Messiah", "Frank Herbert", 1969))
+''',
+        "library_system/README.md": """# Library System
+
+Small JSON-backed Python library management system.
+
+## Test
+
+```bash
+python -m pytest library_system/tests -q
+```
+""",
+    }
+
+
+def _apply_library_project(state: ShellState, task_id: str) -> Dict[str, Any]:
+    workspace = Path.cwd().resolve()
+    project_dir = workspace / "library_system"
+    result: Dict[str, Any] = {
+        "status": "unknown",
+        "changed_files": [],
+        "command": "python -m pytest library_system/tests -q",
+        "test_status": "not_run",
+        "exit_code": None,
+        "summary": "",
+        "rethink_records": [],
+    }
+    payloads = _library_project_file_payloads()
+    for rel, content in payloads.items():
+        target = (workspace / rel).resolve()
+        if not str(target).startswith(str(project_dir.resolve())):
+            result["status"] = "unsafe"
+            result["summary"] = f"Refused path outside library_system: {rel}"
+            return result
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(content, encoding="utf-8")
+        result["changed_files"].append(rel)
+        _append_shell_event(state, task_id, "file.created", {"path": rel})
+
+    command = str(result["command"])
+    try:
+        test_env = os.environ.copy()
+        test_env["PYTEST_ADDOPTS"] = (test_env.get("PYTEST_ADDOPTS", "") + " -p no:cacheprovider").strip()
+        test_env["PYTHONDONTWRITEBYTECODE"] = "1"
+        proc = subprocess.run(
+            command.split(),
+            cwd=str(workspace),
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            capture_output=True,
+            timeout=120,
+            env=test_env,
+        )
+        output = ((proc.stdout or "") + "\n" + (proc.stderr or "")).strip()
+        result["exit_code"] = proc.returncode
+        result["summary"] = output[:1200]
+        result["test_status"] = "passed" if proc.returncode == 0 else "failed"
+        result["status"] = "completed" if proc.returncode == 0 else "replan_needed"
+        _append_shell_event(state, task_id, "test.executed", {"command": command, "status": result["test_status"]})
+        if proc.returncode != 0:
+            rethink = {
+                "trigger": "test_failed",
+                "action": "rethink/replan",
+                "command": command,
+                "summary": output[:600],
+            }
+            result["rethink_records"].append(rethink)
+            _append_shell_event(state, task_id, "rethink.replan", rethink)
+    except Exception as exc:
+        result["status"] = "replan_needed"
+        result["test_status"] = "error"
+        result["summary"] = type(exc).__name__
+        result["rethink_records"].append({"trigger": "test_error", "action": "rethink/replan", "summary": type(exc).__name__})
+    return result
+
+
+def _handle_natural_language(state: ShellState, user_input: str) -> str:
+    from src.jarvis.core.cli_response.dispatcher import dispatch_natural_language
+    from src.jarvis.core.cli_response.tool_loop_adapter import (
+        build_default_tool_loop,
+        execute_agent_tool_loop,
+    )
+    from src.jarvis.core.llm.prompt_builder import generate_chat_response
+
+    route_before = _detect_intent_route(user_input)
+    route_after = _apply_route_safety(route_before, user_input, state.mode)
+    if route_after.get("response_mode") == "coding_loop" and _is_library_project_request(user_input):
+        response = _queue_library_project_approval(state, user_input)
+        _append_intent_route_trace(
+            state=state,
+            user_input=user_input,
+            route_before_safety=route_before,
+            route_after_safety=route_after,
+            final_response_mode="coding_loop",
+            entered_task_flow=True,
+            notes="library project approval gate",
+        )
+        return response
+
+    # Build AgentToolLoop once per session and reuse
+    if not hasattr(state, "_agent_tool_loop"):
+        try:
+            state._agent_tool_loop = build_default_tool_loop(
+                permission_mode="workspace_write" if state.mode in {"edit", "ask"} else "read_only",
+                auto_approve=False,
+                llm_provider=state.llm_provider,
+                max_rounds=10,
+            )
+        except Exception:
+            state._agent_tool_loop = None
+
+    response, entered_task_flow, final_response_mode, notes = dispatch_natural_language(
+        user_input=user_input,
+        route_after_safety=route_after,
+        run_existing_task_flow=lambda text: _run_existing_task_flow(state, text),
+        run_skill_admin=lambda: _shell_skills([]),
+        run_repo_inspection=lambda text: _run_repo_inspection(text),
+        run_coding_loop=lambda text: _run_coding_loop(text),
+        run_agent_tool_loop=lambda text: execute_agent_tool_loop(
+            text,
+            tool_loop=state._agent_tool_loop,
+            permission_mode="workspace_write" if state.mode in {"edit", "ask"} else "read_only",
+        ),
+        run_llm_chat=lambda text, mode: generate_chat_response(
+            user_input=text,
+            chat_type=mode,
+            llm_provider=state.llm_provider,
+        ),
+        llm_provider_available=state.llm_provider is not None,
+    )
+    _append_intent_route_trace(
+        state=state,
+        user_input=user_input,
+        route_before_safety=route_before,
+        route_after_safety=route_after,
+        final_response_mode=final_response_mode,
+        entered_task_flow=entered_task_flow,
+        notes=notes,
+    )
+    return response
+
+
+def _handle_slash_command(state: ShellState, raw: str, envelope: Optional[Any] = None) -> Optional[str]:
+    from src.jarvis.core.routing.command_router import route_command
+    from src.jarvis.core.routing.input_gateway import build_input_envelope
+    from src.jarvis.core.routing.skill_command_router import route_skill_command
+
+    envelope = envelope or build_input_envelope(raw, workspace_root=Path.cwd(), session_id="cli_shell")
+    command = route_command(envelope)
+    if not command.handled:
+        return _render_unknown_command(raw.strip(), suggest_commands(raw.strip()))
+    if command.message:
+        skill_route = route_skill_command(envelope)
+        if skill_route.handled:
+            item = _find_skill_item(skill_route.candidate_skill or envelope.slash.command_name or "")
+            return _render_skill_invocation(skill_route, item=item, trigger=f"/{envelope.slash.command_name}")
+        return command.message
+
+    cmd = "/" + str(command.command_name or "").lower()
+    args = list(command.args_tokens)
     handlers = {
         "/help": lambda: _render_help(),
         "/exit": lambda: None,
@@ -2311,6 +3108,7 @@ def _handle_slash_command(state: ShellState, raw: str) -> Optional[str]:
         "/settings": lambda: _shell_config(),
         "/tools": lambda: _shell_tools(),
         "/skills": lambda: _shell_skills(args),
+        "/skill": lambda: _shell_skill(args, envelope),
         "/commands": lambda: _shell_commands(args),
         "/permissions": lambda: _shell_permissions(state),
         "/allowed-tools": lambda: _shell_allowed_tools(state),
@@ -2338,15 +3136,37 @@ def _handle_slash_command(state: ShellState, raw: str) -> Optional[str]:
     }
     if cmd in handlers:
         return handlers[cmd]()
-    spec = resolve_command(cmd)
+
+    skill_route = route_skill_command(envelope)
+    if skill_route.handled:
+        if skill_route.response_mode == "skill_tool_dispatch":
+            tool_name = ", ".join(skill_route.requires_tools or []) or "skill tool"
+            risk = "approval required" if skill_route.requires_approval else "safe"
+            return (
+                f"Skill command recognized: /{command.command_name}\n"
+                f"Dispatch: tool\n"
+                f"Tool: {tool_name}\n"
+                f"Args: {skill_route.raw_args or '(none)'}\n"
+                f"Safety: {risk}"
+            )
+        return (
+            f"Skill command recognized: /{command.command_name}\n"
+            f"Dispatch: model\n"
+            f"Skill: {skill_route.candidate_skill}\n"
+            f"Args: {skill_route.raw_args or '(none)'}"
+        )
+
+    spec = resolve_command(cmd) or resolve_command(command.command_name or "")
     if spec is not None:
         return _render_command_stub(spec)
     return _render_unknown_command(cmd, suggest_commands(cmd))
 
 
 def run_shell(initial_prompt: Optional[str] = None) -> int:
+    from src.jarvis.core.routing.input_gateway import build_input_envelope
+
     state = ShellState(DEFAULT_API_BASE)
-    _safe_print(_render_shell_header(os.getcwd(), state.mode, state.model))
+    _safe_print(_render_shell_header(os.getcwd(), state.mode, state.model, provider_line=state.provider_status_line))
     if initial_prompt:
         _safe_print("\n" + _handle_natural_language(state, initial_prompt))
     while True:
@@ -2360,8 +3180,9 @@ def run_shell(initial_prompt: Optional[str] = None) -> int:
         raw = line.rstrip("\n")
         if not raw.strip():
             continue
-        if raw.strip().startswith("/"):
-            result = _handle_slash_command(state, raw)
+        envelope = build_input_envelope(raw, workspace_root=Path.cwd(), session_id="cli_shell")
+        if envelope.slash.is_slash_command:
+            result = _handle_slash_command(state, raw, envelope=envelope)
             if result is None:
                 return 0
             _safe_print("\n" + result)
@@ -2370,13 +3191,16 @@ def run_shell(initial_prompt: Optional[str] = None) -> int:
 
 
 def run_shell_from_text(input_text: str) -> int:
+    from src.jarvis.core.routing.input_gateway import build_input_envelope
+
     state = ShellState(DEFAULT_API_BASE)
-    _safe_print(_render_shell_header(os.getcwd(), state.mode, state.model))
+    _safe_print(_render_shell_header(os.getcwd(), state.mode, state.model, provider_line=state.provider_status_line))
     for raw in (input_text or "").splitlines():
         if not raw.strip():
             continue
-        if raw.strip().startswith("/"):
-            result = _handle_slash_command(state, raw)
+        envelope = build_input_envelope(raw, workspace_root=Path.cwd(), session_id="cli_shell")
+        if envelope.slash.is_slash_command:
+            result = _handle_slash_command(state, raw, envelope=envelope)
             if result is None:
                 return 0
             _safe_print("\n" + result)
@@ -2388,15 +3212,18 @@ def run_shell_from_text(input_text: str) -> int:
 def _run_non_interactive(prompt: str) -> int:
     state = ShellState(DEFAULT_API_BASE)
     state.trace_enabled = True
+    _safe_print(state.provider_status_line)
     _safe_print(_handle_natural_language(state, prompt))
     return 0
 
 
 def main() -> int:
     _write_cli_diagnostic("cli_entry")
+    _load_local_env_file(_ROOT / ".env")
     parser = argparse.ArgumentParser(prog="python -m jarvis.cli", description="Jarvis CLI")
     parser.add_argument("--minimal", action="store_true", help="minimal mode (no voice, no model downloads)")
     parser.add_argument("-p", "--print", dest="print_prompt", nargs="?", const="__PIPE__", help="run one-shot prompt")
+    parser.add_argument("--ask", dest="ask_prompt", nargs="?", const="__PIPE__", help="run one-shot prompt (Codex-style)")
     parser.add_argument("-c", "--continue", dest="resume_latest", action="store_true", help="resume latest session")
     parser.add_argument("-r", "--resume", dest="resume_id", help="resume by session or task id")
     sub = parser.add_subparsers(dest="cmd", help="subcommands")
@@ -2635,6 +3462,16 @@ def main() -> int:
         if args.print_prompt is not None:
             if args.print_prompt not in {None, "__PIPE__"}:
                 prompt = args.print_prompt
+            if not prompt:
+                prompt = _read_stdin_text().strip()
+            if not prompt:
+                _safe_print("No prompt provided.")
+                return 1
+            return _run_non_interactive(prompt)
+
+        if args.ask_prompt is not None:
+            if args.ask_prompt not in {None, "__PIPE__"}:
+                prompt = args.ask_prompt
             if not prompt:
                 prompt = _read_stdin_text().strip()
             if not prompt:

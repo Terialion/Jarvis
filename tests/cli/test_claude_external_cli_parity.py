@@ -1,8 +1,8 @@
 """Tests for Claude-style external CLI command behavior."""
 
+import os
 import subprocess
 import sys
-import os
 
 
 def run_cli(*args, input_text=None, timeout=25):
@@ -36,22 +36,36 @@ def test_help_flag_exits():
     assert "usage" in out.lower()
 
 
-def test_positional_prompt_preserved():
-    text = "晚上好"
-    result = run_cli(text)
+def test_positional_prompt_routes_to_natural_response():
+    result = run_cli("晚上好")
     out = result.stdout + result.stderr
     assert result.returncode == 0
-    assert text in out
+    assert "Task task_" not in out
+    assert "Plan safe steps" not in out
+    # "晚上好" is now correctly recognized as a greeting (not clarification)
+    assert "你好" in out or "我需要再确认一下" in out
     assert "Investigate flaky tests" not in out
 
 
-def test_print_prompt_preserved():
-    text = "Inspect this repo. Do not modify files."
-    result = run_cli("-p", text)
+def test_print_prompt_repo_inspection_is_not_task_flow():
+    result = run_cli("-p", "Inspect this repo. Do not modify files.")
     out = result.stdout + result.stderr
     assert result.returncode == 0
-    assert text in out
+    # Should NOT enter old task flow
+    assert "Task task_" not in out
     assert "pytest -q" not in out
+    # Now routed through AgentToolLoop (returns LLM fallback or work acknowledgement)
+    assert "llm provider" in out.lower() or "无法连接" in out or "repository inspection" in out.lower()
+
+
+def test_ask_prompt_oneshot_reuses_natural_path():
+    result = run_cli("--ask", "Inspect this repo. Do not modify files.")
+    out = result.stdout + result.stderr
+    assert result.returncode == 0
+    assert "LLM provider:" in out
+    assert "Task task_" not in out
+    assert "pytest -q" not in out
+    assert "llm provider" in out.lower() or "repository inspection" in out.lower() or "work_type" in out.lower()
 
 
 def test_resume_flags_controlled():

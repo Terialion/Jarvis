@@ -34,6 +34,8 @@ def test_operator_schema_required_keys_match_sample_payloads() -> None:
     _assert_required_keys(
         "operator_dashboard.schema.json",
         {
+            "run_count": 0,
+            "last_updated": "",
             "gateway_summary": {},
             "active_runs_summary": {},
             "recent_runs": {},
@@ -47,21 +49,22 @@ def test_operator_schema_required_keys_match_sample_payloads() -> None:
     _assert_required_keys("operator_run_list.schema.json", {"items": [], "count": 0, "total_runs": 0})
     _assert_required_keys(
         "operator_run_detail.schema.json",
-        {"run": {}, "current_state": "completed", "step_trace": {}, "skill_hits": {}, "tool_calls": {}, "stop": {}},
+        {"run_id": "x", "status": "completed", "steps": [], "run": {}, "current_state": "completed", "step_trace": {}, "skill_hits": {}, "tool_calls": {}, "stop": {}},
     )
-    _assert_required_keys("operator_run_trace.schema.json", {"run_id": "x", "task_id": "t", "items": [], "count": 0})
+    _assert_required_keys("operator_run_trace.schema.json", {"run_id": "x", "events": [], "total_duration_ms": 0, "task_id": "t", "items": [], "count": 0})
     _assert_required_keys(
         "operator_skill_hits.schema.json",
-        {"run_id": "x", "task_id": "t", "items": [], "active_skills": [], "evaluation": {}},
+        {"skill_name": "test", "hit_count": 1, "last_hit": "2025-01-01", "run_id": "x", "task_id": "t", "items": [], "active_skills": [], "evaluation": {}},
     )
-    _assert_required_keys("operator_tool_calls.schema.json", {"run_id": "x", "task_id": "t", "items": [], "count": 0})
+    _assert_required_keys("operator_tool_calls.schema.json", {"tool_name": "read_file", "call_count": 1, "avg_duration_ms": 10, "run_id": "x", "task_id": "t", "items": [], "count": 0})
     _assert_required_keys(
         "operator_stop_summary.schema.json",
         {
             "run_id": "x",
+            "stop_reason": "repeated_failure_stop",
+            "final_summary": "Test summary",
             "task_id": "t",
             "runtime_status": "stopped",
-            "stop_reason": "repeated_failure_stop",
             "retry_count": 1,
             "fallback_type": "fallback_to_human_review",
             "approval_required": False,

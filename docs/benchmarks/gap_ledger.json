@@ -1,0 +1,39 @@
+{
+  "version": "1.0.0",
+  "entries": [
+    {
+      "capability_id": "core-exec-001",
+      "capability_group": "core_local_execution",
+      "reference_system": "Cursor",
+      "reference_capability": "Local file editing and shell execution",
+      "jarvis_current_status": "implemented",
+      "gap_level": "none",
+      "target_acceptance": ["Full file read/write/edit", "Shell command execution with sandbox"],
+      "implementation_status": "done",
+      "tests": ["tests/test_core_execution.py"],
+      "owner_module": "src/jarvis/core/executor.py",
+      "stop_condition": "All core execution tests pass",
+      "evidence": ["artifact:temp/gap_closure/round_1.json"],
+      "reuse_classification": "new",
+      "reuse_reason": "Built from scratch for Jarvis architecture",
+      "replacement_path": ""
+    },
+    {
+      "capability_id": "rethink-001",
+      "capability_group": "rethink_replan_recovery",
+      "reference_system": "Claude Code",
+      "reference_capability": "Replan and recover from failed actions",
+      "jarvis_current_status": "implemented",
+      "gap_level": "minor",
+      "target_acceptance": ["Automatic recovery from tool failures"],
+      "implementation_status": "done",
+      "tests": ["tests/test_rethink.py", "tests/test_recovery.py", "tests/test_replan.py"],
+      "owner_module": "src/jarvis/core/rethink.py",
+      "stop_condition": "Recovery tests pass",
+      "evidence": ["artifact:temp/gap_closure/random_replay_audit.json", "operator:replay"],
+      "reuse_classification": "new",
+      "reuse_reason": "Novel rethink architecture",
+      "replacement_path": ""
+    }
+  ]
+}
