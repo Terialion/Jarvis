@@ -7,12 +7,18 @@ ClarificationPolicy must only fire when:
 
 Must NOT fire for: joke, skill query, workspace status, project structure,
 explanation, planning, capability question, identity question.
+
+NOTE: Default path uses AgentLoop._build_clarification_if_needed() instead.
+The test_default_question_is_open_ended test uses the deprecated
+clarification.py module directly and will emit DeprecationWarning.
 """
+
+import pytest
 
 from src.jarvis.core.routing.input_gateway import build_input_envelope
 from src.jarvis.core.routing.intent_gateway import route_intent
 from src.jarvis.core.routing.deterministic_router import route_deterministically
-from src.jarvis.core.routing.clarification import build_clarification_route
+from src.jarvis.core.routing.clarification import build_clarification_route  # DEPRECATED — emits warnings
 from src.jarvis.core.routing.examples import ROUTING_EXAMPLES
 
 
@@ -128,6 +134,7 @@ class TestDeterministicKeepsReasonableRules:
 class TestClarificationDefaultQuestion:
     """Verify default clarification question is open-ended."""
 
+    @pytest.mark.filterwarnings("ignore::DeprecationWarning")
     def test_default_question_is_open_ended(self):
         envelope = build_input_envelope("some random input")
         route = build_clarification_route(envelope, reason="test")

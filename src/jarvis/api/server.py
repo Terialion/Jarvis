@@ -18,6 +18,8 @@ from ..core.skill_harness.executor import execute_skill
 from ..core.skill_harness.registry import get_skill_registry
 from ..core.skill_harness.selector import select_skills_for_task
 from ..core.skill_harness.telemetry import SkillTelemetryStore, SkillUsageRecord
+from ..agent.loop import AgentLoop
+from ..agent.types import ChatInput
 
 
 def _now() -> str:
@@ -568,6 +570,64 @@ def route_request(
                 }
             )
         return 200, _json_ok(target)
+
+    # ── Phase 6: Minimal AgentRunResult endpoint ──────────────────────────────
+    if method == "POST" and route == "/api/agent/run":
+        text = str(body.get("text") or body.get("input") or "").strip()
+        if not text:
+            return 400, _json_err("AGENT_INVALID_INPUT", "text or input is required")
+        model_mode = str(body.get("model_mode") or "fake").strip().lower()
+        project_root = str(body.get("project_root") or ".")
+        session_id = str(body.get("session_id") or _new_id("agent_session"))
+        # Use fake model client by default to avoid real API dependency
+        if model_mode == "real":
+            from ..agent.model import RuntimeModelClient
+            model_client = RuntimeModelClient()
+        else:
+            from ..agent.model import FakeModelClient
+            model_client = FakeModelClient()
+        try:
+            agent = AgentLoop(
+                project_root=project_root,
+                permission_mode="workspace_write",
+                auto_approve=True,
+                model_client=model_client,
+            )
+            chat_input = ChatInput(
+                text=text,
+                project_id="api",
+                cwd=project_root,
+                session_id=session_id,
+            )
+            result = agent.run_turn(chat_input)
+            result_dict = result.to_dict()
+            return 200, {
+                "ok": result.ok,
+                "result": {
+                    "output_type": result_dict.get("output_type", "answer"),
+                    "stop_reason": result_dict.get("stop_reason", "completed"),
+                    "final_answer": result_dict.get("final_answer", ""),
+                    "summary": result_dict.get("summary", {}),
+                    "events": result_dict.get("events", []),
+                    "tool_calls_count": len(result_dict.get("tool_calls") or []),
+                    "tools_used": list(
+                        (result_dict.get("summary") or {}).get("machine", {}).get("tools_used") or []
+                    ),
+                },
+            }
+        except Exception as exc:
+            return 200, {
+                "ok": False,
+                "result": {
+                    "output_type": "error",
+                    "stop_reason": "exception",
+                    "final_answer": f"Agent error: {type(exc).__name__}: {exc}",
+                    "summary": {},
+                    "events": [],
+                    "tool_calls_count": 0,
+                    "tools_used": [],
+                },
+            }
 
     return 404, _json_err("COMMON_NOT_FOUND", f"unknown route: {route}")
 

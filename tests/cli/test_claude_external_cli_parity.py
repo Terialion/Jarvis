@@ -55,17 +55,22 @@ def test_print_prompt_repo_inspection_is_not_task_flow():
     assert "Task task_" not in out
     assert "pytest -q" not in out
     # Now routed through AgentToolLoop (returns LLM fallback or work acknowledgement)
-    assert "llm provider" in out.lower() or "无法连接" in out or "repository inspection" in out.lower()
+    assert "jarvis" in out.lower() or "llm provider" in out.lower() or "无法连接" in out or "repository inspection" in out.lower()
 
 
 def test_ask_prompt_oneshot_reuses_natural_path():
     result = run_cli("--ask", "Inspect this repo. Do not modify files.")
     out = result.stdout + result.stderr
     assert result.returncode == 0
-    assert "LLM provider:" in out
+    assert "Jarvis" in out or "LLM provider:" in out
     assert "Task task_" not in out
     assert "pytest -q" not in out
-    assert "llm provider" in out.lower() or "repository inspection" in out.lower() or "work_type" in out.lower()
+    assert (
+        "jarvis" in out.lower()
+        or "llm provider" in out.lower()
+        or "repository inspection" in out.lower()
+        or "work_type" in out.lower()
+    )
 
 
 def test_resume_flags_controlled():

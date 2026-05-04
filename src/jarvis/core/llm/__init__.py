@@ -1,3 +1,4 @@
+from .config import LLMConfig, load_llm_config, load_dotenv, normalize_base_url
 from .prompt_builder import (
     build_coding_plan_prompt,
     build_final_review_prompt,
@@ -16,6 +17,10 @@ from .runtime_provider import (
 )
 
 __all__ = [
+    "LLMConfig",
+    "load_llm_config",
+    "load_dotenv",
+    "normalize_base_url",
     "FakeLLMProvider",
     "LLMProvider",
     "NullLLMProvider",

@@ -6,7 +6,7 @@ Routing order:
 3. SafetyPrecheck (high-confidence safety: .env, rm -rf, dangerous shell)
 4. VeryHighConfidenceDeterministicRouter (greeting, identity, capability, etc.)
 5. LLMIntentClassifier (primary natural language path)
-6. ClarificationPolicy (LAST RESORT — only if LLM confidence < 0.55)
+6. ClarificationPolicy inline stub (LAST RESORT — only if LLM confidence < 0.55)
 7. SafetyGate (post-routing safety check)
 8. ResponseDispatcher
 
@@ -14,6 +14,9 @@ Key design principle:
 - Ordinary natural language MUST go through LLMIntentClassifier
 - ClarificationPolicy is NOT the default path for natural language
 - DeterministicRouter only handles structural/high-confidence rules
+- NOTE: This module NO LONGER imports clarification.py at module level.
+  The legacy JARVIS_CLI_LEGACY_NL=1 path uses inline stubs instead.
+  Default path uses AgentLoop._build_clarification_if_needed().
 """
 
 from __future__ import annotations
@@ -23,12 +26,60 @@ from pathlib import Path
 from ..instructions.loader import load_project_instructions
 from ..instructions.schema import InstructionBundle
 from ..llm.provider import LLMProvider
-from .clarification import build_clarification_route, should_clarify_from_llm
 from .deterministic_router import route_deterministically
 from .input_gateway import InputEnvelope, build_input_envelope
 from .llm_classifier import classify_intent_with_llm
 from .natural_language_preparer import prepare_natural_input
 from .schema import Intent, IntentRoute, ResponseMode, RiskLevel
+
+
+def _legacy_clarify_fallback(envelope: InputEnvelope, reason: str, confidence: float) -> IntentRoute:
+    """Return a safe fallback clarification route for the legacy path.
+
+    This is an inline stub so that intent_gateway.py does NOT import
+    clarification.py at module load time. The legacy path
+    (JARVIS_CLI_LEGACY_NL=1) uses this instead of build_clarification_route.
+    """
+    low = envelope.normalized_text.lower()
+    if any(token in envelope.normalized_text for token in ("写一段说明", "写个东西", "帮我写一下", "写个总结", "写一封邮件", "项目介绍")):
+        question = "你是想让我写一段普通说明文本，还是创建/修改项目里的代码文件或文档文件？"
+    elif any(token in low for token in ("write a summary", "write something", "write an introduction", "write an email")):
+        question = "Do you want plain prose, or do you want me to create or modify code or document files in this workspace?"
+    elif any(token in envelope.normalized_text for token in ("跑一下", "运行一下", "测一下")) or any(token in low for token in ("run something", "test something")):
+        question = "你想运行哪个命令或测试范围：相关测试、某个目录，还是指定命令？"
+    elif any(token in envelope.normalized_text for token in ("弄一下", "处理一下", "看看这个", "来一下", "随便", "看着办")) or any(token in low for token in ("do something", "handle it", "take a look", "you decide")):
+        question = "你想让我做哪类操作：读项目、修改代码、运行命令，还是搜索资料？"
+    else:
+        question = "我需要再确认一下：你可以具体告诉我你想让我做什么吗？例如：读项目、解释代码、改文件、运行命令，或者聊天。"
+    return IntentRoute(
+        intent=Intent.CLARIFY.value,
+        response_mode=ResponseMode.CLARIFY_QUESTION.value,
+        confidence=confidence,
+        source="clarify",
+        summary="clarification required",
+        reason=reason,
+        should_clarify=True,
+        clarify_question=question,
+        operator_trace={
+            "source_surface": "cli",
+            "route_source": "clarify",
+            "reason": reason,
+        },
+        routing_trace={
+            "input_kind": "natural_language",
+            "deterministic_attempted": True,
+            "deterministic_matched": False,
+            "llm_fallback_called": False,
+            "entered_llm": False,
+            "final_decision": Intent.CLARIFY.value,
+            "why_not_clarify": "",
+        },
+    )
+
+
+def _should_clarify_legacy(confidence: float, threshold: float = 0.55) -> bool:
+    """Legacy clarification check — returns True if confidence < threshold."""
+    return confidence < threshold
 
 
 def route_intent(
@@ -99,7 +150,7 @@ def route_intent(
     )
 
     # Step 4a: If LLM returned a valid route with sufficient confidence, use it
-    if llm_route is not None and not should_clarify_from_llm(llm_route.confidence):
+    if llm_route is not None and not _should_clarify_legacy(llm_route.confidence):
         llm_route.routing_trace = {
             **dict(llm_route.routing_trace or {}),
             "prepared_command_count": len(prepared.command_metadata),
@@ -111,7 +162,9 @@ def route_intent(
     # Only reached if:
     # - Deterministic router had no high-confidence match, AND
     # - LLM was unavailable OR LLM confidence < 0.55
-    clarify = build_clarification_route(
+    # NOTE: Uses inline _legacy_clarify_fallback instead of clarification.py
+    # to avoid loading the deprecated module at module level.
+    clarify = _legacy_clarify_fallback(
         envelope,
         reason="deterministic_and_llm_uncertain" if llm_route is not None else "deterministic_uncertain_llm_unavailable",
         confidence=0.5 if llm_route is None else max(0.45, llm_route.confidence),

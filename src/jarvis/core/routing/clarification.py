@@ -1,30 +1,53 @@
-"""Clarification policy — LAST RESORT, not default path.
+"""Clarification policy — DEPRECATED. Last resort only.
 
-ClarificationPolicy triggers ONLY when:
-1. LLM confidence < 0.55 (low confidence)
-2. Input is extremely short with no clear semantics
-3. Multiple response_modes have conflicting confidence
-4. Execution requested but missing necessary target
-5. Truly ambiguous expressions: "弄一下", "处理一下", "写个东西"
+.. deprecated::
+    Clarification is now represented by:
+        AgentRunResult.output_type = "clarification"
+        stop_reason = "needs_user_clarification"
+    This module must not be used by default runtime paths.
+    Only kept for JARVIS_CLI_LEGACY_NL=1 legacy path.
+    Deletion target: Phase 6 (blocked by intent_gateway.py runtime import + routing test deps).
 
-ClarificationPolicy must NOT trigger for:
-- Jokes, identity, capability questions
-- Skill queries
-- Workspace/directory questions
-- Project structure queries
-- Explanation requests
-- Planning requests
-- Debug analysis requests
-- General conversation
+Runtime import is DEPRECATED and will emit a DeprecationWarning.
 """
 
 from __future__ import annotations
+
+import warnings
 
 from .input_gateway import InputEnvelope
 from .schema import Intent, IntentRoute, ResponseMode
 
 
+def _choose_question(text: str) -> str:
+    """Choose clarification question based on input patterns."""
+    low = text.lower()
+    if any(token in text for token in ("写一段说明", "写个东西", "帮我写一下", "写个总结", "写一封邮件", "项目介绍")):
+        return "你是想让我写一段普通说明文本，还是创建/修改项目里的代码文件或文档文件？"
+    if any(token in low for token in ("write a summary", "write something", "write an introduction", "write an email")):
+        return "Do you want plain prose, or do you want me to create or modify code or document files in this workspace?"
+    if any(token in text for token in ("跑一下", "运行一下", "测一下")) or any(token in low for token in ("run something", "test something")):
+        return "你想运行哪个命令或测试范围：相关测试、某个目录，还是指定命令？"
+    if any(token in text for token in ("弄一下", "处理一下", "看看这个", "来一下", "随便", "看着办")) or any(
+        token in low for token in ("do something", "handle it", "take a look", "you decide")
+    ):
+        return "你想让我做哪类操作：读项目、修改代码、运行命令，还是搜索资料？"
+    return "我需要再确认一下：你可以具体告诉我你想让我做什么吗？例如：读项目、解释代码、改文件、运行命令，或者聊天。"
+
+
 def build_clarification_route(envelope: InputEnvelope, *, reason: str, confidence: float = 0.45) -> IntentRoute:
+    """Build a clarification route — DEPRECATED.
+
+    .. deprecated::
+        Use AgentLoop._build_clarification_if_needed() instead.
+        This function is only kept for JARVIS_CLI_LEGACY_NL=1 compatibility.
+    """
+    warnings.warn(
+        "build_clarification_route is deprecated. "
+        "Use AgentLoop._build_clarification_if_needed() instead.",
+        DeprecationWarning,
+        stacklevel=2,
+    )
     question = _choose_question(envelope.normalized_text)
     return IntentRoute(
         intent=Intent.CLARIFY.value,
@@ -53,31 +76,16 @@ def build_clarification_route(envelope: InputEnvelope, *, reason: str, confidenc
 
 
 def should_clarify_from_llm(confidence: float, *, threshold: float = 0.55) -> bool:
-    """Only clarify if LLM confidence is very low.
+    """Check if LLM confidence is low enough to need clarification — DEPRECATED.
 
-    Threshold of 0.55 means: if LLM says confidence >= 0.55, we trust it.
-    Only if LLM is genuinely uncertain (< 0.55) do we fall through to clarification.
-    This prevents clarification from being the default path.
+    .. deprecated::
+        Use AgentLoop._build_clarification_if_needed() instead.
+        This function is only kept for JARVIS_CLI_LEGACY_NL=1 compatibility.
     """
+    warnings.warn(
+        "should_clarify_from_llm is deprecated. "
+        "Use AgentLoop._build_clarification_if_needed() instead.",
+        DeprecationWarning,
+        stacklevel=2,
+    )
     return confidence < threshold
-
-
-def _choose_question(text: str) -> str:
-    """Choose clarification question based on input patterns.
-
-    This only handles patterns that the deterministic router has already
-    identified as genuinely ambiguous.
-    """
-    low = text.lower()
-    if any(token in text for token in ("写一段说明", "写个东西", "帮我写一下", "写个总结", "写一封邮件", "项目介绍")):
-        return "你是想让我写一段普通说明文本，还是创建/修改项目里的代码文件或文档文件？"
-    if any(token in low for token in ("write a summary", "write something", "write an introduction", "write an email")):
-        return "Do you want plain prose, or do you want me to create or modify code or document files in this workspace?"
-    if any(token in text for token in ("跑一下", "运行一下", "测一下")) or any(token in low for token in ("run something", "test something")):
-        return "你想运行哪个命令或测试范围：相关测试、某个目录，还是指定命令？"
-    if any(token in text for token in ("弄一下", "处理一下", "看看这个", "来一下", "随便", "看着办")) or any(
-        token in low for token in ("do something", "handle it", "take a look", "you decide")
-    ):
-        return "你想让我做哪类操作：读项目、修改代码、运行命令，还是搜索资料？"
-    # Generic fallback — open-ended question without assuming code vs text
-    return "我需要再确认一下：你可以具体告诉我你想让我做什么吗？例如：读项目、解释代码、改文件、运行命令，或者聊天。"

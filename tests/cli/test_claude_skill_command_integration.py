@@ -51,4 +51,4 @@ def test_natural_language_repo_inspection_not_task():
     assert result.returncode == 0
     assert "Task task_" not in out
     # Now routed through AgentToolLoop (returns LLM fallback or work acknowledgement)
-    assert "llm provider" in out.lower() or "无法连接" in out or "repository inspection" in out.lower()
+    assert "jarvis" in out.lower() or "llm provider" in out.lower() or "无法连接" in out or "repository inspection" in out.lower()

@@ -1,4 +1,10 @@
-"""CLI adapter for AgentToolLoop integration.
+"""CLI adapter for AgentToolLoop integration — DEPRECATED.
+
+.. deprecated::
+    This module is DEPRECATED. Default runtime path uses AgentLoop.run_turn()
+    via run_agent_turn_for_cli() instead of AgentToolLoop.
+    This module is ONLY reachable via JARVIS_CLI_LEGACY_NL=1 legacy path.
+    Deletion target: after ToolCallExecutor parity confirmed.
 
 This module provides the bridge between the CLI dispatcher and AgentToolLoop.
 It:

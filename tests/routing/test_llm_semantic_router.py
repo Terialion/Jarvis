@@ -7,14 +7,20 @@ Core invariants:
 4. Safety rules still work (cannot be overridden)
 5. LLM cannot cancel approval requirements
 6. LLM cannot override safety refusals
+
+NOTE: Some tests directly call the deprecated should_clarify_from_llm from
+clarification.py. These are marked with filterwarnings to suppress
+DeprecationWarning.
 """
+
+import pytest
 
 from src.jarvis.core.instructions.schema import InstructionBundle
 from src.jarvis.core.llm.provider import FakeLLMProvider, NullLLMProvider
 from src.jarvis.core.routing.examples import ROUTING_EXAMPLES
 from src.jarvis.core.routing.input_gateway import build_input_envelope
 from src.jarvis.core.routing.intent_gateway import route_intent
-from src.jarvis.core.routing.clarification import should_clarify_from_llm
+from src.jarvis.core.routing.clarification import should_clarify_from_llm  # DEPRECATED — emits warnings
 
 
 def _make_llm(intent: str, mode: str, confidence: float, **extra):
@@ -130,18 +136,25 @@ class TestLLMHandlesNLCorrectly:
 
 
 class TestClarificationPolicyPostLLM:
-    """Verify ClarificationPolicy fires ONLY when LLM confidence < 0.55."""
+    """Verify ClarificationPolicy fires ONLY when LLM confidence < 0.55.
 
+    These tests directly call should_clarify_from_llm from clarification.py,
+    which is deprecated. They are kept for legacy coverage.
+    """
+
+    @pytest.mark.filterwarnings("ignore::DeprecationWarning")
     def test_high_confidence_llm_skips_clarification(self):
         assert should_clarify_from_llm(0.9) is False
         assert should_clarify_from_llm(0.55) is False
         assert should_clarify_from_llm(0.56) is False
 
+    @pytest.mark.filterwarnings("ignore::DeprecationWarning")
     def test_low_confidence_llm_triggers_clarification(self):
         assert should_clarify_from_llm(0.54) is True
         assert should_clarify_from_llm(0.3) is True
         assert should_clarify_from_llm(0.0) is True
 
+    @pytest.mark.filterwarnings("ignore::DeprecationWarning")
     def test_threshold_boundary(self):
         """Threshold is 0.55 — exactly 0.55 should NOT clarify."""
         assert should_clarify_from_llm(0.55) is False

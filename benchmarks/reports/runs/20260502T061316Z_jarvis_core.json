@@ -1,0 +1,325 @@
+{
+  "generated_at": "2026-05-02T06:13:16.154656+00:00",
+  "scope": "jarvis_core",
+  "execution_mode": "real_llm",
+  "model_provider": "deepseek",
+  "model_name": "deepseek-chat",
+  "model_backend": "real",
+  "suites": [
+    {
+      "suite": "jarvis_core",
+      "total": 3,
+      "pass_rate": 0.3333333333333333,
+      "execution_mode": "real_llm",
+      "model_provider": "deepseek",
+      "model_name": "deepseek-chat",
+      "model_backend": "real",
+      "api_key_source": "JARVIS_LLM_API_KEY",
+      "results": [
+        {
+          "case_id": "jarvis_core_001",
+          "suite": "jarvis_core",
+          "category": "chat",
+          "passed": true,
+          "score": 1.0,
+          "checks": {
+            "final_answer_exists": true,
+            "summary_exists": true,
+            "stop_reason_valid": true,
+            "event_timeline_valid": true,
+            "tool_call_schema_valid": true,
+            "must_call_tools": true,
+            "no_forbidden_tool": true,
+            "must_include": true,
+            "must_not_modify_files": true,
+            "test_passed": true
+          },
+          "run_result": {
+            "ok": true,
+            "session_id": "session_c639e92c85b8",
+            "turn_id": "turn_74bcbd4bbeaa",
+            "final_answer": "I am Jarvis AgentLoop, an AI assistant designed to help you with tasks in this repository environment. Here's what I can do:\n\n**My capabilities:**\n\n1. **Search files** - Find files by text patterns in the repository (low risk, no approval needed)\n2. **Read files** - View file contents with optional line ranges (low risk, no approval needed)\n3. **Replace text** - Edit files by replacing text (high risk, requires your approval)\n4. **Run commands** - Execute shell commands in the workspace (high risk, requires your approval)\n5. **Run tests** - Execute test suites via TestRunner (medium risk, requires your approval)\n\n**How I work:**\n- For simple questions, I'll answer directly.\n- For tasks requiring tools, I'll create a plan and ask for your approval when needed.\n- I always respect safety boundaries and won't perform high-risk actions without your consent.\n\n**Current project:** jarvis_core\n**Working directory:** .\n\nHow can I help you today?",
+            "events": [
+              {
+                "event_id": "evt_278c6afd6385",
+                "turn_id": "turn_74bcbd4bbeaa",
+                "timestamp": "2026-05-02T06:13:09.342652+00:00",
+                "type": "turn_started",
+                "payload": {
+                  "session_id": "session_c639e92c85b8",
+                  "text": "你是谁？你能做什么？"
+                }
+              },
+              {
+                "event_id": "evt_be6b9f383e6f",
+                "turn_id": "turn_74bcbd4bbeaa",
+                "timestamp": "2026-05-02T06:13:09.343747+00:00",
+                "type": "model_call_started",
+                "payload": {
+                  "step": 1
+                }
+              },
+              {
+                "event_id": "evt_9f47ce4fdc61",
+                "turn_id": "turn_74bcbd4bbeaa",
+                "timestamp": "2026-05-02T06:13:12.496299+00:00",
+                "type": "model_call_completed",
+                "payload": {
+                  "step": 1,
+                  "finish_reason": "stop"
+                }
+              },
+              {
+                "event_id": "evt_9ac8d1ee7772",
+                "turn_id": "turn_74bcbd4bbeaa",
+                "timestamp": "2026-05-02T06:13:12.496299+00:00",
+                "type": "final_answer_created",
+                "payload": {
+                  "step": 1
+                }
+              },
+              {
+                "event_id": "evt_274ef1181ad8",
+                "turn_id": "turn_74bcbd4bbeaa",
+                "timestamp": "2026-05-02T06:13:12.501058+00:00",
+                "type": "turn_completed",
+                "payload": {
+                  "status": "completed",
+                  "stop_reason": "completed"
+                }
+              },
+              {
+                "event_id": "evt_06c9a7d9a9d3",
+                "turn_id": "turn_74bcbd4bbeaa",
+                "timestamp": "2026-05-02T06:13:12.501058+00:00",
+                "type": "summary_created",
+                "payload": {
+                  "status": "completed"
+                }
+              }
+            ],
+            "summary": {
+              "human": "结论:\n- I am Jarvis AgentLoop, an AI assistant designed to help you with tasks in this repository environment. Here's what I can do:\n\n**My capabilities:**\n\n1. **Search files** - Find files by text patterns in the repository (low risk, no approval needed)\n2. **Read files** - View file contents with optional line ranges (low risk, no approval needed)\n3. **Replace text** - Edit files by replacing text (high risk, requires your approval)\n4. **Run commands** - Execute shell commands in the workspace (high risk, requires your approval)\n5. **Run tests** - Execute test suites via TestRunner (medium risk, requires your approval)\n\n**How I work:**\n- For simple questions, I'll answer directly.\n- For tasks requiring tools, I'll create a plan and ask for your approval when needed.\n- I always respect safety boundaries and won't perform high-risk actions without your consent.\n\n**Current project:** jarvis_core\n**Working directory:** .\n\nHow can I help you today?\n做了什么:\n- 调用了 0 个工具\n调用了哪些工具:\n- 无\n改了哪些文件:\n- 无\n测试结果:\n- 无\n风险和未完成项:\n- 无\n下一步建议:\n- 如果是 partial/failed，先修复 stop_reason 对应问题后重试。",
+              "machine": {
+                "outcome": "completed",
+                "tools_used": [],
+                "files_changed": [],
+                "commands_run": [],
+                "tests_run": [],
+                "risks": [],
+                "stop_reason": "completed",
+                "handoff_summary": "I am Jarvis AgentLoop, an AI assistant designed to help you with tasks in this repository environment. Here's what I can do:\n\n**My capabilities:**\n\n1. **Search files** - Find files by text patterns in the repository (low risk, no approval needed)\n2. **Read files** - View file contents with optional line ranges (low risk, no approval needed)\n3. **Replace text** - Edit files by replacing text (high "
+              }
+            },
+            "stop_reason": "completed",
+            "tool_calls": [],
+            "tool_results": [],
+            "status": "completed"
+          }
+        },
+        {
+          "case_id": "jarvis_core_002",
+          "suite": "jarvis_core",
+          "category": "repo",
+          "passed": false,
+          "score": 0.9,
+          "checks": {
+            "final_answer_exists": true,
+            "summary_exists": true,
+            "stop_reason_valid": true,
+            "event_timeline_valid": true,
+            "tool_call_schema_valid": true,
+            "must_call_tools": false,
+            "no_forbidden_tool": true,
+            "must_include": true,
+            "must_not_modify_files": true,
+            "test_passed": true
+          },
+          "run_result": {
+            "ok": true,
+            "session_id": "session_996758e4d258",
+            "turn_id": "turn_8c8f83988e77",
+            "final_answer": "{\"tool_plan_json\":{\"thought\":\"用户要求列出当前目录的内容。当前目录是 '.'，即 jarvis_core 项目根目录。我可以使用 command_runner.run 来执行 'ls' 命令，但该工具需要 approval。不过，由于只是列出目录，风险较低，但工具定义中 risk=high，需要 approval。我将请求执行 ls 命令。\",\"tool_calls\":[{\"tool_name\":\"command_runner.run\",\"arguments\":{\"command\":\"ls\",\"cwd\":\".\",\"timeout_s\":10}}]},\"final_answer_text\":\"\"}",
+            "events": [
+              {
+                "event_id": "evt_2220e71e30d3",
+                "turn_id": "turn_8c8f83988e77",
+                "timestamp": "2026-05-02T06:13:12.507574+00:00",
+                "type": "turn_started",
+                "payload": {
+                  "session_id": "session_996758e4d258",
+                  "text": "列一下当前目录。"
+                }
+              },
+              {
+                "event_id": "evt_f8b423c79c30",
+                "turn_id": "turn_8c8f83988e77",
+                "timestamp": "2026-05-02T06:13:12.508573+00:00",
+                "type": "model_call_started",
+                "payload": {
+                  "step": 1
+                }
+              },
+              {
+                "event_id": "evt_810977081709",
+                "turn_id": "turn_8c8f83988e77",
+                "timestamp": "2026-05-02T06:13:14.509323+00:00",
+                "type": "model_call_completed",
+                "payload": {
+                  "step": 1,
+                  "finish_reason": "stop"
+                }
+              },
+              {
+                "event_id": "evt_307ad8beaedb",
+                "turn_id": "turn_8c8f83988e77",
+                "timestamp": "2026-05-02T06:13:14.509323+00:00",
+                "type": "final_answer_created",
+                "payload": {
+                  "step": 1
+                }
+              },
+              {
+                "event_id": "evt_2ff4efb74b6a",
+                "turn_id": "turn_8c8f83988e77",
+                "timestamp": "2026-05-02T06:13:14.512501+00:00",
+                "type": "turn_completed",
+                "payload": {
+                  "status": "completed",
+                  "stop_reason": "completed"
+                }
+              },
+              {
+                "event_id": "evt_386b69ee564e",
+                "turn_id": "turn_8c8f83988e77",
+                "timestamp": "2026-05-02T06:13:14.512501+00:00",
+                "type": "summary_created",
+                "payload": {
+                  "status": "completed"
+                }
+              }
+            ],
+            "summary": {
+              "human": "结论:\n- {\"tool_plan_json\":{\"thought\":\"用户要求列出当前目录的内容。当前目录是 '.'，即 jarvis_core 项目根目录。我可以使用 command_runner.run 来执行 'ls' 命令，但该工具需要 approval。不过，由于只是列出目录，风险较低，但工具定义中 risk=high，需要 approval。我将请求执行 ls 命令。\",\"tool_calls\":[{\"tool_name\":\"command_runner.run\",\"arguments\":{\"command\":\"ls\",\"cwd\":\".\",\"timeout_s\":10}}]},\"final_answer_text\":\"\"}\n做了什么:\n- 调用了 0 个工具\n调用了哪些工具:\n- 无\n改了哪些文件:\n- 无\n测试结果:\n- 无\n风险和未完成项:\n- 无\n下一步建议:\n- 如果是 partial/failed，先修复 stop_reason 对应问题后重试。",
+              "machine": {
+                "outcome": "completed",
+                "tools_used": [],
+                "files_changed": [],
+                "commands_run": [],
+                "tests_run": [],
+                "risks": [],
+                "stop_reason": "completed",
+                "handoff_summary": "{\"tool_plan_json\":{\"thought\":\"用户要求列出当前目录的内容。当前目录是 '.'，即 jarvis_core 项目根目录。我可以使用 command_runner.run 来执行 'ls' 命令，但该工具需要 approval。不过，由于只是列出目录，风险较低，但工具定义中 risk=high，需要 approval。我将请求执行 ls 命令。\",\"tool_calls\":[{\"tool_name\":\"command_runner.run\",\"arguments\":{\"command\":\"ls\",\"cwd\":\".\",\"timeout_s\":10}}]},\"final_answer_text\":\"\"}"
+              }
+            },
+            "stop_reason": "completed",
+            "tool_calls": [],
+            "tool_results": [],
+            "status": "completed"
+          }
+        },
+        {
+          "case_id": "jarvis_core_003",
+          "suite": "jarvis_core",
+          "category": "read_file",
+          "passed": false,
+          "score": 0.9,
+          "checks": {
+            "final_answer_exists": true,
+            "summary_exists": true,
+            "stop_reason_valid": true,
+            "event_timeline_valid": true,
+            "tool_call_schema_valid": true,
+            "must_call_tools": false,
+            "no_forbidden_tool": true,
+            "must_include": true,
+            "must_not_modify_files": true,
+            "test_passed": true
+          },
+          "run_result": {
+            "ok": true,
+            "session_id": "session_f1a5b4ae727e",
+            "turn_id": "turn_979832ad49eb",
+            "final_answer": "I'll read the README.md file for you.\n\n```json\n{\n  \"tool_plan_json\": {\n    \"thought\": \"The user wants to read the README.md file. I'll use the repo_reader.read_file tool to read it.\",\n    \"tool_calls\": [\n      {\n        \"tool_name\": \"repo_reader.read_file\",\n        \"arguments\": {\n          \"path\": \"README.md\"\n        }\n      }\n    ]\n  }\n}",
+            "events": [
+              {
+                "event_id": "evt_3b047678b023",
+                "turn_id": "turn_979832ad49eb",
+                "timestamp": "2026-05-02T06:13:14.520305+00:00",
+                "type": "turn_started",
+                "payload": {
+                  "session_id": "session_f1a5b4ae727e",
+                  "text": "读取 README.md"
+                }
+              },
+              {
+                "event_id": "evt_5c70f7be3cac",
+                "turn_id": "turn_979832ad49eb",
+                "timestamp": "2026-05-02T06:13:14.521305+00:00",
+                "type": "model_call_started",
+                "payload": {
+                  "step": 1
+                }
+              },
+              {
+                "event_id": "evt_d29400d1ea99",
+                "turn_id": "turn_979832ad49eb",
+                "timestamp": "2026-05-02T06:13:16.123295+00:00",
+                "type": "model_call_completed",
+                "payload": {
+                  "step": 1,
+                  "finish_reason": "stop"
+                }
+              },
+              {
+                "event_id": "evt_4644eb0c8a60",
+                "turn_id": "turn_979832ad49eb",
+                "timestamp": "2026-05-02T06:13:16.123295+00:00",
+                "type": "final_answer_created",
+                "payload": {
+                  "step": 1
+                }
+              },
+              {
+                "event_id": "evt_57e1056a3108",
+                "turn_id": "turn_979832ad49eb",
+                "timestamp": "2026-05-02T06:13:16.154139+00:00",
+                "type": "turn_completed",
+                "payload": {
+                  "status": "completed",
+                  "stop_reason": "completed"
+                }
+              },
+              {
+                "event_id": "evt_60dbb47009ee",
+                "turn_id": "turn_979832ad49eb",
+                "timestamp": "2026-05-02T06:13:16.154139+00:00",
+                "type": "summary_created",
+                "payload": {
+                  "status": "completed"
+                }
+              }
+            ],
+            "summary": {
+              "human": "结论:\n- I'll read the README.md file for you.\n\n```json\n{\n  \"tool_plan_json\": {\n    \"thought\": \"The user wants to read the README.md file. I'll use the repo_reader.read_file tool to read it.\",\n    \"tool_calls\": [\n      {\n        \"tool_name\": \"repo_reader.read_file\",\n        \"arguments\": {\n          \"path\": \"README.md\"\n        }\n      }\n    ]\n  }\n}\n做了什么:\n- 调用了 0 个工具\n调用了哪些工具:\n- 无\n改了哪些文件:\n- 无\n测试结果:\n- 无\n风险和未完成项:\n- 无\n下一步建议:\n- 如果是 partial/failed，先修复 stop_reason 对应问题后重试。",
+              "machine": {
+                "outcome": "completed",
+                "tools_used": [],
+                "files_changed": [],
+                "commands_run": [],
+                "tests_run": [],
+                "risks": [],
+                "stop_reason": "completed",
+                "handoff_summary": "I'll read the README.md file for you.\n\n```json\n{\n  \"tool_plan_json\": {\n    \"thought\": \"The user wants to read the README.md file. I'll use the repo_reader.read_file tool to read it.\",\n    \"tool_calls\": [\n      {\n        \"tool_name\": \"repo_reader.read_file\",\n        \"arguments\": {\n          \"path\": \"README.md\"\n        }\n      }\n    ]\n  }\n}"
+              }
+            },
+            "stop_reason": "completed",
+            "tool_calls": [],
+            "tool_results": [],
+            "status": "completed"
+          }
+        }
+      ]
+    }
+  ]
+}

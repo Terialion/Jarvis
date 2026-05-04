@@ -1,0 +1,727 @@
+{"session_id": "session_401c8f7ba0e1", "project_id": "p", "cwd": "C:\\Users\\Lenovo\\AppData\\Local\\Temp\\pytest-of-Lenovo\\pytest-43\\test_agent_loop_smoke_no_tool0", "created_by": "agent_loop", "metadata": {}}
+{"session_id": "session_edb41c826fdf", "project_id": "p2", "cwd": "C:\\Users\\Lenovo\\AppData\\Local\\Temp\\pytest-of-Lenovo\\pytest-43\\test_agent_loop_tool_call_then0", "created_by": "agent_loop", "metadata": {}}
+{"session_id": "session_c9e9fe6baa0f", "project_id": "jarvis_core", "cwd": ".", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "jarvis_core_002"}}
+{"session_id": "session_045345bde018", "project_id": "jarvis_core", "cwd": ".", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "jarvis_core_003"}}
+{"session_id": "session_bc21aeeef0f6", "project_id": "jarvis_core", "cwd": ".", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "jarvis_core_002"}}
+{"session_id": "session_513412bc3b2e", "project_id": "jarvis_core", "cwd": ".", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "jarvis_core_003"}}
+{"session_id": "session_1bb4987164f8", "project_id": "jarvis_core", "cwd": ".", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "jarvis_core_004"}}
+{"session_id": "session_61a72ebdaac3", "project_id": "jarvis_core", "cwd": ".", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "jarvis_core_005"}}
+{"session_id": "session_2c5a0ce857c8", "project_id": "jarvis_core", "cwd": ".", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "jarvis_core_006"}}
+{"session_id": "session_be1ad2eba75d", "project_id": "jarvis_core", "cwd": ".", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "jarvis_core_007"}}
+{"session_id": "session_c01ef917fc56", "project_id": "jarvis_core", "cwd": ".", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "jarvis_core_008"}}
+{"session_id": "session_1a2ecace4eda", "project_id": "jarvis_core", "cwd": ".", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "jarvis_core_009"}}
+{"session_id": "session_20332e7fbdb1", "project_id": "jarvis_core", "cwd": ".", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "jarvis_core_010"}}
+{"session_id": "session_d9e1eeb3118b", "project_id": "jarvis_core", "cwd": ".", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "jarvis_core_011"}}
+{"session_id": "session_2d0b8595a5d4", "project_id": "jarvis_core", "cwd": ".", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "jarvis_core_012"}}
+{"session_id": "session_e69d0241bc89", "project_id": "jarvis_core", "cwd": ".", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "jarvis_core_013"}}
+{"session_id": "session_37c176dd42d5", "project_id": "jarvis_core", "cwd": ".", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "jarvis_core_014"}}
+{"session_id": "session_266465c63c48", "project_id": "jarvis_core", "cwd": ".", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "jarvis_core_015"}}
+{"session_id": "session_82f19ebaab2b", "project_id": "jarvis_core", "cwd": ".", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "jarvis_core_016"}}
+{"session_id": "session_e8b7e21b7eee", "project_id": "jarvis_core", "cwd": ".", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "jarvis_core_017"}}
+{"session_id": "session_50bca94d3e0e", "project_id": "jarvis_core", "cwd": ".", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "jarvis_core_018"}}
+{"session_id": "session_c43112669dd0", "project_id": "jarvis_core", "cwd": ".", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "jarvis_core_019"}}
+{"session_id": "session_ec52d1708df2", "project_id": "jarvis_core", "cwd": ".", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "jarvis_core_020"}}
+{"session_id": "session_f1f357cb6015", "project_id": "jarvis_core", "cwd": ".", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "jarvis_core_021"}}
+{"session_id": "session_9273effdffca", "project_id": "jarvis_core", "cwd": ".", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "jarvis_core_022"}}
+{"session_id": "session_7ef50bdc76f2", "project_id": "jarvis_core", "cwd": ".", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "jarvis_core_023"}}
+{"session_id": "session_9b07ec514557", "project_id": "jarvis_core", "cwd": ".", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "jarvis_core_024"}}
+{"session_id": "session_06e52cda02d8", "project_id": "jarvis_core", "cwd": ".", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "jarvis_core_025"}}
+{"session_id": "session_4ff2f260d535", "project_id": "jarvis_core", "cwd": ".", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "jarvis_core_026"}}
+{"session_id": "session_d595c5d51907", "project_id": "jarvis_core", "cwd": ".", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "jarvis_core_027"}}
+{"session_id": "session_7a885fcc1c5c", "project_id": "jarvis_core", "cwd": ".", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "jarvis_core_028"}}
+{"session_id": "session_8a61bbb6d5f5", "project_id": "jarvis_core", "cwd": ".", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "jarvis_core_029"}}
+{"session_id": "session_5aa049432c04", "project_id": "jarvis_core", "cwd": ".", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "jarvis_core_030"}}
+{"session_id": "session_da54c0120b8a", "project_id": "coding", "cwd": "benchmarks/suites/coding/fixtures/string_normalizer_bug", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "coding_002"}}
+{"session_id": "session_fb174dc3c840", "project_id": "coding", "cwd": "benchmarks/suites/coding/fixtures/json_loader_bug", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "coding_003"}}
+{"session_id": "session_6bd1fe35c232", "project_id": "coding", "cwd": "benchmarks/suites/coding/fixtures/path_utils_bug", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "coding_004"}}
+{"session_id": "session_b979689d85cd", "project_id": "coding", "cwd": "benchmarks/suites/coding/fixtures/todo_parser_bug", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "coding_005"}}
+{"session_id": "session_629804e6eeaf", "project_id": "coding", "cwd": "benchmarks/suites/coding/fixtures/calculator_bug", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "coding_006"}}
+{"session_id": "session_feec12011b9a", "project_id": "coding", "cwd": "benchmarks/suites/coding/fixtures/string_normalizer_bug", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "coding_007"}}
+{"session_id": "session_09e8a15313b1", "project_id": "coding", "cwd": "benchmarks/suites/coding/fixtures/json_loader_bug", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "coding_008"}}
+{"session_id": "session_cb2ae00d5b1f", "project_id": "coding", "cwd": "benchmarks/suites/coding/fixtures/path_utils_bug", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "coding_009"}}
+{"session_id": "session_0c3e9e615da7", "project_id": "coding", "cwd": "benchmarks/suites/coding/fixtures/todo_parser_bug", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "coding_010"}}
+{"session_id": "session_ec5b8edfee9c", "project_id": "coding", "cwd": "benchmarks/suites/coding/fixtures/calculator_bug", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "coding_011"}}
+{"session_id": "session_7ca708e31642", "project_id": "coding", "cwd": "benchmarks/suites/coding/fixtures/string_normalizer_bug", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "coding_012"}}
+{"session_id": "session_d30bec244c71", "project_id": "terminal", "cwd": ".", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "terminal_002"}}
+{"session_id": "session_aef01eeab277", "project_id": "coding", "cwd": "benchmarks/suites/coding/fixtures/json_loader_bug", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "coding_013"}}
+{"session_id": "session_8f01b68cce9a", "project_id": "terminal", "cwd": ".", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "terminal_003"}}
+{"session_id": "session_2042781a50f7", "project_id": "coding", "cwd": "benchmarks/suites/coding/fixtures/path_utils_bug", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "coding_014"}}
+{"session_id": "session_c03a56cf4e5e", "project_id": "terminal", "cwd": ".", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "terminal_004"}}
+{"session_id": "session_85650fe326d8", "project_id": "coding", "cwd": "benchmarks/suites/coding/fixtures/todo_parser_bug", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "coding_015"}}
+{"session_id": "session_ed37e4f47b58", "project_id": "web_research", "cwd": "benchmarks/suites/web_research/fixtures/web_pages", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "web_research_002"}}
+{"session_id": "session_03a8f2cc6ce6", "project_id": "terminal", "cwd": ".", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "terminal_005"}}
+{"session_id": "session_5943292e5438", "project_id": "coding", "cwd": "benchmarks/suites/coding/fixtures/calculator_bug", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "coding_016"}}
+{"session_id": "session_0de7690fbe45", "project_id": "web_research", "cwd": "benchmarks/suites/web_research/fixtures/web_pages", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "web_research_003"}}
+{"session_id": "session_41d060df492d", "project_id": "terminal", "cwd": ".", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "terminal_006"}}
+{"session_id": "session_11d2f6a67ab4", "project_id": "coding", "cwd": "benchmarks/suites/coding/fixtures/string_normalizer_bug", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "coding_017"}}
+{"session_id": "session_3ec0b06dd129", "project_id": "web_research", "cwd": "benchmarks/suites/web_research/fixtures/web_pages", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "web_research_004"}}
+{"session_id": "session_1ddd6a2a4789", "project_id": "terminal", "cwd": ".", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "terminal_007"}}
+{"session_id": "session_797d0edcbcea", "project_id": "coding", "cwd": "benchmarks/suites/coding/fixtures/json_loader_bug", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "coding_018"}}
+{"session_id": "session_2e5b99df5d6c", "project_id": "web_research", "cwd": "benchmarks/suites/web_research/fixtures/web_pages", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "web_research_005"}}
+{"session_id": "session_ca94f26115ed", "project_id": "coding", "cwd": "benchmarks/suites/coding/fixtures/path_utils_bug", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "coding_019"}}
+{"session_id": "session_bf7d40928bdb", "project_id": "terminal", "cwd": ".", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "terminal_008"}}
+{"session_id": "session_9d6903d06186", "project_id": "web_research", "cwd": "benchmarks/suites/web_research/fixtures/web_pages", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "web_research_006"}}
+{"session_id": "session_34023a3a9466", "project_id": "coding", "cwd": "benchmarks/suites/coding/fixtures/todo_parser_bug", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "coding_020"}}
+{"session_id": "session_49c7c48af76a", "project_id": "terminal", "cwd": ".", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "terminal_009"}}
+{"session_id": "session_9480f9df59fd", "project_id": "web_research", "cwd": "benchmarks/suites/web_research/fixtures/web_pages", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "web_research_007"}}
+{"session_id": "session_763e24397f92", "project_id": "terminal", "cwd": ".", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "terminal_010"}}
+{"session_id": "session_77c2a5f75658", "project_id": "web_research", "cwd": "benchmarks/suites/web_research/fixtures/web_pages", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "web_research_008"}}
+{"session_id": "session_b1d055d8aeec", "project_id": "web_research", "cwd": "benchmarks/suites/web_research/fixtures/web_pages", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "web_research_009"}}
+{"session_id": "session_f9444f55dc1d", "project_id": "web_research", "cwd": "benchmarks/suites/web_research/fixtures/web_pages", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "web_research_010"}}
+{"session_id": "session_d41f11ec88dc", "project_id": "jarvis_core", "cwd": ".", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "jarvis_core_002"}}
+{"session_id": "session_e964e6fe5b19", "project_id": "jarvis_core", "cwd": ".", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "jarvis_core_003"}}
+{"session_id": "session_91cc7cab622d", "project_id": "jarvis_core", "cwd": ".", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "jarvis_core_004"}}
+{"session_id": "session_79a884e0a69f", "project_id": "jarvis_core", "cwd": ".", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "jarvis_core_005"}}
+{"session_id": "session_98b625f4936a", "project_id": "jarvis_core", "cwd": ".", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "jarvis_core_006"}}
+{"session_id": "session_198a60207e4e", "project_id": "jarvis_core", "cwd": ".", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "jarvis_core_007"}}
+{"session_id": "session_ba7d262e0b8a", "project_id": "jarvis_core", "cwd": ".", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "jarvis_core_008"}}
+{"session_id": "session_e71c4576195c", "project_id": "jarvis_core", "cwd": ".", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "jarvis_core_009"}}
+{"session_id": "session_86d847d9db39", "project_id": "jarvis_core", "cwd": ".", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "jarvis_core_010"}}
+{"session_id": "session_06623eb236c9", "project_id": "jarvis_core", "cwd": ".", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "jarvis_core_011"}}
+{"session_id": "session_e7d7080c8090", "project_id": "jarvis_core", "cwd": ".", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "jarvis_core_012"}}
+{"session_id": "session_2eee67c792ab", "project_id": "jarvis_core", "cwd": ".", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "jarvis_core_013"}}
+{"session_id": "session_45670e01fc62", "project_id": "jarvis_core", "cwd": ".", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "jarvis_core_014"}}
+{"session_id": "session_f5c02a9ff362", "project_id": "jarvis_core", "cwd": ".", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "jarvis_core_015"}}
+{"session_id": "session_e64c7b75b4a3", "project_id": "jarvis_core", "cwd": ".", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "jarvis_core_016"}}
+{"session_id": "session_3cb5acb01806", "project_id": "jarvis_core", "cwd": ".", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "jarvis_core_017"}}
+{"session_id": "session_a917f0221235", "project_id": "jarvis_core", "cwd": ".", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "jarvis_core_018"}}
+{"session_id": "session_7ba295d0a551", "project_id": "jarvis_core", "cwd": ".", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "jarvis_core_019"}}
+{"session_id": "session_21005be1528e", "project_id": "jarvis_core", "cwd": ".", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "jarvis_core_020"}}
+{"session_id": "session_dedc8feae848", "project_id": "jarvis_core", "cwd": ".", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "jarvis_core_021"}}
+{"session_id": "session_b1dda206f37c", "project_id": "jarvis_core", "cwd": ".", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "jarvis_core_022"}}
+{"session_id": "session_cc015146c6d6", "project_id": "jarvis_core", "cwd": ".", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "jarvis_core_023"}}
+{"session_id": "session_cf8bb43cae47", "project_id": "jarvis_core", "cwd": ".", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "jarvis_core_024"}}
+{"session_id": "session_14bff7cfede5", "project_id": "jarvis_core", "cwd": ".", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "jarvis_core_025"}}
+{"session_id": "session_4bacb4d60991", "project_id": "jarvis_core", "cwd": ".", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "jarvis_core_026"}}
+{"session_id": "session_6e090893caea", "project_id": "jarvis_core", "cwd": ".", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "jarvis_core_027"}}
+{"session_id": "session_6563c083339b", "project_id": "jarvis_core", "cwd": ".", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "jarvis_core_028"}}
+{"session_id": "session_766c2ee3e3ba", "project_id": "jarvis_core", "cwd": ".", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "jarvis_core_029"}}
+{"session_id": "session_c3bb32c7e6f3", "project_id": "jarvis_core", "cwd": ".", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "jarvis_core_030"}}
+{"session_id": "session_e6cd8a22fc2a", "project_id": "coding", "cwd": "benchmarks/suites/coding/fixtures/string_normalizer_bug", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "coding_002"}}
+{"session_id": "session_42c62aa77079", "project_id": "coding", "cwd": "benchmarks/suites/coding/fixtures/json_loader_bug", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "coding_003"}}
+{"session_id": "session_88d079061f57", "project_id": "coding", "cwd": "benchmarks/suites/coding/fixtures/path_utils_bug", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "coding_004"}}
+{"session_id": "session_ee134acd8837", "project_id": "coding", "cwd": "benchmarks/suites/coding/fixtures/todo_parser_bug", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "coding_005"}}
+{"session_id": "session_e93526b99863", "project_id": "coding", "cwd": "benchmarks/suites/coding/fixtures/calculator_bug", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "coding_006"}}
+{"session_id": "session_293a235ec702", "project_id": "coding", "cwd": "benchmarks/suites/coding/fixtures/string_normalizer_bug", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "coding_007"}}
+{"session_id": "session_395bf1a2d96d", "project_id": "coding", "cwd": "benchmarks/suites/coding/fixtures/json_loader_bug", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "coding_008"}}
+{"session_id": "session_b15c8f8b4b93", "project_id": "coding", "cwd": "benchmarks/suites/coding/fixtures/path_utils_bug", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "coding_009"}}
+{"session_id": "session_632c9662c95d", "project_id": "coding", "cwd": "benchmarks/suites/coding/fixtures/todo_parser_bug", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "coding_010"}}
+{"session_id": "session_874e22202120", "project_id": "coding", "cwd": "benchmarks/suites/coding/fixtures/calculator_bug", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "coding_011"}}
+{"session_id": "session_aad7ea7e5187", "project_id": "coding", "cwd": "benchmarks/suites/coding/fixtures/string_normalizer_bug", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "coding_012"}}
+{"session_id": "session_677548eca2ca", "project_id": "coding", "cwd": "benchmarks/suites/coding/fixtures/json_loader_bug", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "coding_013"}}
+{"session_id": "session_1df150bd030b", "project_id": "coding", "cwd": "benchmarks/suites/coding/fixtures/path_utils_bug", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "coding_014"}}
+{"session_id": "session_c9a851aab158", "project_id": "coding", "cwd": "benchmarks/suites/coding/fixtures/todo_parser_bug", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "coding_015"}}
+{"session_id": "session_65c67c6680de", "project_id": "coding", "cwd": "benchmarks/suites/coding/fixtures/calculator_bug", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "coding_016"}}
+{"session_id": "session_71d0c5598280", "project_id": "coding", "cwd": "benchmarks/suites/coding/fixtures/string_normalizer_bug", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "coding_017"}}
+{"session_id": "session_6ade04677079", "project_id": "coding", "cwd": "benchmarks/suites/coding/fixtures/json_loader_bug", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "coding_018"}}
+{"session_id": "session_6c450873f9e9", "project_id": "coding", "cwd": "benchmarks/suites/coding/fixtures/path_utils_bug", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "coding_019"}}
+{"session_id": "session_584d7633b16c", "project_id": "coding", "cwd": "benchmarks/suites/coding/fixtures/todo_parser_bug", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "coding_020"}}
+{"session_id": "session_e214fb0f3010", "project_id": "terminal", "cwd": ".", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "terminal_002"}}
+{"session_id": "session_1b4d7f723e94", "project_id": "terminal", "cwd": ".", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "terminal_003"}}
+{"session_id": "session_b9917a24a6db", "project_id": "terminal", "cwd": ".", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "terminal_004"}}
+{"session_id": "session_4f7a45e15700", "project_id": "terminal", "cwd": ".", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "terminal_005"}}
+{"session_id": "session_04c72085cabe", "project_id": "terminal", "cwd": ".", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "terminal_006"}}
+{"session_id": "session_e7e892a20b0c", "project_id": "terminal", "cwd": ".", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "terminal_007"}}
+{"session_id": "session_77769defbf24", "project_id": "terminal", "cwd": ".", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "terminal_008"}}
+{"session_id": "session_a98a1045e792", "project_id": "terminal", "cwd": ".", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "terminal_009"}}
+{"session_id": "session_49e2df26b7fc", "project_id": "terminal", "cwd": ".", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "terminal_010"}}
+{"session_id": "session_0d1dc2a979d9", "project_id": "web_research", "cwd": "benchmarks/suites/web_research/fixtures/web_pages", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "web_research_002"}}
+{"session_id": "session_82df3359fbb3", "project_id": "web_research", "cwd": "benchmarks/suites/web_research/fixtures/web_pages", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "web_research_003"}}
+{"session_id": "session_c111a5f1aa27", "project_id": "web_research", "cwd": "benchmarks/suites/web_research/fixtures/web_pages", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "web_research_004"}}
+{"session_id": "session_450bd64ca736", "project_id": "web_research", "cwd": "benchmarks/suites/web_research/fixtures/web_pages", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "web_research_005"}}
+{"session_id": "session_5c2d1beab252", "project_id": "web_research", "cwd": "benchmarks/suites/web_research/fixtures/web_pages", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "web_research_006"}}
+{"session_id": "session_798151253e1c", "project_id": "web_research", "cwd": "benchmarks/suites/web_research/fixtures/web_pages", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "web_research_007"}}
+{"session_id": "session_e75c3299996d", "project_id": "web_research", "cwd": "benchmarks/suites/web_research/fixtures/web_pages", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "web_research_008"}}
+{"session_id": "session_18159df60896", "project_id": "web_research", "cwd": "benchmarks/suites/web_research/fixtures/web_pages", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "web_research_009"}}
+{"session_id": "session_d38b8042bf82", "project_id": "web_research", "cwd": "benchmarks/suites/web_research/fixtures/web_pages", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "web_research_010"}}
+{"session_id": "session_6550ffbfbc86", "project_id": "jarvis_core", "cwd": ".", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "jarvis_core_001"}}
+{"session_id": "session_0808be3e40f4", "project_id": "jarvis_core", "cwd": ".", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "jarvis_core_002"}}
+{"session_id": "session_cfbada3b353e", "project_id": "jarvis_core", "cwd": ".", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "jarvis_core_003"}}
+{"session_id": "session_d4f3c791df04", "project_id": "jarvis_core", "cwd": ".", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "jarvis_core_004"}}
+{"session_id": "session_443d357c5eb1", "project_id": "jarvis_core", "cwd": ".", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "jarvis_core_005"}}
+{"session_id": "session_4f0fddfd81b8", "project_id": "jarvis_core", "cwd": ".", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "jarvis_core_006"}}
+{"session_id": "session_15db88a68b56", "project_id": "jarvis_core", "cwd": ".", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "jarvis_core_007"}}
+{"session_id": "session_0397a08a7398", "project_id": "jarvis_core", "cwd": ".", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "jarvis_core_008"}}
+{"session_id": "session_148c69dc5b0b", "project_id": "jarvis_core", "cwd": ".", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "jarvis_core_009"}}
+{"session_id": "session_5563871de761", "project_id": "jarvis_core", "cwd": ".", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "jarvis_core_010"}}
+{"session_id": "session_7e288d0ff902", "project_id": "jarvis_core", "cwd": ".", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "jarvis_core_011"}}
+{"session_id": "session_5b217039380d", "project_id": "jarvis_core", "cwd": ".", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "jarvis_core_012"}}
+{"session_id": "session_85cc7d5bac4f", "project_id": "jarvis_core", "cwd": ".", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "jarvis_core_013"}}
+{"session_id": "session_b5d8db16c573", "project_id": "jarvis_core", "cwd": ".", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "jarvis_core_014"}}
+{"session_id": "session_9641640be9f5", "project_id": "jarvis_core", "cwd": ".", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "jarvis_core_015"}}
+{"session_id": "session_f2bdd225877a", "project_id": "jarvis_core", "cwd": ".", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "jarvis_core_016"}}
+{"session_id": "session_79fc8c536a62", "project_id": "jarvis_core", "cwd": ".", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "jarvis_core_017"}}
+{"session_id": "session_5f814c1a3b80", "project_id": "jarvis_core", "cwd": ".", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "jarvis_core_018"}}
+{"session_id": "session_094a6131df8c", "project_id": "jarvis_core", "cwd": ".", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "jarvis_core_019"}}
+{"session_id": "session_2a99cbe3508e", "project_id": "jarvis_core", "cwd": ".", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "jarvis_core_020"}}
+{"session_id": "session_54c2618930b6", "project_id": "jarvis_core", "cwd": ".", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "jarvis_core_021"}}
+{"session_id": "session_e07ef9dd9511", "project_id": "jarvis_core", "cwd": ".", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "jarvis_core_022"}}
+{"session_id": "session_17d4482d570d", "project_id": "jarvis_core", "cwd": ".", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "jarvis_core_023"}}
+{"session_id": "session_96d774070d8b", "project_id": "jarvis_core", "cwd": ".", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "jarvis_core_024"}}
+{"session_id": "session_d13637c6aab7", "project_id": "jarvis_core", "cwd": ".", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "jarvis_core_025"}}
+{"session_id": "session_19f810fc165f", "project_id": "jarvis_core", "cwd": ".", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "jarvis_core_026"}}
+{"session_id": "session_5ba58b559b5d", "project_id": "jarvis_core", "cwd": ".", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "jarvis_core_027"}}
+{"session_id": "session_b68ce04ea1bd", "project_id": "jarvis_core", "cwd": ".", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "jarvis_core_028"}}
+{"session_id": "session_a3bc25a2fe01", "project_id": "jarvis_core", "cwd": ".", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "jarvis_core_029"}}
+{"session_id": "session_a0896bc9b128", "project_id": "jarvis_core", "cwd": ".", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "jarvis_core_030"}}
+{"session_id": "session_49bee2862207", "project_id": "coding", "cwd": "benchmarks/suites/coding/fixtures/calculator_bug", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "coding_001"}}
+{"session_id": "session_39c0cfaeeb03", "project_id": "coding", "cwd": "benchmarks/suites/coding/fixtures/string_normalizer_bug", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "coding_002"}}
+{"session_id": "session_7adcda4b91b8", "project_id": "coding", "cwd": "benchmarks/suites/coding/fixtures/json_loader_bug", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "coding_003"}}
+{"session_id": "session_a6577d426eff", "project_id": "coding", "cwd": "benchmarks/suites/coding/fixtures/path_utils_bug", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "coding_004"}}
+{"session_id": "session_03b9ecadff7e", "project_id": "coding", "cwd": "benchmarks/suites/coding/fixtures/todo_parser_bug", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "coding_005"}}
+{"session_id": "session_20a7df62c7d2", "project_id": "coding", "cwd": "benchmarks/suites/coding/fixtures/calculator_bug", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "coding_006"}}
+{"session_id": "session_1e1aabbf5ff1", "project_id": "coding", "cwd": "benchmarks/suites/coding/fixtures/string_normalizer_bug", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "coding_007"}}
+{"session_id": "session_69826f337914", "project_id": "coding", "cwd": "benchmarks/suites/coding/fixtures/json_loader_bug", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "coding_008"}}
+{"session_id": "session_fbba6d5fd201", "project_id": "coding", "cwd": "benchmarks/suites/coding/fixtures/path_utils_bug", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "coding_009"}}
+{"session_id": "session_f0572c343c0a", "project_id": "coding", "cwd": "benchmarks/suites/coding/fixtures/todo_parser_bug", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "coding_010"}}
+{"session_id": "session_5b0d02209dd4", "project_id": "coding", "cwd": "benchmarks/suites/coding/fixtures/calculator_bug", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "coding_011"}}
+{"session_id": "session_98b505d2c6e9", "project_id": "coding", "cwd": "benchmarks/suites/coding/fixtures/string_normalizer_bug", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "coding_012"}}
+{"session_id": "session_0a9123e41490", "project_id": "coding", "cwd": "benchmarks/suites/coding/fixtures/json_loader_bug", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "coding_013"}}
+{"session_id": "session_365d94e0f855", "project_id": "coding", "cwd": "benchmarks/suites/coding/fixtures/path_utils_bug", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "coding_014"}}
+{"session_id": "session_11679236692e", "project_id": "coding", "cwd": "benchmarks/suites/coding/fixtures/todo_parser_bug", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "coding_015"}}
+{"session_id": "session_6caccd996b95", "project_id": "coding", "cwd": "benchmarks/suites/coding/fixtures/calculator_bug", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "coding_016"}}
+{"session_id": "session_b2f85cadc790", "project_id": "coding", "cwd": "benchmarks/suites/coding/fixtures/string_normalizer_bug", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "coding_017"}}
+{"session_id": "session_fc594e111745", "project_id": "coding", "cwd": "benchmarks/suites/coding/fixtures/json_loader_bug", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "coding_018"}}
+{"session_id": "session_f67e3d01eddc", "project_id": "coding", "cwd": "benchmarks/suites/coding/fixtures/path_utils_bug", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "coding_019"}}
+{"session_id": "session_38b9b8c7ab7a", "project_id": "coding", "cwd": "benchmarks/suites/coding/fixtures/todo_parser_bug", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "coding_020"}}
+{"session_id": "session_d16ee239a399", "project_id": "terminal", "cwd": ".", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "terminal_001"}}
+{"session_id": "session_d795a6ac307c", "project_id": "terminal", "cwd": ".", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "terminal_002"}}
+{"session_id": "session_119c3d36cbbd", "project_id": "terminal", "cwd": ".", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "terminal_003"}}
+{"session_id": "session_cec3c6e5ffd8", "project_id": "terminal", "cwd": ".", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "terminal_004"}}
+{"session_id": "session_051863d1d13d", "project_id": "terminal", "cwd": ".", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "terminal_005"}}
+{"session_id": "session_ec7419032188", "project_id": "terminal", "cwd": ".", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "terminal_006"}}
+{"session_id": "session_d084093b4b3c", "project_id": "terminal", "cwd": ".", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "terminal_007"}}
+{"session_id": "session_234707fcd417", "project_id": "terminal", "cwd": ".", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "terminal_008"}}
+{"session_id": "session_1887056e1aa7", "project_id": "terminal", "cwd": ".", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "terminal_009"}}
+{"session_id": "session_a68f9b419cd8", "project_id": "terminal", "cwd": ".", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "terminal_010"}}
+{"session_id": "session_6093ceabd635", "project_id": "web_research", "cwd": "benchmarks/suites/web_research/fixtures/web_pages", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "web_research_001"}}
+{"session_id": "session_786a22b625f2", "project_id": "web_research", "cwd": "benchmarks/suites/web_research/fixtures/web_pages", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "web_research_002"}}
+{"session_id": "session_7a735a701a70", "project_id": "web_research", "cwd": "benchmarks/suites/web_research/fixtures/web_pages", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "web_research_003"}}
+{"session_id": "session_d0ac0d5d7dbc", "project_id": "web_research", "cwd": "benchmarks/suites/web_research/fixtures/web_pages", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "web_research_004"}}
+{"session_id": "session_0a47811a6e3a", "project_id": "web_research", "cwd": "benchmarks/suites/web_research/fixtures/web_pages", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "web_research_005"}}
+{"session_id": "session_a1c7cd73bbbc", "project_id": "web_research", "cwd": "benchmarks/suites/web_research/fixtures/web_pages", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "web_research_006"}}
+{"session_id": "session_c5718641858e", "project_id": "web_research", "cwd": "benchmarks/suites/web_research/fixtures/web_pages", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "web_research_007"}}
+{"session_id": "session_8e40e3b85090", "project_id": "web_research", "cwd": "benchmarks/suites/web_research/fixtures/web_pages", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "web_research_008"}}
+{"session_id": "session_f47c0a47adf2", "project_id": "web_research", "cwd": "benchmarks/suites/web_research/fixtures/web_pages", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "web_research_009"}}
+{"session_id": "session_4d85b5d0fe2f", "project_id": "web_research", "cwd": "benchmarks/suites/web_research/fixtures/web_pages", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "web_research_010"}}
+{"session_id": "session_9b9b9169ccd1", "project_id": "p", "cwd": "C:\\Users\\Lenovo\\AppData\\Local\\Temp\\pytest-of-Lenovo\\pytest-45\\test_agent_loop_smoke_no_tool0", "created_by": "agent_loop", "metadata": {}}
+{"session_id": "session_6d5f2907be55", "project_id": "p2", "cwd": "C:\\Users\\Lenovo\\AppData\\Local\\Temp\\pytest-of-Lenovo\\pytest-45\\test_agent_loop_tool_call_then0", "created_by": "agent_loop", "metadata": {}}
+{"session_id": "session_914e5d205be6", "project_id": "jarvis_core", "cwd": ".", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "jarvis_core_001"}}
+{"session_id": "session_783bcff144d4", "project_id": "jarvis_core", "cwd": ".", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "jarvis_core_002"}}
+{"session_id": "session_fd40fd56136b", "project_id": "jarvis_core", "cwd": ".", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "jarvis_core_001"}}
+{"session_id": "session_dc54cf2dd61d", "project_id": "jarvis_core", "cwd": ".", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "jarvis_core_002"}}
+{"session_id": "session_614b1d846966", "project_id": "jarvis_core", "cwd": ".", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "jarvis_core_003"}}
+{"session_id": "session_38a504741883", "project_id": "jarvis_core", "cwd": ".", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "jarvis_core_004"}}
+{"session_id": "session_e22c761e1472", "project_id": "jarvis_core", "cwd": ".", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "jarvis_core_005"}}
+{"session_id": "session_56e237d4b7f8", "project_id": "jarvis_core", "cwd": ".", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "jarvis_core_006"}}
+{"session_id": "session_ec79b43d5afd", "project_id": "jarvis_core", "cwd": ".", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "jarvis_core_007"}}
+{"session_id": "session_8bfa7aaa76b1", "project_id": "jarvis_core", "cwd": ".", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "jarvis_core_008"}}
+{"session_id": "session_bc0471f14553", "project_id": "jarvis_core", "cwd": ".", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "jarvis_core_009"}}
+{"session_id": "session_19fb871d04cf", "project_id": "jarvis_core", "cwd": ".", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "jarvis_core_010"}}
+{"session_id": "session_d2bda654cd92", "project_id": "jarvis_core", "cwd": ".", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "jarvis_core_001"}}
+{"session_id": "session_97a4845aab09", "project_id": "jarvis_core", "cwd": ".", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "jarvis_core_002"}}
+{"session_id": "session_05987b790192", "project_id": "jarvis_core", "cwd": ".", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "jarvis_core_003"}}
+{"session_id": "session_0b05d65a949c", "project_id": "jarvis_core", "cwd": ".", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "jarvis_core_004"}}
+{"session_id": "session_a25a1467dfa6", "project_id": "jarvis_core", "cwd": ".", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "jarvis_core_005"}}
+{"session_id": "session_72d281ff4eeb", "project_id": "jarvis_core", "cwd": ".", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "jarvis_core_006"}}
+{"session_id": "session_239a52d243b5", "project_id": "jarvis_core", "cwd": ".", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "jarvis_core_007"}}
+{"session_id": "session_dfff2f8b4ec9", "project_id": "jarvis_core", "cwd": ".", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "jarvis_core_008"}}
+{"session_id": "session_552fa55a83e4", "project_id": "jarvis_core", "cwd": ".", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "jarvis_core_009"}}
+{"session_id": "session_822d0d9c79a0", "project_id": "jarvis_core", "cwd": ".", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "jarvis_core_010"}}
+{"session_id": "session_ae52513e0601", "project_id": "jarvis_core", "cwd": ".", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "jarvis_core_011"}}
+{"session_id": "session_39edb4ec8098", "project_id": "jarvis_core", "cwd": ".", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "jarvis_core_012"}}
+{"session_id": "session_9580cd239be9", "project_id": "jarvis_core", "cwd": ".", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "jarvis_core_013"}}
+{"session_id": "session_e05e10016d95", "project_id": "jarvis_core", "cwd": ".", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "jarvis_core_014"}}
+{"session_id": "session_345c2d2a79fc", "project_id": "jarvis_core", "cwd": ".", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "jarvis_core_015"}}
+{"session_id": "session_ccb0a0a0c125", "project_id": "jarvis_core", "cwd": ".", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "jarvis_core_016"}}
+{"session_id": "session_8efbda699102", "project_id": "jarvis_core", "cwd": ".", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "jarvis_core_017"}}
+{"session_id": "session_c6987730dfa2", "project_id": "jarvis_core", "cwd": ".", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "jarvis_core_018"}}
+{"session_id": "session_f85a59f6d9d7", "project_id": "jarvis_core", "cwd": ".", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "jarvis_core_019"}}
+{"session_id": "session_441894309044", "project_id": "jarvis_core", "cwd": ".", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "jarvis_core_020"}}
+{"session_id": "session_06fcb852546e", "project_id": "jarvis_core", "cwd": ".", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "jarvis_core_021"}}
+{"session_id": "session_3c0f2787d8a2", "project_id": "jarvis_core", "cwd": ".", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "jarvis_core_022"}}
+{"session_id": "session_4155951d2553", "project_id": "jarvis_core", "cwd": ".", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "jarvis_core_023"}}
+{"session_id": "session_23c2091a03bd", "project_id": "jarvis_core", "cwd": ".", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "jarvis_core_024"}}
+{"session_id": "session_76fedcae1199", "project_id": "jarvis_core", "cwd": ".", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "jarvis_core_025"}}
+{"session_id": "session_38bdf0970db9", "project_id": "jarvis_core", "cwd": ".", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "jarvis_core_026"}}
+{"session_id": "session_dd9a7cb25cf6", "project_id": "jarvis_core", "cwd": ".", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "jarvis_core_027"}}
+{"session_id": "session_a267f4f7d0de", "project_id": "jarvis_core", "cwd": ".", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "jarvis_core_028"}}
+{"session_id": "session_221fa2ea7ed4", "project_id": "jarvis_core", "cwd": ".", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "jarvis_core_029"}}
+{"session_id": "session_24102c5aae76", "project_id": "jarvis_core", "cwd": ".", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "jarvis_core_030"}}
+{"session_id": "session_3e0a858db0c3", "project_id": "coding", "cwd": "benchmarks/suites/coding/fixtures/calculator_bug", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "coding_001"}}
+{"session_id": "session_6a5d245a51a4", "project_id": "terminal", "cwd": ".", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "terminal_001"}}
+{"session_id": "session_0a48e3321983", "project_id": "web_research", "cwd": "benchmarks/suites/web_research/fixtures/web_pages", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "web_research_001"}}
+{"session_id": "session_b28edbf4f494", "project_id": "web_research", "cwd": "benchmarks/suites/web_research/fixtures/web_pages", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "web_research_002"}}
+{"session_id": "session_9777e48e97ce", "project_id": "web_research", "cwd": "benchmarks/suites/web_research/fixtures/web_pages", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "web_research_003"}}
+{"session_id": "session_ba24f0581fd9", "project_id": "terminal", "cwd": ".", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "terminal_002"}}
+{"session_id": "session_014f5cf8a423", "project_id": "web_research", "cwd": "benchmarks/suites/web_research/fixtures/web_pages", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "web_research_004"}}
+{"session_id": "session_b5059ec43c8a", "project_id": "web_research", "cwd": "benchmarks/suites/web_research/fixtures/web_pages", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "web_research_005"}}
+{"session_id": "session_1bca845f89f3", "project_id": "web_research", "cwd": "benchmarks/suites/web_research/fixtures/web_pages", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "web_research_006"}}
+{"session_id": "session_05444d0b07f0", "project_id": "web_research", "cwd": "benchmarks/suites/web_research/fixtures/web_pages", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "web_research_007"}}
+{"session_id": "session_aa98cb215e60", "project_id": "terminal", "cwd": ".", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "terminal_003"}}
+{"session_id": "session_5ae61d845820", "project_id": "web_research", "cwd": "benchmarks/suites/web_research/fixtures/web_pages", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "web_research_008"}}
+{"session_id": "session_ac44056eb8ff", "project_id": "web_research", "cwd": "benchmarks/suites/web_research/fixtures/web_pages", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "web_research_009"}}
+{"session_id": "session_91db0bc7a8aa", "project_id": "web_research", "cwd": "benchmarks/suites/web_research/fixtures/web_pages", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "web_research_010"}}
+{"session_id": "session_50d752b50171", "project_id": "terminal", "cwd": ".", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "terminal_004"}}
+{"session_id": "session_dcd6d8ebb0ea", "project_id": "terminal", "cwd": ".", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "terminal_005"}}
+{"session_id": "session_a50b3fb6f043", "project_id": "terminal", "cwd": ".", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "terminal_006"}}
+{"session_id": "session_9eafa0125b78", "project_id": "terminal", "cwd": ".", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "terminal_007"}}
+{"session_id": "session_51e9be65c3fe", "project_id": "coding", "cwd": "benchmarks/suites/coding/fixtures/string_normalizer_bug", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "coding_002"}}
+{"session_id": "session_e8dbc8c77cf0", "project_id": "terminal", "cwd": ".", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "terminal_008"}}
+{"session_id": "session_fc6e3c9d31de", "project_id": "coding", "cwd": "benchmarks/suites/coding/fixtures/json_loader_bug", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "coding_003"}}
+{"session_id": "session_3a02810367f5", "project_id": "terminal", "cwd": ".", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "terminal_009"}}
+{"session_id": "session_6d2a9b2ffa89", "project_id": "terminal", "cwd": ".", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "terminal_010"}}
+{"session_id": "session_3a6d9e7ffeae", "project_id": "coding", "cwd": "benchmarks/suites/coding/fixtures/path_utils_bug", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "coding_004"}}
+{"session_id": "session_711f5356697f", "project_id": "coding", "cwd": "benchmarks/suites/coding/fixtures/todo_parser_bug", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "coding_005"}}
+{"session_id": "session_b56c3ad88133", "project_id": "coding", "cwd": "benchmarks/suites/coding/fixtures/calculator_bug", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "coding_006"}}
+{"session_id": "session_eca02c28dac2", "project_id": "p", "cwd": "C:\\Users\\Lenovo\\AppData\\Local\\Temp\\pytest-of-Lenovo\\pytest-47\\test_agent_loop_smoke_no_tool0", "created_by": "agent_loop", "metadata": {}}
+{"session_id": "session_122a3584a214", "project_id": "p2", "cwd": "C:\\Users\\Lenovo\\AppData\\Local\\Temp\\pytest-of-Lenovo\\pytest-47\\test_agent_loop_tool_call_then0", "created_by": "agent_loop", "metadata": {}}
+{"session_id": "session_c0ebbef74ec9", "project_id": "jarvis_core", "cwd": ".", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "jarvis_core_001"}}
+{"session_id": "session_c6e04c8c3e7b", "project_id": "jarvis_core", "cwd": ".", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "jarvis_core_002"}}
+{"session_id": "session_7edfc06273eb", "project_id": "coding", "cwd": "benchmarks/suites/coding/fixtures/calculator_bug", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "coding_001"}}
+{"session_id": "session_d1b559f6fea5", "project_id": "coding", "cwd": "benchmarks/suites/coding/fixtures/string_normalizer_bug", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "coding_002"}}
+{"session_id": "session_bca95dc9fc69", "project_id": "coding", "cwd": "benchmarks/suites/coding/fixtures/json_loader_bug", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "coding_003"}}
+{"session_id": "session_2101bc9aa198", "project_id": "coding", "cwd": "benchmarks/suites/coding/fixtures/path_utils_bug", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "coding_004"}}
+{"session_id": "session_98cd122b9aeb", "project_id": "coding", "cwd": "benchmarks/suites/coding/fixtures/todo_parser_bug", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "coding_005"}}
+{"session_id": "session_c04356c7f6f2", "project_id": "coding", "cwd": "benchmarks/suites/coding/fixtures/calculator_bug", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "coding_006"}}
+{"session_id": "session_9cb0bd3f749d", "project_id": "coding", "cwd": "benchmarks/suites/coding/fixtures/string_normalizer_bug", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "coding_007"}}
+{"session_id": "session_9743f3599ac1", "project_id": "coding", "cwd": "benchmarks/suites/coding/fixtures/json_loader_bug", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "coding_008"}}
+{"session_id": "session_2957625e71d6", "project_id": "coding", "cwd": "benchmarks/suites/coding/fixtures/path_utils_bug", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "coding_009"}}
+{"session_id": "session_2d1184a1020a", "project_id": "coding", "cwd": "benchmarks/suites/coding/fixtures/todo_parser_bug", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "coding_010"}}
+{"session_id": "session_857cdc1e9533", "project_id": "coding", "cwd": "benchmarks/suites/coding/fixtures/calculator_bug", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "coding_011"}}
+{"session_id": "session_2b6877b70285", "project_id": "coding", "cwd": "benchmarks/suites/coding/fixtures/string_normalizer_bug", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "coding_012"}}
+{"session_id": "session_2c4de1144bca", "project_id": "coding", "cwd": "benchmarks/suites/coding/fixtures/json_loader_bug", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "coding_013"}}
+{"session_id": "session_8c78a22e8ba0", "project_id": "coding", "cwd": "benchmarks/suites/coding/fixtures/path_utils_bug", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "coding_014"}}
+{"session_id": "session_63f3a8046cca", "project_id": "coding", "cwd": "benchmarks/suites/coding/fixtures/todo_parser_bug", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "coding_015"}}
+{"session_id": "session_d48de5cceac5", "project_id": "coding", "cwd": "benchmarks/suites/coding/fixtures/calculator_bug", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "coding_016"}}
+{"session_id": "session_0f73efa4a0ca", "project_id": "coding", "cwd": "benchmarks/suites/coding/fixtures/string_normalizer_bug", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "coding_017"}}
+{"session_id": "session_bbaa4e83e579", "project_id": "coding", "cwd": "benchmarks/suites/coding/fixtures/json_loader_bug", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "coding_018"}}
+{"session_id": "session_63aab85385d9", "project_id": "coding", "cwd": "benchmarks/suites/coding/fixtures/path_utils_bug", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "coding_019"}}
+{"session_id": "session_bed225f262a7", "project_id": "coding", "cwd": "benchmarks/suites/coding/fixtures/todo_parser_bug", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "coding_020"}}
+{"session_id": "session_7465b3d90af9", "project_id": "jarvis_core", "cwd": ".", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "jarvis_core_001"}}
+{"session_id": "session_333945c208b1", "project_id": "jarvis_core", "cwd": ".", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "jarvis_core_002"}}
+{"session_id": "session_7ff6abb5250d", "project_id": "jarvis_core", "cwd": ".", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "jarvis_core_003"}}
+{"session_id": "session_9ab2003a302c", "project_id": "jarvis_core", "cwd": ".", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "jarvis_core_004"}}
+{"session_id": "session_da153f2399ac", "project_id": "jarvis_core", "cwd": ".", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "jarvis_core_005"}}
+{"session_id": "session_bb7454db9c8a", "project_id": "jarvis_core", "cwd": ".", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "jarvis_core_006"}}
+{"session_id": "session_e458e4b88059", "project_id": "jarvis_core", "cwd": ".", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "jarvis_core_007"}}
+{"session_id": "session_43c022d56590", "project_id": "jarvis_core", "cwd": ".", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "jarvis_core_008"}}
+{"session_id": "session_652aac2399f4", "project_id": "jarvis_core", "cwd": ".", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "jarvis_core_009"}}
+{"session_id": "session_9685dabc32b0", "project_id": "jarvis_core", "cwd": ".", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "jarvis_core_010"}}
+{"session_id": "session_fc294e909d23", "project_id": "jarvis_core", "cwd": ".", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "jarvis_core_011"}}
+{"session_id": "session_c2385546a4b9", "project_id": "jarvis_core", "cwd": ".", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "jarvis_core_012"}}
+{"session_id": "session_4cf82092d6dd", "project_id": "jarvis_core", "cwd": ".", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "jarvis_core_013"}}
+{"session_id": "session_4a308fa55654", "project_id": "jarvis_core", "cwd": ".", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "jarvis_core_014"}}
+{"session_id": "session_6a97716cbdf9", "project_id": "jarvis_core", "cwd": ".", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "jarvis_core_015"}}
+{"session_id": "session_b94b90801323", "project_id": "jarvis_core", "cwd": ".", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "jarvis_core_016"}}
+{"session_id": "session_1b558d77c912", "project_id": "jarvis_core", "cwd": ".", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "jarvis_core_017"}}
+{"session_id": "session_4b274a563097", "project_id": "jarvis_core", "cwd": ".", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "jarvis_core_018"}}
+{"session_id": "session_704f89d97f1f", "project_id": "jarvis_core", "cwd": ".", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "jarvis_core_019"}}
+{"session_id": "session_22cc854e8801", "project_id": "jarvis_core", "cwd": ".", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "jarvis_core_020"}}
+{"session_id": "session_a8648cfabe3d", "project_id": "jarvis_core", "cwd": ".", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "jarvis_core_021"}}
+{"session_id": "session_94c72053d699", "project_id": "jarvis_core", "cwd": ".", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "jarvis_core_022"}}
+{"session_id": "session_53066143d9b2", "project_id": "jarvis_core", "cwd": ".", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "jarvis_core_023"}}
+{"session_id": "session_9ced42ec70d7", "project_id": "jarvis_core", "cwd": ".", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "jarvis_core_024"}}
+{"session_id": "session_7add760a1bea", "project_id": "jarvis_core", "cwd": ".", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "jarvis_core_025"}}
+{"session_id": "session_2c579205994b", "project_id": "jarvis_core", "cwd": ".", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "jarvis_core_026"}}
+{"session_id": "session_8c07d8ddca07", "project_id": "jarvis_core", "cwd": ".", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "jarvis_core_027"}}
+{"session_id": "session_9079c9525cce", "project_id": "jarvis_core", "cwd": ".", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "jarvis_core_028"}}
+{"session_id": "session_2e8badc23154", "project_id": "jarvis_core", "cwd": ".", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "jarvis_core_029"}}
+{"session_id": "session_ab4def3916f2", "project_id": "jarvis_core", "cwd": ".", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "jarvis_core_030"}}
+{"session_id": "session_b1e10aa4adc0", "project_id": "p", "cwd": "C:\\Users\\Lenovo\\AppData\\Local\\Temp\\pytest-of-Lenovo\\pytest-49\\test_agent_loop_smoke_no_tool0", "created_by": "agent_loop", "metadata": {}}
+{"session_id": "session_35beff0c087c", "project_id": "p2", "cwd": "C:\\Users\\Lenovo\\AppData\\Local\\Temp\\pytest-of-Lenovo\\pytest-49\\test_agent_loop_tool_call_then0", "created_by": "agent_loop", "metadata": {}}
+{"session_id": "session_b12abfb0e16e", "project_id": "jarvis_core", "cwd": ".", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "jarvis_core_001"}}
+{"session_id": "session_4d7fdc3ea0c1", "project_id": "jarvis_core", "cwd": ".", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "jarvis_core_002"}}
+{"session_id": "session_dc753e77e4c6", "project_id": "jarvis_core", "cwd": ".", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "jarvis_core_003"}}
+{"session_id": "session_80427dfe8074", "project_id": "jarvis_core", "cwd": ".", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "jarvis_core_004"}}
+{"session_id": "session_c0b1f9450e7c", "project_id": "jarvis_core", "cwd": ".", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "jarvis_core_005"}}
+{"session_id": "session_59597f23eb68", "project_id": "jarvis_core", "cwd": ".", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "jarvis_core_006"}}
+{"session_id": "session_6a92dac724ce", "project_id": "jarvis_core", "cwd": ".", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "jarvis_core_007"}}
+{"session_id": "session_aa5dba82cf4c", "project_id": "jarvis_core", "cwd": ".", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "jarvis_core_008"}}
+{"session_id": "session_9512fc8a7058", "project_id": "jarvis_core", "cwd": ".", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "jarvis_core_009"}}
+{"session_id": "session_77dce582bb82", "project_id": "jarvis_core", "cwd": ".", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "jarvis_core_010"}}
+{"session_id": "session_219650b0ac04", "project_id": "jarvis_core", "cwd": ".", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "jarvis_core_011"}}
+{"session_id": "session_0d918e0dde1e", "project_id": "jarvis_core", "cwd": ".", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "jarvis_core_012"}}
+{"session_id": "session_71a2b460e9fd", "project_id": "jarvis_core", "cwd": ".", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "jarvis_core_013"}}
+{"session_id": "session_98d71a0ae308", "project_id": "jarvis_core", "cwd": ".", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "jarvis_core_014"}}
+{"session_id": "session_34f53bf7db18", "project_id": "jarvis_core", "cwd": ".", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "jarvis_core_015"}}
+{"session_id": "session_be740beace6e", "project_id": "jarvis_core", "cwd": ".", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "jarvis_core_016"}}
+{"session_id": "session_98f29d4a30be", "project_id": "jarvis_core", "cwd": ".", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "jarvis_core_017"}}
+{"session_id": "session_587a4bd3901c", "project_id": "jarvis_core", "cwd": ".", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "jarvis_core_018"}}
+{"session_id": "session_e0829b9a79c3", "project_id": "jarvis_core", "cwd": ".", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "jarvis_core_019"}}
+{"session_id": "session_b2a754cb6f72", "project_id": "jarvis_core", "cwd": ".", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "jarvis_core_020"}}
+{"session_id": "session_7a679f314edf", "project_id": "jarvis_core", "cwd": ".", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "jarvis_core_021"}}
+{"session_id": "session_758dff3aa1d7", "project_id": "jarvis_core", "cwd": ".", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "jarvis_core_022"}}
+{"session_id": "session_eaf0aae7bcf2", "project_id": "jarvis_core", "cwd": ".", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "jarvis_core_023"}}
+{"session_id": "session_24e773bc2482", "project_id": "jarvis_core", "cwd": ".", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "jarvis_core_024"}}
+{"session_id": "session_343c7341e80a", "project_id": "jarvis_core", "cwd": ".", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "jarvis_core_025"}}
+{"session_id": "session_b78a7c879d44", "project_id": "jarvis_core", "cwd": ".", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "jarvis_core_026"}}
+{"session_id": "session_6abf51933f1e", "project_id": "jarvis_core", "cwd": ".", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "jarvis_core_027"}}
+{"session_id": "session_e45a84aeaa2e", "project_id": "jarvis_core", "cwd": ".", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "jarvis_core_028"}}
+{"session_id": "session_cc8b81b6207f", "project_id": "jarvis_core", "cwd": ".", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "jarvis_core_029"}}
+{"session_id": "session_5c3e9ce56d4f", "project_id": "jarvis_core", "cwd": ".", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "jarvis_core_030"}}
+{"session_id": "session_407c0a1500fb", "project_id": "coding", "cwd": "benchmarks/suites/coding/fixtures/calculator_bug", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "coding_001"}}
+{"session_id": "session_abccccddf606", "project_id": "coding", "cwd": "benchmarks/suites/coding/fixtures/string_normalizer_bug", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "coding_002"}}
+{"session_id": "session_7fbe74faa02a", "project_id": "coding", "cwd": "benchmarks/suites/coding/fixtures/json_loader_bug", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "coding_003"}}
+{"session_id": "session_c5eb6cbacaa8", "project_id": "coding", "cwd": "benchmarks/suites/coding/fixtures/path_utils_bug", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "coding_004"}}
+{"session_id": "session_dba512d023a2", "project_id": "coding", "cwd": "benchmarks/suites/coding/fixtures/todo_parser_bug", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "coding_005"}}
+{"session_id": "session_cd4f765119be", "project_id": "coding", "cwd": "benchmarks/suites/coding/fixtures/calculator_bug", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "coding_006"}}
+{"session_id": "session_9836cd978bd8", "project_id": "coding", "cwd": "benchmarks/suites/coding/fixtures/string_normalizer_bug", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "coding_007"}}
+{"session_id": "session_0bef39c49514", "project_id": "coding", "cwd": "benchmarks/suites/coding/fixtures/json_loader_bug", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "coding_008"}}
+{"session_id": "session_dee53f048488", "project_id": "coding", "cwd": "benchmarks/suites/coding/fixtures/path_utils_bug", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "coding_009"}}
+{"session_id": "session_96b1ec9e341a", "project_id": "coding", "cwd": "benchmarks/suites/coding/fixtures/todo_parser_bug", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "coding_010"}}
+{"session_id": "session_db8181f7585a", "project_id": "coding", "cwd": "benchmarks/suites/coding/fixtures/calculator_bug", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "coding_011"}}
+{"session_id": "session_ad4c962bc7f0", "project_id": "coding", "cwd": "benchmarks/suites/coding/fixtures/string_normalizer_bug", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "coding_012"}}
+{"session_id": "session_04abcc029a5f", "project_id": "coding", "cwd": "benchmarks/suites/coding/fixtures/json_loader_bug", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "coding_013"}}
+{"session_id": "session_b17cc86d23ff", "project_id": "coding", "cwd": "benchmarks/suites/coding/fixtures/path_utils_bug", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "coding_014"}}
+{"session_id": "session_7e9db8c66db2", "project_id": "coding", "cwd": "benchmarks/suites/coding/fixtures/todo_parser_bug", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "coding_015"}}
+{"session_id": "session_0bdaa88078cd", "project_id": "coding", "cwd": "benchmarks/suites/coding/fixtures/calculator_bug", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "coding_016"}}
+{"session_id": "session_d310044fe7aa", "project_id": "coding", "cwd": "benchmarks/suites/coding/fixtures/string_normalizer_bug", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "coding_017"}}
+{"session_id": "session_ff200fd1a040", "project_id": "coding", "cwd": "benchmarks/suites/coding/fixtures/json_loader_bug", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "coding_018"}}
+{"session_id": "session_a444eaaeaa11", "project_id": "coding", "cwd": "benchmarks/suites/coding/fixtures/path_utils_bug", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "coding_019"}}
+{"session_id": "session_cba918f95640", "project_id": "coding", "cwd": "benchmarks/suites/coding/fixtures/todo_parser_bug", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "coding_020"}}
+{"session_id": "session_2ff6b079c13f", "project_id": "terminal", "cwd": ".", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "terminal_001"}}
+{"session_id": "session_cfc8d6eb09a3", "project_id": "terminal", "cwd": ".", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "terminal_002"}}
+{"session_id": "session_585442b61b75", "project_id": "terminal", "cwd": ".", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "terminal_003"}}
+{"session_id": "session_30005eec922e", "project_id": "terminal", "cwd": ".", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "terminal_004"}}
+{"session_id": "session_d640a4db253a", "project_id": "terminal", "cwd": ".", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "terminal_005"}}
+{"session_id": "session_d9e628fd9078", "project_id": "terminal", "cwd": ".", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "terminal_006"}}
+{"session_id": "session_a260afafad7e", "project_id": "terminal", "cwd": ".", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "terminal_007"}}
+{"session_id": "session_429c71c29f74", "project_id": "terminal", "cwd": ".", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "terminal_008"}}
+{"session_id": "session_d41150fbc32c", "project_id": "terminal", "cwd": ".", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "terminal_009"}}
+{"session_id": "session_5499c36f02b9", "project_id": "terminal", "cwd": ".", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "terminal_010"}}
+{"session_id": "session_063a571f3866", "project_id": "web_research", "cwd": "benchmarks/suites/web_research/fixtures/web_pages", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "web_research_001"}}
+{"session_id": "session_b7b7d2298708", "project_id": "web_research", "cwd": "benchmarks/suites/web_research/fixtures/web_pages", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "web_research_002"}}
+{"session_id": "session_b5d464bbd52c", "project_id": "web_research", "cwd": "benchmarks/suites/web_research/fixtures/web_pages", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "web_research_003"}}
+{"session_id": "session_d29c13160d6a", "project_id": "web_research", "cwd": "benchmarks/suites/web_research/fixtures/web_pages", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "web_research_004"}}
+{"session_id": "session_3741bd184285", "project_id": "web_research", "cwd": "benchmarks/suites/web_research/fixtures/web_pages", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "web_research_005"}}
+{"session_id": "session_eccb61b39efe", "project_id": "web_research", "cwd": "benchmarks/suites/web_research/fixtures/web_pages", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "web_research_006"}}
+{"session_id": "session_e3df4e5bdafe", "project_id": "web_research", "cwd": "benchmarks/suites/web_research/fixtures/web_pages", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "web_research_007"}}
+{"session_id": "session_003d227998fd", "project_id": "web_research", "cwd": "benchmarks/suites/web_research/fixtures/web_pages", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "web_research_008"}}
+{"session_id": "session_3b87983c9e3a", "project_id": "web_research", "cwd": "benchmarks/suites/web_research/fixtures/web_pages", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "web_research_009"}}
+{"session_id": "session_b94690bf895b", "project_id": "web_research", "cwd": "benchmarks/suites/web_research/fixtures/web_pages", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "web_research_010"}}
+{"session_id": "session_8e7e6c88bec3", "project_id": "jarvis_core", "cwd": ".", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "jarvis_core_001"}}
+{"session_id": "session_f50a05a3c5b7", "project_id": "jarvis_core", "cwd": ".", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "jarvis_core_002"}}
+{"session_id": "session_ab160827a5a4", "project_id": "jarvis_core", "cwd": ".", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "jarvis_core_003"}}
+{"session_id": "session_c639e92c85b8", "project_id": "jarvis_core", "cwd": ".", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "jarvis_core_001"}}
+{"session_id": "session_996758e4d258", "project_id": "jarvis_core", "cwd": ".", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "jarvis_core_002"}}
+{"session_id": "session_f1a5b4ae727e", "project_id": "jarvis_core", "cwd": ".", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "jarvis_core_003"}}
+{"session_id": "session_18b095e71640", "project_id": "jarvis_core", "cwd": ".", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "jarvis_core_001"}}
+{"session_id": "session_4428edc56b86", "project_id": "jarvis_core", "cwd": ".", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "jarvis_core_002"}}
+{"session_id": "session_a0c3b3470037", "project_id": "jarvis_core", "cwd": ".", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "jarvis_core_001"}}
+{"session_id": "session_7b1f61980cdc", "project_id": "jarvis_core", "cwd": ".", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "jarvis_core_002"}}
+{"session_id": "session_b662da13942b", "project_id": "jarvis_core", "cwd": ".", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "jarvis_core_001"}}
+{"session_id": "session_ad9e472d5368", "project_id": "jarvis_core", "cwd": ".", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "jarvis_core_002"}}
+{"session_id": "session_b66a33ae3f9e", "project_id": "jarvis_core", "cwd": ".", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "jarvis_core_003"}}
+{"session_id": "session_78d0836d0fe2", "project_id": "p", "cwd": "C:\\Users\\Lenovo\\AppData\\Local\\Temp\\pytest-of-Lenovo\\pytest-50\\test_agent_loop_smoke_no_tool0", "created_by": "agent_loop", "metadata": {}}
+{"session_id": "session_e43f2a404ef3", "project_id": "p2", "cwd": "C:\\Users\\Lenovo\\AppData\\Local\\Temp\\pytest-of-Lenovo\\pytest-50\\test_agent_loop_tool_call_then0", "created_by": "agent_loop", "metadata": {}}
+{"session_id": "session_e8ab784793d3", "project_id": "jarvis_core", "cwd": ".", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "jarvis_core_001"}}
+{"session_id": "session_0131c2ca8bca", "project_id": "jarvis_core", "cwd": ".", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "jarvis_core_002"}}
+{"session_id": "session_fdcffff0dce4", "project_id": "jarvis_core", "cwd": ".", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "jarvis_core_001"}}
+{"session_id": "session_47b8eef302c2", "project_id": "jarvis_core", "cwd": ".", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "jarvis_core_002"}}
+{"session_id": "session_4d4ae18c24c2", "project_id": "jarvis_core", "cwd": ".", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "jarvis_core_003"}}
+{"session_id": "session_551d6cad96d2", "project_id": "jarvis_core", "cwd": ".", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "jarvis_core_004"}}
+{"session_id": "session_840a42f83120", "project_id": "jarvis_core", "cwd": ".", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "jarvis_core_001"}}
+{"session_id": "session_3fe40b221dd6", "project_id": "jarvis_core", "cwd": ".", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "jarvis_core_002"}}
+{"session_id": "session_496d09f0e8b1", "project_id": "jarvis_core", "cwd": ".", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "jarvis_core_003"}}
+{"session_id": "session_ebb72ff8f2d6", "project_id": "jarvis_core", "cwd": ".", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "jarvis_core_005"}}
+{"session_id": "session_2f569783d5df", "project_id": "jarvis_core", "cwd": ".", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "jarvis_core_001"}}
+{"session_id": "session_5fdeca96fb30", "project_id": "jarvis_core", "cwd": ".", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "jarvis_core_002"}}
+{"session_id": "session_d7ef51f4bf1e", "project_id": "jarvis_core", "cwd": ".", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "jarvis_core_003"}}
+{"session_id": "session_672e79ba6617", "project_id": "p", "cwd": "C:\\Users\\Lenovo\\AppData\\Local\\Temp\\pytest-of-Lenovo\\pytest-52\\test_agent_loop_smoke_no_tool0", "created_by": "agent_loop", "metadata": {}}
+{"session_id": "session_df18c13b9ec0", "project_id": "p2", "cwd": "C:\\Users\\Lenovo\\AppData\\Local\\Temp\\pytest-of-Lenovo\\pytest-52\\test_agent_loop_tool_call_then0", "created_by": "agent_loop", "metadata": {}}
+{"session_id": "session_412c1856bd9a", "project_id": "jarvis_core", "cwd": ".", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "jarvis_core_001"}}
+{"session_id": "session_1265f5c963c1", "project_id": "jarvis_core", "cwd": ".", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "jarvis_core_002"}}
+{"session_id": "session_809f2fdea206", "project_id": "jarvis_core", "cwd": ".", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "jarvis_core_001"}}
+{"session_id": "session_ad397dffdce4", "project_id": "jarvis_core", "cwd": ".", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "jarvis_core_002"}}
+{"session_id": "session_ad94a6a57b35", "project_id": "jarvis_core", "cwd": ".", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "jarvis_core_003"}}
+{"session_id": "session_3f3f3391e972", "project_id": "jarvis_core", "cwd": ".", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "jarvis_core_004"}}
+{"session_id": "session_08c55def0a32", "project_id": "jarvis_core", "cwd": ".", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "jarvis_core_005"}}
+{"session_id": "session_939b20332931", "project_id": "jarvis_core", "cwd": ".", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "jarvis_core_001"}}
+{"session_id": "session_f46dbaadaccb", "project_id": "jarvis_core", "cwd": ".", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "jarvis_core_002"}}
+{"session_id": "session_bda538e314cb", "project_id": "jarvis_core", "cwd": ".", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "jarvis_core_003"}}
+{"session_id": "session_6dede04fb4c1", "project_id": "p", "cwd": "C:\\Users\\Lenovo\\AppData\\Local\\Temp\\pytest-of-Lenovo\\pytest-54\\test_agent_loop_smoke_no_tool0", "created_by": "agent_loop", "metadata": {}}
+{"session_id": "session_5f941c21743c", "project_id": "p2", "cwd": "C:\\Users\\Lenovo\\AppData\\Local\\Temp\\pytest-of-Lenovo\\pytest-54\\test_agent_loop_tool_call_then0", "created_by": "agent_loop", "metadata": {}}
+{"session_id": "session_398017ade6a7", "project_id": "jarvis_core", "cwd": ".", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "jarvis_core_001"}}
+{"session_id": "session_47815f822353", "project_id": "jarvis_core", "cwd": ".", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "jarvis_core_002"}}
+{"session_id": "session_c055fa82c6bc", "project_id": "jarvis_core", "cwd": ".", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "jarvis_core_001"}}
+{"session_id": "session_4ca1df22caea", "project_id": "jarvis_core", "cwd": ".", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "jarvis_core_002"}}
+{"session_id": "session_5d54f5b742b1", "project_id": "jarvis_core", "cwd": ".", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "jarvis_core_003"}}
+{"session_id": "session_55f0d454ede0", "project_id": "jarvis_core", "cwd": ".", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "jarvis_core_004"}}
+{"session_id": "session_ec0aac0298fb", "project_id": "jarvis_core", "cwd": ".", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "jarvis_core_001"}}
+{"session_id": "session_6a4b9096ec70", "project_id": "jarvis_core", "cwd": ".", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "jarvis_core_002"}}
+{"session_id": "session_375fca2a316a", "project_id": "jarvis_core", "cwd": ".", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "jarvis_core_003"}}
+{"session_id": "session_757e57d6a77d", "project_id": "jarvis_core", "cwd": ".", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "jarvis_core_004"}}
+{"session_id": "session_208e383b6d56", "project_id": "jarvis_core", "cwd": ".", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "jarvis_core_005"}}
+{"session_id": "session_88225ff6fc94", "project_id": "jarvis_core", "cwd": ".", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "jarvis_core_005"}}
+{"session_id": "session_9f82096b4e9a", "project_id": "jarvis_core", "cwd": ".", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "jarvis_core_006"}}
+{"session_id": "session_1f46d077ebd9", "project_id": "jarvis_core", "cwd": ".", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "jarvis_core_007"}}
+{"session_id": "session_74763010ac2b", "project_id": "jarvis_core", "cwd": ".", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "jarvis_core_008"}}
+{"session_id": "session_923cf691ced5", "project_id": "jarvis_core", "cwd": ".", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "jarvis_core_009"}}
+{"session_id": "session_150d0a9a6abf", "project_id": "jarvis_core", "cwd": ".", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "jarvis_core_010"}}
+{"session_id": "session_614dcf33a790", "project_id": "jarvis_core", "cwd": ".", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "jarvis_core_001"}}
+{"session_id": "session_21e734784659", "project_id": "jarvis_core", "cwd": ".", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "jarvis_core_002"}}
+{"session_id": "session_253b456c90b0", "project_id": "jarvis_core", "cwd": ".", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "jarvis_core_003"}}
+{"session_id": "session_223d7c76eb2b", "project_id": "jarvis_core", "cwd": ".", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "jarvis_core_004"}}
+{"session_id": "session_d00be21fe35e", "project_id": "jarvis_core", "cwd": ".", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "jarvis_core_005"}}
+{"session_id": "session_cf4d38c5d0a3", "project_id": "jarvis_core", "cwd": ".", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "jarvis_core_006"}}
+{"session_id": "session_2d3d486fbf26", "project_id": "jarvis_core", "cwd": ".", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "jarvis_core_007"}}
+{"session_id": "session_1b6186a4d391", "project_id": "jarvis_core", "cwd": ".", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "jarvis_core_008"}}
+{"session_id": "session_2708bd53d13b", "project_id": "jarvis_core", "cwd": ".", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "jarvis_core_009"}}
+{"session_id": "session_6306a0b2bac8", "project_id": "jarvis_core", "cwd": ".", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "jarvis_core_010"}}
+{"session_id": "session_8bd62b77cda4", "project_id": "p", "cwd": "C:\\Users\\Lenovo\\AppData\\Local\\Temp\\pytest-of-Lenovo\\pytest-56\\test_agent_loop_smoke_no_tool0", "created_by": "agent_loop", "metadata": {}}
+{"session_id": "session_4cc57d10fbe3", "project_id": "p2", "cwd": "C:\\Users\\Lenovo\\AppData\\Local\\Temp\\pytest-of-Lenovo\\pytest-56\\test_agent_loop_tool_call_then0", "created_by": "agent_loop", "metadata": {}}
+{"session_id": "session_fa30e87c4680", "project_id": "jarvis_core", "cwd": ".", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "jarvis_core_001"}}
+{"session_id": "session_f9fd56045ec2", "project_id": "jarvis_core", "cwd": ".", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "jarvis_core_002"}}
+{"session_id": "session_04a7b05232c2", "project_id": "jarvis_core", "cwd": ".", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "jarvis_core_001"}}
+{"session_id": "session_ffa984a8d3b7", "project_id": "jarvis_core", "cwd": ".", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "jarvis_core_002"}}
+{"session_id": "session_a373a90bf9f2", "project_id": "jarvis_core", "cwd": ".", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "jarvis_core_003"}}
+{"session_id": "session_616440a67a8d", "project_id": "jarvis_core", "cwd": ".", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "jarvis_core_004"}}
+{"session_id": "session_a447d5362dd6", "project_id": "jarvis_core", "cwd": ".", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "jarvis_core_001"}}
+{"session_id": "session_75bc379a494e", "project_id": "jarvis_core", "cwd": ".", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "jarvis_core_002"}}
+{"session_id": "session_d4a099a6b709", "project_id": "jarvis_core", "cwd": ".", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "jarvis_core_003"}}
+{"session_id": "session_26fd53b5e344", "project_id": "jarvis_core", "cwd": ".", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "jarvis_core_004"}}
+{"session_id": "session_424733280422", "project_id": "jarvis_core", "cwd": ".", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "jarvis_core_005"}}
+{"session_id": "session_7d60fdce4e93", "project_id": "jarvis_core", "cwd": ".", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "jarvis_core_006"}}
+{"session_id": "session_dd24faa2496c", "project_id": "jarvis_core", "cwd": ".", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "jarvis_core_005"}}
+{"session_id": "session_0e470347edbc", "project_id": "jarvis_core", "cwd": ".", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "jarvis_core_007"}}
+{"session_id": "session_fd02e3bf5e64", "project_id": "jarvis_core", "cwd": ".", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "jarvis_core_008"}}
+{"session_id": "session_7981ddac81e6", "project_id": "jarvis_core", "cwd": ".", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "jarvis_core_009"}}
+{"session_id": "session_bd1007704fcf", "project_id": "jarvis_core", "cwd": ".", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "jarvis_core_010"}}
+{"session_id": "session_043f05f6fe92", "project_id": "jarvis_core", "cwd": ".", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "jarvis_core_001"}}
+{"session_id": "session_4a9612d27ea8", "project_id": "jarvis_core", "cwd": ".", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "jarvis_core_002"}}
+{"session_id": "session_31780ec37035", "project_id": "jarvis_core", "cwd": ".", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "jarvis_core_003"}}
+{"session_id": "session_5bd9b69f551b", "project_id": "jarvis_core", "cwd": ".", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "jarvis_core_004"}}
+{"session_id": "session_23073136ff30", "project_id": "jarvis_core", "cwd": ".", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "jarvis_core_005"}}
+{"session_id": "session_a70fae839e9b", "project_id": "jarvis_core", "cwd": ".", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "jarvis_core_006"}}
+{"session_id": "session_6dddb3086f78", "project_id": "jarvis_core", "cwd": ".", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "jarvis_core_007"}}
+{"session_id": "session_17b723297581", "project_id": "jarvis_core", "cwd": ".", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "jarvis_core_008"}}
+{"session_id": "session_d0f9e8500909", "project_id": "jarvis_core", "cwd": ".", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "jarvis_core_009"}}
+{"session_id": "session_f5a8362a52a5", "project_id": "jarvis_core", "cwd": ".", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "jarvis_core_010"}}
+{"session_id": "cli_oneshot", "project_id": null, "cwd": "d:\\jarvis", "created_by": "agent_loop", "metadata": {"source": "jarvis.cli", "mode": "default"}}
+{"session_id": "session_eff0687ea084", "project_id": "p", "cwd": "C:\\Users\\Lenovo\\AppData\\Local\\Temp\\pytest-of-Lenovo\\pytest-62\\test_agent_loop_smoke_no_tool0", "created_by": "agent_loop", "metadata": {}}
+{"session_id": "session_67856ce790f6", "project_id": "p2", "cwd": "C:\\Users\\Lenovo\\AppData\\Local\\Temp\\pytest-of-Lenovo\\pytest-62\\test_agent_loop_tool_call_then0", "created_by": "agent_loop", "metadata": {}}
+{"session_id": "session_42524c059628", "project_id": "jarvis_core", "cwd": ".", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "jarvis_core_001"}}
+{"session_id": "session_442b9434e255", "project_id": "jarvis_core", "cwd": ".", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "jarvis_core_002"}}
+{"session_id": "cli_shell", "project_id": null, "cwd": "D:\\Jarvis", "created_by": "agent_loop", "metadata": {"source": "jarvis.cli", "mode": "default"}}
+{"session_id": "session_6114cf6d2dc5", "project_id": "p", "cwd": "C:\\Users\\Lenovo\\AppData\\Local\\Temp\\pytest-of-Lenovo\\pytest-65\\test_agent_loop_smoke_no_tool0", "created_by": "agent_loop", "metadata": {}}
+{"session_id": "session_b9d948fb8d5a", "project_id": "p2", "cwd": "C:\\Users\\Lenovo\\AppData\\Local\\Temp\\pytest-of-Lenovo\\pytest-65\\test_agent_loop_tool_call_then0", "created_by": "agent_loop", "metadata": {}}
+{"session_id": "session_c8604b1db226", "project_id": "jarvis_core", "cwd": ".", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "jarvis_core_001"}}
+{"session_id": "session_a6eaf8f15fcc", "project_id": "jarvis_core", "cwd": ".", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "jarvis_core_002"}}
+{"session_id": "session_cb6395b11019", "project_id": "p", "cwd": "C:\\Users\\Lenovo\\AppData\\Local\\Temp\\pytest-of-Lenovo\\pytest-68\\test_agent_loop_smoke_no_tool0", "created_by": "agent_loop", "metadata": {}}
+{"session_id": "session_5ac0f05199bf", "project_id": "p2", "cwd": "C:\\Users\\Lenovo\\AppData\\Local\\Temp\\pytest-of-Lenovo\\pytest-68\\test_agent_loop_tool_call_then0", "created_by": "agent_loop", "metadata": {}}
+{"session_id": "session_bd3fd39db1a3", "project_id": "jarvis_core", "cwd": ".", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "jarvis_core_001"}}
+{"session_id": "session_a8a20eb1f713", "project_id": "jarvis_core", "cwd": ".", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "jarvis_core_002"}}
+{"session_id": "session_1e75e75028f0", "project_id": "p", "cwd": "C:\\Users\\Lenovo\\AppData\\Local\\Temp\\pytest-of-Lenovo\\pytest-72\\test_agent_loop_smoke_no_tool0", "created_by": "agent_loop", "metadata": {}}
+{"session_id": "session_068fee9bc2f8", "project_id": "jarvis_core", "cwd": ".", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "jarvis_core_001"}}
+{"session_id": "session_b7393943c833", "project_id": "p2", "cwd": "C:\\Users\\Lenovo\\AppData\\Local\\Temp\\pytest-of-Lenovo\\pytest-72\\test_agent_loop_tool_call_then0", "created_by": "agent_loop", "metadata": {}}
+{"session_id": "session_eacddc69cb68", "project_id": "jarvis_core", "cwd": ".", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "jarvis_core_002"}}
+{"session_id": "session_ed7617916ff4", "project_id": "p", "cwd": "C:\\Users\\Lenovo\\AppData\\Local\\Temp\\pytest-of-Lenovo\\pytest-74\\test_agent_loop_smoke_no_tool0", "created_by": "agent_loop", "metadata": {}}
+{"session_id": "session_f3ba089a7fd8", "project_id": "p2", "cwd": "C:\\Users\\Lenovo\\AppData\\Local\\Temp\\pytest-of-Lenovo\\pytest-74\\test_agent_loop_tool_call_then0", "created_by": "agent_loop", "metadata": {}}
+{"session_id": "session_f934379f00d0", "project_id": "jarvis_core", "cwd": ".", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "jarvis_core_001"}}
+{"session_id": "session_a4aa0c78abea", "project_id": "jarvis_core", "cwd": ".", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "jarvis_core_002"}}
+{"session_id": "session_3e05194fe0b9", "project_id": "p", "cwd": "C:\\Users\\Lenovo\\AppData\\Local\\Temp\\pytest-of-Lenovo\\pytest-77\\test_agent_loop_smoke_no_tool0", "created_by": "agent_loop", "metadata": {}}
+{"session_id": "session_390f8df44ff5", "project_id": "p2", "cwd": "C:\\Users\\Lenovo\\AppData\\Local\\Temp\\pytest-of-Lenovo\\pytest-77\\test_agent_loop_tool_call_then0", "created_by": "agent_loop", "metadata": {}}
+{"session_id": "session_b141f8dff72c", "project_id": "jarvis_core", "cwd": ".", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "jarvis_core_001"}}
+{"session_id": "session_62440e0214ec", "project_id": "jarvis_core", "cwd": ".", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "jarvis_core_002"}}
+{"session_id": "session_6d3a032a9665", "project_id": "p", "cwd": "C:\\Users\\Lenovo\\AppData\\Local\\Temp\\pytest-of-Lenovo\\pytest-80\\test_agent_loop_smoke_no_tool0", "created_by": "agent_loop", "metadata": {}}
+{"session_id": "session_8015b31a5444", "project_id": "p2", "cwd": "C:\\Users\\Lenovo\\AppData\\Local\\Temp\\pytest-of-Lenovo\\pytest-80\\test_agent_loop_tool_call_then0", "created_by": "agent_loop", "metadata": {}}
+{"session_id": "session_1797735b35be", "project_id": "test", "cwd": "C:\\Users\\Lenovo\\AppData\\Local\\Temp\\pytest-of-unknown\\pytest-0\\test_output_type_answer0", "created_by": "agent_loop", "metadata": {}}
+{"session_id": "session_5b15df137d7e", "project_id": "test", "cwd": "C:\\Users\\Lenovo\\AppData\\Local\\Temp\\pytest-of-unknown\\pytest-0\\test_output_type_refusal_sensi0", "created_by": "agent_loop", "metadata": {}}
+{"session_id": "session_b3c7d68ede1a", "project_id": "test", "cwd": "C:\\Users\\Lenovo\\AppData\\Local\\Temp\\pytest-of-unknown\\pytest-0\\test_output_type_refusal_api_k0", "created_by": "agent_loop", "metadata": {}}
+{"session_id": "session_1024323f29b3", "project_id": "test", "cwd": "C:\\Users\\Lenovo\\AppData\\Local\\Temp\\pytest-of-unknown\\pytest-0\\test_output_type_clarification0", "created_by": "agent_loop", "metadata": {}}
+{"session_id": "session_599da5a6f87e", "project_id": "test", "cwd": "C:\\Users\\Lenovo\\AppData\\Local\\Temp\\pytest-of-unknown\\pytest-0\\test_output_type_clarification1", "created_by": "agent_loop", "metadata": {}}
+{"session_id": "session_3bf3426fc4ce", "project_id": "test", "cwd": "C:\\Users\\Lenovo\\AppData\\Local\\Temp\\pytest-of-unknown\\pytest-0\\test_output_type_tool_result0", "created_by": "agent_loop", "metadata": {}}
+{"session_id": "session_5c0036515ae2", "project_id": "test", "cwd": "C:\\Users\\Lenovo\\AppData\\Local\\Temp\\pytest-of-unknown\\pytest-0\\test_output_type_partial_no_pr0", "created_by": "agent_loop", "metadata": {}}
+{"session_id": "session_8d99587ea9b2", "project_id": "test", "cwd": "C:\\Users\\Lenovo\\AppData\\Local\\Temp\\pytest-of-unknown\\pytest-0\\test_output_type_partial_max_s0", "created_by": "agent_loop", "metadata": {}}
+{"session_id": "session_ddd4420af6fa", "project_id": "test", "cwd": "C:\\Users\\Lenovo\\AppData\\Local\\Temp\\pytest-of-unknown\\pytest-0\\test_summary_machine_has_outpu0", "created_by": "agent_loop", "metadata": {}}
+{"session_id": "session_cbcebe39f2af", "project_id": "test", "cwd": "C:\\Users\\Lenovo\\AppData\\Local\\Temp\\pytest-of-unknown\\pytest-0\\test_to_dict_includes_output_t0", "created_by": "agent_loop", "metadata": {}}
+{"session_id": "session_bc7a15024f7b", "project_id": "test", "cwd": "C:\\Users\\Lenovo\\AppData\\Local\\Temp\\pytest-of-unknown\\pytest-0\\test_old_default_clarify_sente0", "created_by": "agent_loop", "metadata": {}}
+{"session_id": "session_590a17b7808c", "project_id": "test", "cwd": "C:\\Users\\Lenovo\\AppData\\Local\\Temp\\pytest-of-unknown\\pytest-0\\test_capability_question_not_c0", "created_by": "agent_loop", "metadata": {}}
+{"session_id": "session_ff2650d313a9", "project_id": "test", "cwd": "C:\\Users\\Lenovo\\AppData\\Local\\Temp\\pytest-of-unknown\\pytest-0\\test_model_question_not_clarif0", "created_by": "agent_loop", "metadata": {}}
+{"session_id": "session_4a2562de1ad3", "project_id": "test", "cwd": "C:\\Users\\Lenovo\\AppData\\Local\\Temp\\pytest-of-unknown\\pytest-1\\test_output_type_answer0", "created_by": "agent_loop", "metadata": {}}
+{"session_id": "session_ba533e0efb36", "project_id": "test", "cwd": "C:\\Users\\Lenovo\\AppData\\Local\\Temp\\pytest-of-unknown\\pytest-1\\test_output_type_refusal_sensi0", "created_by": "agent_loop", "metadata": {}}
+{"session_id": "session_e3908f7444dd", "project_id": "test", "cwd": "C:\\Users\\Lenovo\\AppData\\Local\\Temp\\pytest-of-unknown\\pytest-1\\test_output_type_refusal_api_k0", "created_by": "agent_loop", "metadata": {}}
+{"session_id": "session_0cd458517c67", "project_id": "test", "cwd": "C:\\Users\\Lenovo\\AppData\\Local\\Temp\\pytest-of-unknown\\pytest-1\\test_output_type_clarification0", "created_by": "agent_loop", "metadata": {}}
+{"session_id": "session_ad0ce0aa09f0", "project_id": "test", "cwd": "C:\\Users\\Lenovo\\AppData\\Local\\Temp\\pytest-of-unknown\\pytest-1\\test_output_type_clarification1", "created_by": "agent_loop", "metadata": {}}
+{"session_id": "session_81407909e371", "project_id": "test", "cwd": "C:\\Users\\Lenovo\\AppData\\Local\\Temp\\pytest-of-unknown\\pytest-1\\test_output_type_tool_result0", "created_by": "agent_loop", "metadata": {}}
+{"session_id": "session_4d32aacc5cc7", "project_id": "test", "cwd": "C:\\Users\\Lenovo\\AppData\\Local\\Temp\\pytest-of-unknown\\pytest-1\\test_output_type_partial_no_pr0", "created_by": "agent_loop", "metadata": {}}
+{"session_id": "session_a7642d5a65d7", "project_id": "test", "cwd": "C:\\Users\\Lenovo\\AppData\\Local\\Temp\\pytest-of-unknown\\pytest-1\\test_output_type_partial_max_s0", "created_by": "agent_loop", "metadata": {}}
+{"session_id": "session_9d6fa0e1b954", "project_id": "test", "cwd": "C:\\Users\\Lenovo\\AppData\\Local\\Temp\\pytest-of-unknown\\pytest-1\\test_summary_machine_has_outpu0", "created_by": "agent_loop", "metadata": {}}
+{"session_id": "session_667e5406021d", "project_id": "test", "cwd": "C:\\Users\\Lenovo\\AppData\\Local\\Temp\\pytest-of-unknown\\pytest-1\\test_to_dict_includes_output_t0", "created_by": "agent_loop", "metadata": {}}
+{"session_id": "session_472cb5571193", "project_id": "test", "cwd": "C:\\Users\\Lenovo\\AppData\\Local\\Temp\\pytest-of-unknown\\pytest-1\\test_old_default_clarify_sente0", "created_by": "agent_loop", "metadata": {}}
+{"session_id": "session_8d199f96ea99", "project_id": "test", "cwd": "C:\\Users\\Lenovo\\AppData\\Local\\Temp\\pytest-of-unknown\\pytest-1\\test_capability_question_not_c0", "created_by": "agent_loop", "metadata": {}}
+{"session_id": "session_3089dabb7f9a", "project_id": "test", "cwd": "C:\\Users\\Lenovo\\AppData\\Local\\Temp\\pytest-of-unknown\\pytest-1\\test_model_question_not_clarif0", "created_by": "agent_loop", "metadata": {}}
+{"session_id": "session_a6045abef231", "project_id": "test", "cwd": "C:\\Users\\Lenovo\\AppData\\Local\\Temp\\pytest-of-unknown\\pytest-2\\test_json_output_has_ok_field0", "created_by": "agent_loop", "metadata": {}}
+{"session_id": "session_67729473b25e", "project_id": "test", "cwd": "C:\\Users\\Lenovo\\AppData\\Local\\Temp\\pytest-of-unknown\\pytest-2\\test_json_output_has_output_ty0", "created_by": "agent_loop", "metadata": {}}
+{"session_id": "session_2a4b90d7a33c", "project_id": "test", "cwd": "C:\\Users\\Lenovo\\AppData\\Local\\Temp\\pytest-of-unknown\\pytest-2\\test_json_output_has_tools_use0", "created_by": "agent_loop", "metadata": {}}
+{"session_id": "session_55101cd73c6b", "project_id": "test", "cwd": "C:\\Users\\Lenovo\\AppData\\Local\\Temp\\pytest-of-unknown\\pytest-2\\test_json_output_has_model_fie0", "created_by": "agent_loop", "metadata": {}}
+{"session_id": "session_48464c921d0e", "project_id": "test", "cwd": "C:\\Users\\Lenovo\\AppData\\Local\\Temp\\pytest-of-unknown\\pytest-2\\test_json_output_pure_json0", "created_by": "agent_loop", "metadata": {}}
+{"session_id": "session_3899377eb51c", "project_id": "test", "cwd": "C:\\Users\\Lenovo\\AppData\\Local\\Temp\\pytest-of-unknown\\pytest-2\\test_verbose_output_shows_outp0", "created_by": "agent_loop", "metadata": {}}
+{"session_id": "session_fe989ee18c79", "project_id": "test", "cwd": "C:\\Users\\Lenovo\\AppData\\Local\\Temp\\pytest-of-unknown\\pytest-2\\test_trace_output_shows_events0", "created_by": "agent_loop", "metadata": {}}
+{"session_id": "session_bcccc230a87b", "project_id": "test", "cwd": "C:\\Users\\Lenovo\\AppData\\Local\\Temp\\pytest-of-unknown\\pytest-3\\test_no_bad_clarify_model_ques0", "created_by": "agent_loop", "metadata": {}}
+{"session_id": "session_5b691f113038", "project_id": "test", "cwd": "C:\\Users\\Lenovo\\AppData\\Local\\Temp\\pytest-of-unknown\\pytest-3\\test_no_bad_clarify_capability0", "created_by": "agent_loop", "metadata": {}}
+{"session_id": "session_75d3051759ba", "project_id": "test", "cwd": "C:\\Users\\Lenovo\\AppData\\Local\\Temp\\pytest-of-unknown\\pytest-3\\test_no_bad_clarify_greeting0", "created_by": "agent_loop", "metadata": {}}
+{"session_id": "session_1ffbe4100e79", "project_id": "test", "cwd": "C:\\Users\\Lenovo\\AppData\\Local\\Temp\\pytest-of-unknown\\pytest-3\\test_no_bad_clarify_who_are_yo0", "created_by": "agent_loop", "metadata": {}}
+{"session_id": "session_56a8bdf52943", "project_id": "test", "cwd": "C:\\Users\\Lenovo\\AppData\\Local\\Temp\\pytest-of-unknown\\pytest-3\\test_no_bad_clarify_tell_joke0", "created_by": "agent_loop", "metadata": {}}
+{"session_id": "session_da3393a8d180", "project_id": "test", "cwd": "C:\\Users\\Lenovo\\AppData\\Local\\Temp\\pytest-of-unknown\\pytest-3\\test_no_bad_clarify_evening_gr0", "created_by": "agent_loop", "metadata": {}}
+{"session_id": "session_87a70da9646d", "project_id": "test", "cwd": "C:\\Users\\Lenovo\\AppData\\Local\\Temp\\pytest-of-unknown\\pytest-3\\test_no_bad_clarify_hi0", "created_by": "agent_loop", "metadata": {}}
+{"session_id": "session_60ae659be796", "project_id": "test", "cwd": "C:\\Users\\Lenovo\\AppData\\Local\\Temp\\pytest-of-unknown\\pytest-3\\test_no_bad_clarify_what_can_y0", "created_by": "agent_loop", "metadata": {}}
+{"session_id": "session_b305d74be283", "project_id": "test", "cwd": "C:\\Users\\Lenovo\\AppData\\Local\\Temp\\pytest-of-unknown\\pytest-4\\test_same_tool_same_args_dedup0", "created_by": "agent_loop", "metadata": {}}
+{"session_id": "session_690b84238a95", "project_id": "test", "cwd": "C:\\Users\\Lenovo\\AppData\\Local\\Temp\\pytest-of-unknown\\pytest-4\\test_different_args_not_dedupe0", "created_by": "agent_loop", "metadata": {}}
+{"session_id": "session_cd412270acb5", "project_id": "test", "cwd": "C:\\Users\\Lenovo\\AppData\\Local\\Temp\\pytest-of-unknown\\pytest-4\\test_no_progress_early_stop0", "created_by": "agent_loop", "metadata": {}}
+{"session_id": "session_185cb1e58e67", "project_id": "test", "cwd": "C:\\Users\\Lenovo\\AppData\\Local\\Temp\\pytest-of-unknown\\pytest-4\\test_query_tool_summarization_0", "created_by": "agent_loop", "metadata": {}}
+{"session_id": "session_9af0d8dfee46", "project_id": "test", "cwd": "C:\\Users\\Lenovo\\AppData\\Local\\Temp\\pytest-of-unknown\\pytest-5\\test_genuinely_vague_uses_agen0", "created_by": "agent_loop", "metadata": {}}
+{"session_id": "session_8c9319340a62", "project_id": "test", "cwd": "C:\\Users\\Lenovo\\AppData\\Local\\Temp\\pytest-of-unknown\\pytest-5\\test_clarification_py_not_impo0", "created_by": "agent_loop", "metadata": {}}
+{"session_id": "session_935d42eb4927", "project_id": "jarvis_core", "cwd": "C:\\Users\\Lenovo\\AppData\\Local\\Temp\\pytest-of-unknown\\pytest-5\\test_benchmark_run_result_has_0", "created_by": "agent_loop", "metadata": {}}
+{"session_id": "session_c86662e265db", "project_id": "jarvis_core", "cwd": "C:\\Users\\Lenovo\\AppData\\Local\\Temp\\pytest-of-unknown\\pytest-5\\test_benchmark_run_result_outp0", "created_by": "agent_loop", "metadata": {}}
+{"session_id": "session_63acd6872eff", "project_id": "jarvis_core", "cwd": "C:\\Users\\Lenovo\\AppData\\Local\\Temp\\pytest-of-unknown\\pytest-5\\test_benchmark_run_result_outp1", "created_by": "agent_loop", "metadata": {}}
+{"session_id": "session_ec0bbbd7e0a2", "project_id": "jarvis_core", "cwd": "C:\\Users\\Lenovo\\AppData\\Local\\Temp\\pytest-of-unknown\\pytest-5\\test_run_result_to_dict_is_jso0", "created_by": "agent_loop", "metadata": {}}
+{"session_id": "session_21bc4d6f306b", "project_id": "p", "cwd": "C:\\Users\\Lenovo\\AppData\\Local\\Temp\\pytest-of-unknown\\pytest-6\\test_agent_loop_smoke_no_tool0", "created_by": "agent_loop", "metadata": {}}
+{"session_id": "session_5d4bdb48a024", "project_id": "p2", "cwd": "C:\\Users\\Lenovo\\AppData\\Local\\Temp\\pytest-of-unknown\\pytest-6\\test_agent_loop_tool_call_then0", "created_by": "agent_loop", "metadata": {}}
+{"session_id": "session_a7ca319e61aa", "project_id": "test", "cwd": "C:\\Users\\Lenovo\\AppData\\Local\\Temp\\pytest-of-unknown\\pytest-6\\test_output_type_answer0", "created_by": "agent_loop", "metadata": {}}
+{"session_id": "session_b1b162819892", "project_id": "test", "cwd": "C:\\Users\\Lenovo\\AppData\\Local\\Temp\\pytest-of-unknown\\pytest-6\\test_output_type_refusal_sensi0", "created_by": "agent_loop", "metadata": {}}
+{"session_id": "session_626068a5005e", "project_id": "test", "cwd": "C:\\Users\\Lenovo\\AppData\\Local\\Temp\\pytest-of-unknown\\pytest-6\\test_output_type_refusal_api_k0", "created_by": "agent_loop", "metadata": {}}
+{"session_id": "session_6f58681f6bfa", "project_id": "test", "cwd": "C:\\Users\\Lenovo\\AppData\\Local\\Temp\\pytest-of-unknown\\pytest-6\\test_output_type_clarification0", "created_by": "agent_loop", "metadata": {}}
+{"session_id": "session_dd484fe66cf2", "project_id": "test", "cwd": "C:\\Users\\Lenovo\\AppData\\Local\\Temp\\pytest-of-unknown\\pytest-6\\test_output_type_clarification1", "created_by": "agent_loop", "metadata": {}}
+{"session_id": "session_0f1aeadc2530", "project_id": "test", "cwd": "C:\\Users\\Lenovo\\AppData\\Local\\Temp\\pytest-of-unknown\\pytest-6\\test_output_type_tool_result0", "created_by": "agent_loop", "metadata": {}}
+{"session_id": "session_7eea5127b384", "project_id": "test", "cwd": "C:\\Users\\Lenovo\\AppData\\Local\\Temp\\pytest-of-unknown\\pytest-6\\test_output_type_partial_no_pr0", "created_by": "agent_loop", "metadata": {}}
+{"session_id": "session_f271fd36904d", "project_id": "test", "cwd": "C:\\Users\\Lenovo\\AppData\\Local\\Temp\\pytest-of-unknown\\pytest-6\\test_output_type_partial_max_s0", "created_by": "agent_loop", "metadata": {}}
+{"session_id": "session_ab0daddefbf3", "project_id": "test", "cwd": "C:\\Users\\Lenovo\\AppData\\Local\\Temp\\pytest-of-unknown\\pytest-6\\test_summary_machine_has_outpu0", "created_by": "agent_loop", "metadata": {}}
+{"session_id": "session_b2231dd528bb", "project_id": "test", "cwd": "C:\\Users\\Lenovo\\AppData\\Local\\Temp\\pytest-of-unknown\\pytest-6\\test_to_dict_includes_output_t0", "created_by": "agent_loop", "metadata": {}}
+{"session_id": "session_9156cc68745b", "project_id": "test", "cwd": "C:\\Users\\Lenovo\\AppData\\Local\\Temp\\pytest-of-unknown\\pytest-6\\test_old_default_clarify_sente0", "created_by": "agent_loop", "metadata": {}}
+{"session_id": "session_ef7c5a6c2de4", "project_id": "test", "cwd": "C:\\Users\\Lenovo\\AppData\\Local\\Temp\\pytest-of-unknown\\pytest-6\\test_capability_question_not_c0", "created_by": "agent_loop", "metadata": {}}
+{"session_id": "session_95f306c52cab", "project_id": "test", "cwd": "C:\\Users\\Lenovo\\AppData\\Local\\Temp\\pytest-of-unknown\\pytest-6\\test_model_question_not_clarif0", "created_by": "agent_loop", "metadata": {}}
+{"session_id": "session_13b4c8a6ed23", "project_id": "test", "cwd": "C:\\Users\\Lenovo\\AppData\\Local\\Temp\\pytest-of-unknown\\pytest-6\\test_same_tool_same_args_dedup0", "created_by": "agent_loop", "metadata": {}}
+{"session_id": "session_83d0a64b7a65", "project_id": "test", "cwd": "C:\\Users\\Lenovo\\AppData\\Local\\Temp\\pytest-of-unknown\\pytest-6\\test_different_args_not_dedupe0", "created_by": "agent_loop", "metadata": {}}
+{"session_id": "session_1926f5aff500", "project_id": "test", "cwd": "C:\\Users\\Lenovo\\AppData\\Local\\Temp\\pytest-of-unknown\\pytest-6\\test_no_progress_early_stop0", "created_by": "agent_loop", "metadata": {}}
+{"session_id": "session_c5c06dcdbc83", "project_id": "test", "cwd": "C:\\Users\\Lenovo\\AppData\\Local\\Temp\\pytest-of-unknown\\pytest-6\\test_query_tool_summarization_0", "created_by": "agent_loop", "metadata": {}}
+{"session_id": "session_81575e96a2bd", "project_id": "test", "cwd": "C:\\Users\\Lenovo\\AppData\\Local\\Temp\\pytest-of-unknown\\pytest-7\\test_json_output_has_ok_field0", "created_by": "agent_loop", "metadata": {}}
+{"session_id": "session_1797eccfafd0", "project_id": "test", "cwd": "C:\\Users\\Lenovo\\AppData\\Local\\Temp\\pytest-of-unknown\\pytest-7\\test_json_output_has_output_ty0", "created_by": "agent_loop", "metadata": {}}
+{"session_id": "session_315835a2e54f", "project_id": "test", "cwd": "C:\\Users\\Lenovo\\AppData\\Local\\Temp\\pytest-of-unknown\\pytest-7\\test_json_output_has_tools_use0", "created_by": "agent_loop", "metadata": {}}
+{"session_id": "session_77372cdf5acc", "project_id": "test", "cwd": "C:\\Users\\Lenovo\\AppData\\Local\\Temp\\pytest-of-unknown\\pytest-7\\test_json_output_has_model_fie0", "created_by": "agent_loop", "metadata": {}}
+{"session_id": "session_e11e18b2be68", "project_id": "test", "cwd": "C:\\Users\\Lenovo\\AppData\\Local\\Temp\\pytest-of-unknown\\pytest-7\\test_json_output_pure_json0", "created_by": "agent_loop", "metadata": {}}
+{"session_id": "session_d51356a96cbe", "project_id": "test", "cwd": "C:\\Users\\Lenovo\\AppData\\Local\\Temp\\pytest-of-unknown\\pytest-7\\test_verbose_output_shows_outp0", "created_by": "agent_loop", "metadata": {}}
+{"session_id": "session_f466b530493b", "project_id": "test", "cwd": "C:\\Users\\Lenovo\\AppData\\Local\\Temp\\pytest-of-unknown\\pytest-7\\test_trace_output_shows_events0", "created_by": "agent_loop", "metadata": {}}
+{"session_id": "session_894bafe82061", "project_id": "test", "cwd": "C:\\Users\\Lenovo\\AppData\\Local\\Temp\\pytest-of-unknown\\pytest-8\\test_genuinely_vague_uses_agen0", "created_by": "agent_loop", "metadata": {}}
+{"session_id": "session_bcb1a00d3bce", "project_id": "test", "cwd": "C:\\Users\\Lenovo\\AppData\\Local\\Temp\\pytest-of-unknown\\pytest-8\\test_clarification_py_not_impo0", "created_by": "agent_loop", "metadata": {}}
+{"session_id": "session_fffb48b41d97", "project_id": "jarvis_core", "cwd": ".", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "jarvis_core_001"}}
+{"session_id": "session_7fb46e6d1dd2", "project_id": "jarvis_core", "cwd": ".", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "jarvis_core_002"}}
+{"session_id": "session_901b963a4d4d", "project_id": "jarvis_core", "cwd": "C:\\Users\\Lenovo\\AppData\\Local\\Temp\\pytest-of-unknown\\pytest-9\\test_benchmark_run_result_has_0", "created_by": "agent_loop", "metadata": {}}
+{"session_id": "session_29a230f55b17", "project_id": "jarvis_core", "cwd": "C:\\Users\\Lenovo\\AppData\\Local\\Temp\\pytest-of-unknown\\pytest-9\\test_benchmark_run_result_outp0", "created_by": "agent_loop", "metadata": {}}
+{"session_id": "session_8a3742ff6ecc", "project_id": "jarvis_core", "cwd": "C:\\Users\\Lenovo\\AppData\\Local\\Temp\\pytest-of-unknown\\pytest-9\\test_benchmark_run_result_outp1", "created_by": "agent_loop", "metadata": {}}
+{"session_id": "session_501a2f150b9c", "project_id": "jarvis_core", "cwd": "C:\\Users\\Lenovo\\AppData\\Local\\Temp\\pytest-of-unknown\\pytest-9\\test_run_result_to_dict_is_jso0", "created_by": "agent_loop", "metadata": {}}
+{"session_id": "session_d18467709e9b", "project_id": "jarvis_core", "cwd": ".", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "jarvis_core_001"}}
+{"session_id": "session_454284f3824a", "project_id": "jarvis_core", "cwd": ".", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "jarvis_core_002"}}
+{"session_id": "session_47d4838beaa0", "project_id": "jarvis_core", "cwd": "C:\\Users\\Lenovo\\AppData\\Local\\Temp\\pytest-of-unknown\\pytest-11\\test_benchmark_run_result_has_0", "created_by": "agent_loop", "metadata": {}}
+{"session_id": "session_1513edcc57d3", "project_id": "jarvis_core", "cwd": "C:\\Users\\Lenovo\\AppData\\Local\\Temp\\pytest-of-unknown\\pytest-11\\test_benchmark_run_result_outp0", "created_by": "agent_loop", "metadata": {}}
+{"session_id": "session_22e1f493598c", "project_id": "jarvis_core", "cwd": "C:\\Users\\Lenovo\\AppData\\Local\\Temp\\pytest-of-unknown\\pytest-11\\test_benchmark_run_result_outp1", "created_by": "agent_loop", "metadata": {}}
+{"session_id": "session_6ddf06b6eeda", "project_id": "jarvis_core", "cwd": "C:\\Users\\Lenovo\\AppData\\Local\\Temp\\pytest-of-unknown\\pytest-11\\test_run_result_to_dict_is_jso0", "created_by": "agent_loop", "metadata": {}}
+{"session_id": "session_9726f58a0da9", "project_id": "p", "cwd": "C:\\Users\\Lenovo\\AppData\\Local\\Temp\\pytest-of-unknown\\pytest-12\\test_agent_loop_smoke_no_tool0", "created_by": "agent_loop", "metadata": {}}
+{"session_id": "session_cc58dc44a642", "project_id": "p2", "cwd": "C:\\Users\\Lenovo\\AppData\\Local\\Temp\\pytest-of-unknown\\pytest-12\\test_agent_loop_tool_call_then0", "created_by": "agent_loop", "metadata": {}}
+{"session_id": "session_8d0052895749", "project_id": "test", "cwd": "C:\\Users\\Lenovo\\AppData\\Local\\Temp\\pytest-of-unknown\\pytest-12\\test_output_type_answer0", "created_by": "agent_loop", "metadata": {}}
+{"session_id": "session_0ec4a67de438", "project_id": "test", "cwd": "C:\\Users\\Lenovo\\AppData\\Local\\Temp\\pytest-of-unknown\\pytest-12\\test_output_type_refusal_sensi0", "created_by": "agent_loop", "metadata": {}}
+{"session_id": "session_9ff9ef436be2", "project_id": "test", "cwd": "C:\\Users\\Lenovo\\AppData\\Local\\Temp\\pytest-of-unknown\\pytest-12\\test_output_type_refusal_api_k0", "created_by": "agent_loop", "metadata": {}}
+{"session_id": "session_3b41939099c7", "project_id": "test", "cwd": "C:\\Users\\Lenovo\\AppData\\Local\\Temp\\pytest-of-unknown\\pytest-12\\test_output_type_clarification0", "created_by": "agent_loop", "metadata": {}}
+{"session_id": "session_3d4a1b67ff6d", "project_id": "test", "cwd": "C:\\Users\\Lenovo\\AppData\\Local\\Temp\\pytest-of-unknown\\pytest-12\\test_output_type_clarification1", "created_by": "agent_loop", "metadata": {}}
+{"session_id": "session_89990636be99", "project_id": "test", "cwd": "C:\\Users\\Lenovo\\AppData\\Local\\Temp\\pytest-of-unknown\\pytest-12\\test_output_type_tool_result0", "created_by": "agent_loop", "metadata": {}}
+{"session_id": "session_ef9cd196cc24", "project_id": "test", "cwd": "C:\\Users\\Lenovo\\AppData\\Local\\Temp\\pytest-of-unknown\\pytest-12\\test_output_type_partial_no_pr0", "created_by": "agent_loop", "metadata": {}}
+{"session_id": "session_c9d1cacc156d", "project_id": "test", "cwd": "C:\\Users\\Lenovo\\AppData\\Local\\Temp\\pytest-of-unknown\\pytest-12\\test_output_type_partial_max_s0", "created_by": "agent_loop", "metadata": {}}
+{"session_id": "session_cae596d93d24", "project_id": "test", "cwd": "C:\\Users\\Lenovo\\AppData\\Local\\Temp\\pytest-of-unknown\\pytest-12\\test_summary_machine_has_outpu0", "created_by": "agent_loop", "metadata": {}}
+{"session_id": "session_c9a19058c00e", "project_id": "test", "cwd": "C:\\Users\\Lenovo\\AppData\\Local\\Temp\\pytest-of-unknown\\pytest-12\\test_to_dict_includes_output_t0", "created_by": "agent_loop", "metadata": {}}
+{"session_id": "session_553c1d16446b", "project_id": "test", "cwd": "C:\\Users\\Lenovo\\AppData\\Local\\Temp\\pytest-of-unknown\\pytest-12\\test_old_default_clarify_sente0", "created_by": "agent_loop", "metadata": {}}
+{"session_id": "session_98b0378cbd1d", "project_id": "test", "cwd": "C:\\Users\\Lenovo\\AppData\\Local\\Temp\\pytest-of-unknown\\pytest-12\\test_capability_question_not_c0", "created_by": "agent_loop", "metadata": {}}
+{"session_id": "session_25a4e4e6c6ad", "project_id": "test", "cwd": "C:\\Users\\Lenovo\\AppData\\Local\\Temp\\pytest-of-unknown\\pytest-12\\test_model_question_not_clarif0", "created_by": "agent_loop", "metadata": {}}
+{"session_id": "session_cec3c23cc995", "project_id": "test", "cwd": "C:\\Users\\Lenovo\\AppData\\Local\\Temp\\pytest-of-unknown\\pytest-12\\test_same_tool_same_args_dedup0", "created_by": "agent_loop", "metadata": {}}
+{"session_id": "session_ff3b0923b770", "project_id": "test", "cwd": "C:\\Users\\Lenovo\\AppData\\Local\\Temp\\pytest-of-unknown\\pytest-12\\test_different_args_not_dedupe0", "created_by": "agent_loop", "metadata": {}}
+{"session_id": "session_beaac900d056", "project_id": "test", "cwd": "C:\\Users\\Lenovo\\AppData\\Local\\Temp\\pytest-of-unknown\\pytest-12\\test_no_progress_early_stop0", "created_by": "agent_loop", "metadata": {}}
+{"session_id": "session_564a69aabda2", "project_id": "test", "cwd": "C:\\Users\\Lenovo\\AppData\\Local\\Temp\\pytest-of-unknown\\pytest-12\\test_query_tool_summarization_0", "created_by": "agent_loop", "metadata": {}}
+{"session_id": "session_c7af23fbfe21", "project_id": "test", "cwd": "C:\\Users\\Lenovo\\AppData\\Local\\Temp\\pytest-of-unknown\\pytest-12\\test_genuinely_vague_uses_agen0", "created_by": "agent_loop", "metadata": {}}
+{"session_id": "session_bcd04d09d87a", "project_id": "test", "cwd": "C:\\Users\\Lenovo\\AppData\\Local\\Temp\\pytest-of-unknown\\pytest-12\\test_clarification_py_not_impo0", "created_by": "agent_loop", "metadata": {}}
+{"session_id": "session_6b004b97686d", "project_id": "jarvis_core", "cwd": ".", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "jarvis_core_001"}}
+{"session_id": "session_f39760bb5e78", "project_id": "jarvis_core", "cwd": ".", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "jarvis_core_002"}}
+{"session_id": "session_7c750b3e4d6f", "project_id": "jarvis_core", "cwd": "C:\\Users\\Lenovo\\AppData\\Local\\Temp\\pytest-of-unknown\\pytest-12\\test_benchmark_run_result_has_0", "created_by": "agent_loop", "metadata": {}}
+{"session_id": "session_2c1499e4c7ac", "project_id": "jarvis_core", "cwd": "C:\\Users\\Lenovo\\AppData\\Local\\Temp\\pytest-of-unknown\\pytest-12\\test_benchmark_run_result_outp0", "created_by": "agent_loop", "metadata": {}}
+{"session_id": "session_d864321c0c5b", "project_id": "jarvis_core", "cwd": "C:\\Users\\Lenovo\\AppData\\Local\\Temp\\pytest-of-unknown\\pytest-12\\test_benchmark_run_result_outp1", "created_by": "agent_loop", "metadata": {}}
+{"session_id": "session_008c2c6ad6a9", "project_id": "jarvis_core", "cwd": "C:\\Users\\Lenovo\\AppData\\Local\\Temp\\pytest-of-unknown\\pytest-12\\test_run_result_to_dict_is_jso0", "created_by": "agent_loop", "metadata": {}}
+{"session_id": "session_6336bb020d0e", "project_id": "p", "cwd": "C:\\Users\\Lenovo\\AppData\\Local\\Temp\\pytest-of-unknown\\pytest-13\\test_agent_loop_smoke_no_tool0", "created_by": "agent_loop", "metadata": {}}
+{"session_id": "session_dc8c8309a6a0", "project_id": "p2", "cwd": "C:\\Users\\Lenovo\\AppData\\Local\\Temp\\pytest-of-unknown\\pytest-13\\test_agent_loop_tool_call_then0", "created_by": "agent_loop", "metadata": {}}
+{"session_id": "session_a4aae359de84", "project_id": "test", "cwd": "C:\\Users\\Lenovo\\AppData\\Local\\Temp\\pytest-of-unknown\\pytest-13\\test_output_type_answer0", "created_by": "agent_loop", "metadata": {}}
+{"session_id": "session_518f257a1d78", "project_id": "test", "cwd": "C:\\Users\\Lenovo\\AppData\\Local\\Temp\\pytest-of-unknown\\pytest-13\\test_output_type_refusal_sensi0", "created_by": "agent_loop", "metadata": {}}
+{"session_id": "session_59e88dd97bc8", "project_id": "test", "cwd": "C:\\Users\\Lenovo\\AppData\\Local\\Temp\\pytest-of-unknown\\pytest-13\\test_output_type_refusal_api_k0", "created_by": "agent_loop", "metadata": {}}
+{"session_id": "session_ed8a10e7fbae", "project_id": "test", "cwd": "C:\\Users\\Lenovo\\AppData\\Local\\Temp\\pytest-of-unknown\\pytest-13\\test_output_type_clarification0", "created_by": "agent_loop", "metadata": {}}
+{"session_id": "session_f38755eb7662", "project_id": "test", "cwd": "C:\\Users\\Lenovo\\AppData\\Local\\Temp\\pytest-of-unknown\\pytest-13\\test_output_type_clarification1", "created_by": "agent_loop", "metadata": {}}
+{"session_id": "session_bd786691c8bc", "project_id": "test", "cwd": "C:\\Users\\Lenovo\\AppData\\Local\\Temp\\pytest-of-unknown\\pytest-13\\test_output_type_tool_result0", "created_by": "agent_loop", "metadata": {}}
+{"session_id": "session_62d1767e228a", "project_id": "test", "cwd": "C:\\Users\\Lenovo\\AppData\\Local\\Temp\\pytest-of-unknown\\pytest-13\\test_output_type_partial_no_pr0", "created_by": "agent_loop", "metadata": {}}
+{"session_id": "session_0c45867e8c50", "project_id": "test", "cwd": "C:\\Users\\Lenovo\\AppData\\Local\\Temp\\pytest-of-unknown\\pytest-13\\test_output_type_partial_max_s0", "created_by": "agent_loop", "metadata": {}}
+{"session_id": "session_cb37b1b840e6", "project_id": "test", "cwd": "C:\\Users\\Lenovo\\AppData\\Local\\Temp\\pytest-of-unknown\\pytest-13\\test_summary_machine_has_outpu0", "created_by": "agent_loop", "metadata": {}}
+{"session_id": "session_e030dd7b3186", "project_id": "test", "cwd": "C:\\Users\\Lenovo\\AppData\\Local\\Temp\\pytest-of-unknown\\pytest-13\\test_to_dict_includes_output_t0", "created_by": "agent_loop", "metadata": {}}
+{"session_id": "session_c8a4bb5c15fc", "project_id": "test", "cwd": "C:\\Users\\Lenovo\\AppData\\Local\\Temp\\pytest-of-unknown\\pytest-13\\test_old_default_clarify_sente0", "created_by": "agent_loop", "metadata": {}}
+{"session_id": "session_c61746e1fe83", "project_id": "test", "cwd": "C:\\Users\\Lenovo\\AppData\\Local\\Temp\\pytest-of-unknown\\pytest-13\\test_capability_question_not_c0", "created_by": "agent_loop", "metadata": {}}
+{"session_id": "session_dd0ed17ce568", "project_id": "test", "cwd": "C:\\Users\\Lenovo\\AppData\\Local\\Temp\\pytest-of-unknown\\pytest-13\\test_model_question_not_clarif0", "created_by": "agent_loop", "metadata": {}}
+{"session_id": "session_923b925a873d", "project_id": "test", "cwd": "C:\\Users\\Lenovo\\AppData\\Local\\Temp\\pytest-of-unknown\\pytest-13\\test_same_tool_same_args_dedup0", "created_by": "agent_loop", "metadata": {}}
+{"session_id": "session_6fade966341e", "project_id": "test", "cwd": "C:\\Users\\Lenovo\\AppData\\Local\\Temp\\pytest-of-unknown\\pytest-13\\test_different_args_not_dedupe0", "created_by": "agent_loop", "metadata": {}}
+{"session_id": "session_82afaaedaccb", "project_id": "test", "cwd": "C:\\Users\\Lenovo\\AppData\\Local\\Temp\\pytest-of-unknown\\pytest-13\\test_no_progress_early_stop0", "created_by": "agent_loop", "metadata": {}}
+{"session_id": "session_74179684f7db", "project_id": "test", "cwd": "C:\\Users\\Lenovo\\AppData\\Local\\Temp\\pytest-of-unknown\\pytest-13\\test_query_tool_summarization_0", "created_by": "agent_loop", "metadata": {}}
+{"session_id": "session_f96fd7551482", "project_id": "test", "cwd": "C:\\Users\\Lenovo\\AppData\\Local\\Temp\\pytest-of-unknown\\pytest-13\\test_genuinely_vague_uses_agen0", "created_by": "agent_loop", "metadata": {}}
+{"session_id": "session_c7d1f5e055ae", "project_id": "test", "cwd": "C:\\Users\\Lenovo\\AppData\\Local\\Temp\\pytest-of-unknown\\pytest-13\\test_clarification_py_not_impo0", "created_by": "agent_loop", "metadata": {}}
+{"session_id": "session_81a41f14865c", "project_id": "jarvis_core", "cwd": ".", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "jarvis_core_001"}}
+{"session_id": "session_a69886ea2a29", "project_id": "jarvis_core", "cwd": ".", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "jarvis_core_002"}}
+{"session_id": "session_9df184038000", "project_id": "jarvis_core", "cwd": "C:\\Users\\Lenovo\\AppData\\Local\\Temp\\pytest-of-unknown\\pytest-13\\test_benchmark_run_result_has_0", "created_by": "agent_loop", "metadata": {}}
+{"session_id": "session_c929c1df956a", "project_id": "jarvis_core", "cwd": "C:\\Users\\Lenovo\\AppData\\Local\\Temp\\pytest-of-unknown\\pytest-13\\test_benchmark_run_result_outp0", "created_by": "agent_loop", "metadata": {}}
+{"session_id": "session_6f97f71c3a93", "project_id": "jarvis_core", "cwd": "C:\\Users\\Lenovo\\AppData\\Local\\Temp\\pytest-of-unknown\\pytest-13\\test_benchmark_run_result_outp1", "created_by": "agent_loop", "metadata": {}}
+{"session_id": "session_56bf6ffea32b", "project_id": "jarvis_core", "cwd": "C:\\Users\\Lenovo\\AppData\\Local\\Temp\\pytest-of-unknown\\pytest-13\\test_run_result_to_dict_is_jso0", "created_by": "agent_loop", "metadata": {}}
+{"session_id": "session_e58b320f7a6e", "project_id": "p", "cwd": "C:\\Users\\Lenovo\\AppData\\Local\\Temp\\pytest-of-unknown\\pytest-14\\test_agent_loop_smoke_no_tool0", "created_by": "agent_loop", "metadata": {}}
+{"session_id": "session_2d8483692c68", "project_id": "p2", "cwd": "C:\\Users\\Lenovo\\AppData\\Local\\Temp\\pytest-of-unknown\\pytest-14\\test_agent_loop_tool_call_then0", "created_by": "agent_loop", "metadata": {}}
+{"session_id": "session_d00dcc74abc9", "project_id": "test", "cwd": "C:\\Users\\Lenovo\\AppData\\Local\\Temp\\pytest-of-unknown\\pytest-14\\test_output_type_answer0", "created_by": "agent_loop", "metadata": {}}
+{"session_id": "session_de8369025250", "project_id": "test", "cwd": "C:\\Users\\Lenovo\\AppData\\Local\\Temp\\pytest-of-unknown\\pytest-14\\test_output_type_refusal_sensi0", "created_by": "agent_loop", "metadata": {}}
+{"session_id": "session_d69237ce4825", "project_id": "test", "cwd": "C:\\Users\\Lenovo\\AppData\\Local\\Temp\\pytest-of-unknown\\pytest-14\\test_output_type_refusal_api_k0", "created_by": "agent_loop", "metadata": {}}
+{"session_id": "session_d5cba9c9bdc6", "project_id": "test", "cwd": "C:\\Users\\Lenovo\\AppData\\Local\\Temp\\pytest-of-unknown\\pytest-14\\test_output_type_clarification0", "created_by": "agent_loop", "metadata": {}}
+{"session_id": "session_b90793a743f0", "project_id": "test", "cwd": "C:\\Users\\Lenovo\\AppData\\Local\\Temp\\pytest-of-unknown\\pytest-14\\test_output_type_clarification1", "created_by": "agent_loop", "metadata": {}}
+{"session_id": "session_f353b5960127", "project_id": "test", "cwd": "C:\\Users\\Lenovo\\AppData\\Local\\Temp\\pytest-of-unknown\\pytest-14\\test_output_type_tool_result0", "created_by": "agent_loop", "metadata": {}}
+{"session_id": "session_186e6cdce367", "project_id": "test", "cwd": "C:\\Users\\Lenovo\\AppData\\Local\\Temp\\pytest-of-unknown\\pytest-14\\test_output_type_partial_no_pr0", "created_by": "agent_loop", "metadata": {}}
+{"session_id": "session_3b2aec1834c7", "project_id": "test", "cwd": "C:\\Users\\Lenovo\\AppData\\Local\\Temp\\pytest-of-unknown\\pytest-14\\test_output_type_partial_max_s0", "created_by": "agent_loop", "metadata": {}}
+{"session_id": "session_37f73539c2a3", "project_id": "test", "cwd": "C:\\Users\\Lenovo\\AppData\\Local\\Temp\\pytest-of-unknown\\pytest-14\\test_summary_machine_has_outpu0", "created_by": "agent_loop", "metadata": {}}
+{"session_id": "session_91b0ac71c1d0", "project_id": "test", "cwd": "C:\\Users\\Lenovo\\AppData\\Local\\Temp\\pytest-of-unknown\\pytest-14\\test_to_dict_includes_output_t0", "created_by": "agent_loop", "metadata": {}}
+{"session_id": "session_05a5d0795421", "project_id": "test", "cwd": "C:\\Users\\Lenovo\\AppData\\Local\\Temp\\pytest-of-unknown\\pytest-14\\test_old_default_clarify_sente0", "created_by": "agent_loop", "metadata": {}}
+{"session_id": "session_64103441b742", "project_id": "test", "cwd": "C:\\Users\\Lenovo\\AppData\\Local\\Temp\\pytest-of-unknown\\pytest-14\\test_capability_question_not_c0", "created_by": "agent_loop", "metadata": {}}
+{"session_id": "session_c8dbd3826b12", "project_id": "test", "cwd": "C:\\Users\\Lenovo\\AppData\\Local\\Temp\\pytest-of-unknown\\pytest-14\\test_model_question_not_clarif0", "created_by": "agent_loop", "metadata": {}}
+{"session_id": "session_44d87870e722", "project_id": "test", "cwd": "C:\\Users\\Lenovo\\AppData\\Local\\Temp\\pytest-of-unknown\\pytest-14\\test_same_tool_same_args_dedup0", "created_by": "agent_loop", "metadata": {}}
+{"session_id": "session_3f2125332a1b", "project_id": "test", "cwd": "C:\\Users\\Lenovo\\AppData\\Local\\Temp\\pytest-of-unknown\\pytest-14\\test_different_args_not_dedupe0", "created_by": "agent_loop", "metadata": {}}
+{"session_id": "session_7aa1986f2e75", "project_id": "test", "cwd": "C:\\Users\\Lenovo\\AppData\\Local\\Temp\\pytest-of-unknown\\pytest-14\\test_no_progress_early_stop0", "created_by": "agent_loop", "metadata": {}}
+{"session_id": "session_b1efe02185cb", "project_id": "test", "cwd": "C:\\Users\\Lenovo\\AppData\\Local\\Temp\\pytest-of-unknown\\pytest-14\\test_query_tool_summarization_0", "created_by": "agent_loop", "metadata": {}}
+{"session_id": "session_9e668369396f", "project_id": "test", "cwd": "C:\\Users\\Lenovo\\AppData\\Local\\Temp\\pytest-of-unknown\\pytest-14\\test_genuinely_vague_uses_agen0", "created_by": "agent_loop", "metadata": {}}
+{"session_id": "session_23479123d82a", "project_id": "test", "cwd": "C:\\Users\\Lenovo\\AppData\\Local\\Temp\\pytest-of-unknown\\pytest-14\\test_clarification_py_not_impo0", "created_by": "agent_loop", "metadata": {}}
+{"session_id": "session_00c6e5c24512", "project_id": "jarvis_core", "cwd": ".", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "jarvis_core_001"}}
+{"session_id": "session_388e22370bf9", "project_id": "jarvis_core", "cwd": ".", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "jarvis_core_002"}}
+{"session_id": "session_7ab917ffada9", "project_id": "jarvis_core", "cwd": "C:\\Users\\Lenovo\\AppData\\Local\\Temp\\pytest-of-unknown\\pytest-14\\test_benchmark_run_result_has_0", "created_by": "agent_loop", "metadata": {}}
+{"session_id": "session_b9f705c53231", "project_id": "jarvis_core", "cwd": "C:\\Users\\Lenovo\\AppData\\Local\\Temp\\pytest-of-unknown\\pytest-14\\test_benchmark_run_result_outp0", "created_by": "agent_loop", "metadata": {}}
+{"session_id": "session_6a64a8364f0e", "project_id": "jarvis_core", "cwd": "C:\\Users\\Lenovo\\AppData\\Local\\Temp\\pytest-of-unknown\\pytest-14\\test_benchmark_run_result_outp1", "created_by": "agent_loop", "metadata": {}}
+{"session_id": "session_809149b00acc", "project_id": "jarvis_core", "cwd": "C:\\Users\\Lenovo\\AppData\\Local\\Temp\\pytest-of-unknown\\pytest-14\\test_run_result_to_dict_is_jso0", "created_by": "agent_loop", "metadata": {}}
+{"session_id": "session_55062c06d1a8", "project_id": "p", "cwd": "C:\\Users\\Lenovo\\AppData\\Local\\Temp\\pytest-of-unknown\\pytest-15\\test_agent_loop_smoke_no_tool0", "created_by": "agent_loop", "metadata": {}}
+{"session_id": "session_6cf8c729950f", "project_id": "p2", "cwd": "C:\\Users\\Lenovo\\AppData\\Local\\Temp\\pytest-of-unknown\\pytest-15\\test_agent_loop_tool_call_then0", "created_by": "agent_loop", "metadata": {}}
+{"session_id": "session_1a30cf17b66b", "project_id": "test", "cwd": "C:\\Users\\Lenovo\\AppData\\Local\\Temp\\pytest-of-unknown\\pytest-15\\test_output_type_answer0", "created_by": "agent_loop", "metadata": {}}
+{"session_id": "session_26813e6a9c14", "project_id": "test", "cwd": "C:\\Users\\Lenovo\\AppData\\Local\\Temp\\pytest-of-unknown\\pytest-15\\test_output_type_refusal_sensi0", "created_by": "agent_loop", "metadata": {}}
+{"session_id": "session_4151514f5537", "project_id": "test", "cwd": "C:\\Users\\Lenovo\\AppData\\Local\\Temp\\pytest-of-unknown\\pytest-15\\test_output_type_refusal_api_k0", "created_by": "agent_loop", "metadata": {}}
+{"session_id": "session_05727d633d2b", "project_id": "test", "cwd": "C:\\Users\\Lenovo\\AppData\\Local\\Temp\\pytest-of-unknown\\pytest-15\\test_output_type_clarification0", "created_by": "agent_loop", "metadata": {}}
+{"session_id": "session_55df2abdd55c", "project_id": "test", "cwd": "C:\\Users\\Lenovo\\AppData\\Local\\Temp\\pytest-of-unknown\\pytest-15\\test_output_type_clarification1", "created_by": "agent_loop", "metadata": {}}
+{"session_id": "session_fd6581d681aa", "project_id": "test", "cwd": "C:\\Users\\Lenovo\\AppData\\Local\\Temp\\pytest-of-unknown\\pytest-15\\test_output_type_tool_result0", "created_by": "agent_loop", "metadata": {}}
+{"session_id": "session_0e82984ce1dc", "project_id": "test", "cwd": "C:\\Users\\Lenovo\\AppData\\Local\\Temp\\pytest-of-unknown\\pytest-15\\test_output_type_partial_no_pr0", "created_by": "agent_loop", "metadata": {}}
+{"session_id": "session_9fe413e1ac6d", "project_id": "test", "cwd": "C:\\Users\\Lenovo\\AppData\\Local\\Temp\\pytest-of-unknown\\pytest-15\\test_output_type_partial_max_s0", "created_by": "agent_loop", "metadata": {}}
+{"session_id": "session_4a5dafecdce0", "project_id": "test", "cwd": "C:\\Users\\Lenovo\\AppData\\Local\\Temp\\pytest-of-unknown\\pytest-15\\test_summary_machine_has_outpu0", "created_by": "agent_loop", "metadata": {}}
+{"session_id": "session_9c88dbd94c47", "project_id": "test", "cwd": "C:\\Users\\Lenovo\\AppData\\Local\\Temp\\pytest-of-unknown\\pytest-15\\test_to_dict_includes_output_t0", "created_by": "agent_loop", "metadata": {}}
+{"session_id": "session_43e256e77a3f", "project_id": "test", "cwd": "C:\\Users\\Lenovo\\AppData\\Local\\Temp\\pytest-of-unknown\\pytest-15\\test_old_default_clarify_sente0", "created_by": "agent_loop", "metadata": {}}
+{"session_id": "session_974099470100", "project_id": "test", "cwd": "C:\\Users\\Lenovo\\AppData\\Local\\Temp\\pytest-of-unknown\\pytest-15\\test_capability_question_not_c0", "created_by": "agent_loop", "metadata": {}}
+{"session_id": "session_0b41590b424b", "project_id": "test", "cwd": "C:\\Users\\Lenovo\\AppData\\Local\\Temp\\pytest-of-unknown\\pytest-15\\test_model_question_not_clarif0", "created_by": "agent_loop", "metadata": {}}
+{"session_id": "session_a4557b512896", "project_id": "test", "cwd": "C:\\Users\\Lenovo\\AppData\\Local\\Temp\\pytest-of-unknown\\pytest-15\\test_same_tool_same_args_dedup0", "created_by": "agent_loop", "metadata": {}}
+{"session_id": "session_8b23cd5b2284", "project_id": "test", "cwd": "C:\\Users\\Lenovo\\AppData\\Local\\Temp\\pytest-of-unknown\\pytest-15\\test_different_args_not_dedupe0", "created_by": "agent_loop", "metadata": {}}
+{"session_id": "session_a6468219576f", "project_id": "test", "cwd": "C:\\Users\\Lenovo\\AppData\\Local\\Temp\\pytest-of-unknown\\pytest-15\\test_no_progress_early_stop0", "created_by": "agent_loop", "metadata": {}}
+{"session_id": "session_d4477bf9428a", "project_id": "test", "cwd": "C:\\Users\\Lenovo\\AppData\\Local\\Temp\\pytest-of-unknown\\pytest-15\\test_query_tool_summarization_0", "created_by": "agent_loop", "metadata": {}}
+{"session_id": "session_9b2568626235", "project_id": "test", "cwd": "C:\\Users\\Lenovo\\AppData\\Local\\Temp\\pytest-of-unknown\\pytest-16\\test_genuinely_vague_uses_agen0", "created_by": "agent_loop", "metadata": {}}
+{"session_id": "session_4c85d1798fdc", "project_id": "test", "cwd": "C:\\Users\\Lenovo\\AppData\\Local\\Temp\\pytest-of-unknown\\pytest-16\\test_clarification_py_not_impo0", "created_by": "agent_loop", "metadata": {}}
+{"session_id": "session_88ccc25b0683", "project_id": "jarvis_core", "cwd": ".", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "jarvis_core_001"}}
+{"session_id": "session_d78644f7f7cc", "project_id": "jarvis_core", "cwd": ".", "created_by": "agent_loop", "metadata": {"benchmark_case_id": "jarvis_core_002"}}
+{"session_id": "session_d0a228145fce", "project_id": "jarvis_core", "cwd": "C:\\Users\\Lenovo\\AppData\\Local\\Temp\\pytest-of-unknown\\pytest-17\\test_benchmark_run_result_has_0", "created_by": "agent_loop", "metadata": {}}
+{"session_id": "session_19b5887e0448", "project_id": "jarvis_core", "cwd": "C:\\Users\\Lenovo\\AppData\\Local\\Temp\\pytest-of-unknown\\pytest-17\\test_benchmark_run_result_outp0", "created_by": "agent_loop", "metadata": {}}
+{"session_id": "session_17721986bed7", "project_id": "jarvis_core", "cwd": "C:\\Users\\Lenovo\\AppData\\Local\\Temp\\pytest-of-unknown\\pytest-17\\test_benchmark_run_result_outp1", "created_by": "agent_loop", "metadata": {}}
+{"session_id": "session_05d568fe58e8", "project_id": "jarvis_core", "cwd": "C:\\Users\\Lenovo\\AppData\\Local\\Temp\\pytest-of-unknown\\pytest-17\\test_run_result_to_dict_is_jso0", "created_by": "agent_loop", "metadata": {}}

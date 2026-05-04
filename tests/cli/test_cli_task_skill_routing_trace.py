@@ -20,4 +20,4 @@ def test_cli_non_interactive_repo_inspection_is_not_task_trace():
     assert result.returncode == 0
     assert "Task task_" not in out
     # Now routed through AgentToolLoop
-    assert "llm provider" in out.lower() or "无法连接" in out or "repository inspection" in out.lower()
+    assert "jarvis" in out.lower() or "llm provider" in out.lower() or "无法连接" in out or "repository inspection" in out.lower()

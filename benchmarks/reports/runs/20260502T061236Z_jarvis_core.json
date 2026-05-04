@@ -1,0 +1,325 @@
+{
+  "generated_at": "2026-05-02T06:12:36.188294+00:00",
+  "scope": "jarvis_core",
+  "execution_mode": "real_llm",
+  "model_provider": "openai_compatible",
+  "model_name": "deepseek-chat",
+  "model_backend": "real",
+  "suites": [
+    {
+      "suite": "jarvis_core",
+      "total": 3,
+      "pass_rate": 0.3333333333333333,
+      "execution_mode": "real_llm",
+      "model_provider": "openai_compatible",
+      "model_name": "deepseek-chat",
+      "model_backend": "real",
+      "api_key_source": "JARVIS_LLM_API_KEY",
+      "results": [
+        {
+          "case_id": "jarvis_core_001",
+          "suite": "jarvis_core",
+          "category": "chat",
+          "passed": true,
+          "score": 1.0,
+          "checks": {
+            "final_answer_exists": true,
+            "summary_exists": true,
+            "stop_reason_valid": true,
+            "event_timeline_valid": true,
+            "tool_call_schema_valid": true,
+            "must_call_tools": true,
+            "no_forbidden_tool": true,
+            "must_include": true,
+            "must_not_modify_files": true,
+            "test_passed": true
+          },
+          "run_result": {
+            "ok": true,
+            "session_id": "session_8e7e6c88bec3",
+            "turn_id": "turn_1ea053cf5cb0",
+            "final_answer": "```json\n{\n  \"final_answer_text\": \"我是 Jarvis AgentLoop，一个智能代理系统。我可以帮助你完成以下任务：\\n\\n1. **代码搜索**：在仓库中搜索文件或文本模式。\\n2. **文件读取**：读取仓库中的文件内容（可指定行范围）。\\n3. **文本替换**：在文件中替换文本（需要审批）。\\n4. **命令执行**：在工作区运行 shell 命令（需要审批）。\\n5. **测试运行**：通过 TestRunner 运行测试（需要审批）。\\n\\n请告诉我你需要什么帮助！\"\n}\n```",
+            "events": [
+              {
+                "event_id": "evt_275e1e42cf4f",
+                "turn_id": "turn_1ea053cf5cb0",
+                "timestamp": "2026-05-02T06:12:29.903894+00:00",
+                "type": "turn_started",
+                "payload": {
+                  "session_id": "session_8e7e6c88bec3",
+                  "text": "你是谁？你能做什么？"
+                }
+              },
+              {
+                "event_id": "evt_6f009635f398",
+                "turn_id": "turn_1ea053cf5cb0",
+                "timestamp": "2026-05-02T06:12:29.905611+00:00",
+                "type": "model_call_started",
+                "payload": {
+                  "step": 1
+                }
+              },
+              {
+                "event_id": "evt_3e29899a87f6",
+                "turn_id": "turn_1ea053cf5cb0",
+                "timestamp": "2026-05-02T06:12:32.117448+00:00",
+                "type": "model_call_completed",
+                "payload": {
+                  "step": 1,
+                  "finish_reason": "stop"
+                }
+              },
+              {
+                "event_id": "evt_4632562c5ae2",
+                "turn_id": "turn_1ea053cf5cb0",
+                "timestamp": "2026-05-02T06:12:32.117448+00:00",
+                "type": "final_answer_created",
+                "payload": {
+                  "step": 1
+                }
+              },
+              {
+                "event_id": "evt_f0916d2e34ff",
+                "turn_id": "turn_1ea053cf5cb0",
+                "timestamp": "2026-05-02T06:12:32.155075+00:00",
+                "type": "turn_completed",
+                "payload": {
+                  "status": "completed",
+                  "stop_reason": "completed"
+                }
+              },
+              {
+                "event_id": "evt_0ff3ace4a5e6",
+                "turn_id": "turn_1ea053cf5cb0",
+                "timestamp": "2026-05-02T06:12:32.155075+00:00",
+                "type": "summary_created",
+                "payload": {
+                  "status": "completed"
+                }
+              }
+            ],
+            "summary": {
+              "human": "结论:\n- ```json\n{\n  \"final_answer_text\": \"我是 Jarvis AgentLoop，一个智能代理系统。我可以帮助你完成以下任务：\\n\\n1. **代码搜索**：在仓库中搜索文件或文本模式。\\n2. **文件读取**：读取仓库中的文件内容（可指定行范围）。\\n3. **文本替换**：在文件中替换文本（需要审批）。\\n4. **命令执行**：在工作区运行 shell 命令（需要审批）。\\n5. **测试运行**：通过 TestRunner 运行测试（需要审批）。\\n\\n请告诉我你需要什么帮助！\"\n}\n```\n做了什么:\n- 调用了 0 个工具\n调用了哪些工具:\n- 无\n改了哪些文件:\n- 无\n测试结果:\n- 无\n风险和未完成项:\n- 无\n下一步建议:\n- 如果是 partial/failed，先修复 stop_reason 对应问题后重试。",
+              "machine": {
+                "outcome": "completed",
+                "tools_used": [],
+                "files_changed": [],
+                "commands_run": [],
+                "tests_run": [],
+                "risks": [],
+                "stop_reason": "completed",
+                "handoff_summary": "```json\n{\n  \"final_answer_text\": \"我是 Jarvis AgentLoop，一个智能代理系统。我可以帮助你完成以下任务：\\n\\n1. **代码搜索**：在仓库中搜索文件或文本模式。\\n2. **文件读取**：读取仓库中的文件内容（可指定行范围）。\\n3. **文本替换**：在文件中替换文本（需要审批）。\\n4. **命令执行**：在工作区运行 shell 命令（需要审批）。\\n5. **测试运行**：通过 TestRunner 运行测试（需要审批）。\\n\\n请告诉我你需要什么帮助！\"\n}\n```"
+              }
+            },
+            "stop_reason": "completed",
+            "tool_calls": [],
+            "tool_results": [],
+            "status": "completed"
+          }
+        },
+        {
+          "case_id": "jarvis_core_002",
+          "suite": "jarvis_core",
+          "category": "repo",
+          "passed": false,
+          "score": 0.9,
+          "checks": {
+            "final_answer_exists": true,
+            "summary_exists": true,
+            "stop_reason_valid": true,
+            "event_timeline_valid": true,
+            "tool_call_schema_valid": true,
+            "must_call_tools": false,
+            "no_forbidden_tool": true,
+            "must_include": true,
+            "must_not_modify_files": true,
+            "test_passed": true
+          },
+          "run_result": {
+            "ok": true,
+            "session_id": "session_f50a05a3c5b7",
+            "turn_id": "turn_05188385f2a4",
+            "final_answer": "{\"tool_plan_json\": {\"thought\": \"用户要求列出当前目录内容。我可以使用 command_runner.run 工具执行 'ls -la' 命令，但该工具需要批准。由于这是一个简单的目录列表操作，风险较低，但工具本身标记为高风险。我将请求执行该命令。\", \"tool_calls\": [{\"tool_name\": \"command_runner.run\", \"arguments\": {\"command\": \"ls -la\", \"cwd\": \".\"}}]}}",
+            "events": [
+              {
+                "event_id": "evt_fe8859d044d4",
+                "turn_id": "turn_05188385f2a4",
+                "timestamp": "2026-05-02T06:12:32.161347+00:00",
+                "type": "turn_started",
+                "payload": {
+                  "session_id": "session_f50a05a3c5b7",
+                  "text": "列一下当前目录。"
+                }
+              },
+              {
+                "event_id": "evt_d90f822aae0b",
+                "turn_id": "turn_05188385f2a4",
+                "timestamp": "2026-05-02T06:12:32.162460+00:00",
+                "type": "model_call_started",
+                "payload": {
+                  "step": 1
+                }
+              },
+              {
+                "event_id": "evt_ca197127317d",
+                "turn_id": "turn_05188385f2a4",
+                "timestamp": "2026-05-02T06:12:34.187599+00:00",
+                "type": "model_call_completed",
+                "payload": {
+                  "step": 1,
+                  "finish_reason": "stop"
+                }
+              },
+              {
+                "event_id": "evt_5204d5964c5e",
+                "turn_id": "turn_05188385f2a4",
+                "timestamp": "2026-05-02T06:12:34.187599+00:00",
+                "type": "final_answer_created",
+                "payload": {
+                  "step": 1
+                }
+              },
+              {
+                "event_id": "evt_1f2f8df9220e",
+                "turn_id": "turn_05188385f2a4",
+                "timestamp": "2026-05-02T06:12:34.192486+00:00",
+                "type": "turn_completed",
+                "payload": {
+                  "status": "completed",
+                  "stop_reason": "completed"
+                }
+              },
+              {
+                "event_id": "evt_746ccec67b7f",
+                "turn_id": "turn_05188385f2a4",
+                "timestamp": "2026-05-02T06:12:34.192486+00:00",
+                "type": "summary_created",
+                "payload": {
+                  "status": "completed"
+                }
+              }
+            ],
+            "summary": {
+              "human": "结论:\n- {\"tool_plan_json\": {\"thought\": \"用户要求列出当前目录内容。我可以使用 command_runner.run 工具执行 'ls -la' 命令，但该工具需要批准。由于这是一个简单的目录列表操作，风险较低，但工具本身标记为高风险。我将请求执行该命令。\", \"tool_calls\": [{\"tool_name\": \"command_runner.run\", \"arguments\": {\"command\": \"ls -la\", \"cwd\": \".\"}}]}}\n做了什么:\n- 调用了 0 个工具\n调用了哪些工具:\n- 无\n改了哪些文件:\n- 无\n测试结果:\n- 无\n风险和未完成项:\n- 无\n下一步建议:\n- 如果是 partial/failed，先修复 stop_reason 对应问题后重试。",
+              "machine": {
+                "outcome": "completed",
+                "tools_used": [],
+                "files_changed": [],
+                "commands_run": [],
+                "tests_run": [],
+                "risks": [],
+                "stop_reason": "completed",
+                "handoff_summary": "{\"tool_plan_json\": {\"thought\": \"用户要求列出当前目录内容。我可以使用 command_runner.run 工具执行 'ls -la' 命令，但该工具需要批准。由于这是一个简单的目录列表操作，风险较低，但工具本身标记为高风险。我将请求执行该命令。\", \"tool_calls\": [{\"tool_name\": \"command_runner.run\", \"arguments\": {\"command\": \"ls -la\", \"cwd\": \".\"}}]}}"
+              }
+            },
+            "stop_reason": "completed",
+            "tool_calls": [],
+            "tool_results": [],
+            "status": "completed"
+          }
+        },
+        {
+          "case_id": "jarvis_core_003",
+          "suite": "jarvis_core",
+          "category": "read_file",
+          "passed": false,
+          "score": 0.9,
+          "checks": {
+            "final_answer_exists": true,
+            "summary_exists": true,
+            "stop_reason_valid": true,
+            "event_timeline_valid": true,
+            "tool_call_schema_valid": true,
+            "must_call_tools": false,
+            "no_forbidden_tool": true,
+            "must_include": true,
+            "must_not_modify_files": true,
+            "test_passed": true
+          },
+          "run_result": {
+            "ok": true,
+            "session_id": "session_ab160827a5a4",
+            "turn_id": "turn_80ded64aea3b",
+            "final_answer": "I'll read the README.md file for you.\n\n```json\n{\n  \"tool_plan_json\": {\n    \"thought\": \"The user wants to read the README.md file. I'll use the repo_reader.read_file tool to read it.\",\n    \"tool_calls\": [\n      {\n        \"tool_name\": \"repo_reader.read_file\",\n        \"arguments\": {\n          \"path\": \"README.md\"\n        }\n      }\n    ]\n  }\n}",
+            "events": [
+              {
+                "event_id": "evt_ca2557e4dd15",
+                "turn_id": "turn_80ded64aea3b",
+                "timestamp": "2026-05-02T06:12:34.199633+00:00",
+                "type": "turn_started",
+                "payload": {
+                  "session_id": "session_ab160827a5a4",
+                  "text": "读取 README.md"
+                }
+              },
+              {
+                "event_id": "evt_e9bed21af24d",
+                "turn_id": "turn_80ded64aea3b",
+                "timestamp": "2026-05-02T06:12:34.200697+00:00",
+                "type": "model_call_started",
+                "payload": {
+                  "step": 1
+                }
+              },
+              {
+                "event_id": "evt_072c8f701e4f",
+                "turn_id": "turn_80ded64aea3b",
+                "timestamp": "2026-05-02T06:12:36.160489+00:00",
+                "type": "model_call_completed",
+                "payload": {
+                  "step": 1,
+                  "finish_reason": "stop"
+                }
+              },
+              {
+                "event_id": "evt_dfd8cf955c3c",
+                "turn_id": "turn_80ded64aea3b",
+                "timestamp": "2026-05-02T06:12:36.160489+00:00",
+                "type": "final_answer_created",
+                "payload": {
+                  "step": 1
+                }
+              },
+              {
+                "event_id": "evt_ad0e0c7f2e54",
+                "turn_id": "turn_80ded64aea3b",
+                "timestamp": "2026-05-02T06:12:36.187787+00:00",
+                "type": "turn_completed",
+                "payload": {
+                  "status": "completed",
+                  "stop_reason": "completed"
+                }
+              },
+              {
+                "event_id": "evt_bf23626833bc",
+                "turn_id": "turn_80ded64aea3b",
+                "timestamp": "2026-05-02T06:12:36.187787+00:00",
+                "type": "summary_created",
+                "payload": {
+                  "status": "completed"
+                }
+              }
+            ],
+            "summary": {
+              "human": "结论:\n- I'll read the README.md file for you.\n\n```json\n{\n  \"tool_plan_json\": {\n    \"thought\": \"The user wants to read the README.md file. I'll use the repo_reader.read_file tool to read it.\",\n    \"tool_calls\": [\n      {\n        \"tool_name\": \"repo_reader.read_file\",\n        \"arguments\": {\n          \"path\": \"README.md\"\n        }\n      }\n    ]\n  }\n}\n做了什么:\n- 调用了 0 个工具\n调用了哪些工具:\n- 无\n改了哪些文件:\n- 无\n测试结果:\n- 无\n风险和未完成项:\n- 无\n下一步建议:\n- 如果是 partial/failed，先修复 stop_reason 对应问题后重试。",
+              "machine": {
+                "outcome": "completed",
+                "tools_used": [],
+                "files_changed": [],
+                "commands_run": [],
+                "tests_run": [],
+                "risks": [],
+                "stop_reason": "completed",
+                "handoff_summary": "I'll read the README.md file for you.\n\n```json\n{\n  \"tool_plan_json\": {\n    \"thought\": \"The user wants to read the README.md file. I'll use the repo_reader.read_file tool to read it.\",\n    \"tool_calls\": [\n      {\n        \"tool_name\": \"repo_reader.read_file\",\n        \"arguments\": {\n          \"path\": \"README.md\"\n        }\n      }\n    ]\n  }\n}"
+              }
+            },
+            "stop_reason": "completed",
+            "tool_calls": [],
+            "tool_results": [],
+            "status": "completed"
+          }
+        }
+      ]
+    }
+  ]
+}

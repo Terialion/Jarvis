@@ -1,0 +1,922 @@
+{
+  "generated_at": "2026-05-02T01:51:54.578455+00:00",
+  "scope": "web_research",
+  "suites": [
+    {
+      "suite": "web_research",
+      "total": 9,
+      "pass_rate": 0.0,
+      "results": [
+        {
+          "case_id": "web_research_002",
+          "suite": "web_research",
+          "category": "mocked_page_lookup",
+          "passed": false,
+          "score": 0.9,
+          "checks": {
+            "final_answer_exists": true,
+            "summary_exists": true,
+            "stop_reason_valid": true,
+            "event_timeline_valid": true,
+            "tool_call_schema_valid": true,
+            "must_call_tools": false,
+            "no_forbidden_tool": true,
+            "must_include": true,
+            "must_not_modify_files": true,
+            "test_passed": true
+          },
+          "run_result": {
+            "ok": true,
+            "session_id": "session_ed37e4f47b58",
+            "turn_id": "turn_e4d5c8d241a9",
+            "final_answer": "I can help with analysis, planning, and tool-assisted execution when needed.",
+            "events": [
+              {
+                "event_id": "evt_b6730c229c71",
+                "turn_id": "turn_e4d5c8d241a9",
+                "timestamp": "2026-05-02T01:51:54.488719+00:00",
+                "type": "turn_started",
+                "payload": {
+                  "session_id": "session_ed37e4f47b58",
+                  "text": "Read local mocked pages and summarize flink cdc cast string"
+                }
+              },
+              {
+                "event_id": "evt_de7dcc954463",
+                "turn_id": "turn_e4d5c8d241a9",
+                "timestamp": "2026-05-02T01:51:54.490521+00:00",
+                "type": "model_call_started",
+                "payload": {
+                  "step": 1
+                }
+              },
+              {
+                "event_id": "evt_9b9279e656f8",
+                "turn_id": "turn_e4d5c8d241a9",
+                "timestamp": "2026-05-02T01:51:54.490521+00:00",
+                "type": "model_call_completed",
+                "payload": {
+                  "step": 1,
+                  "finish_reason": "stop"
+                }
+              },
+              {
+                "event_id": "evt_96cac242b36c",
+                "turn_id": "turn_e4d5c8d241a9",
+                "timestamp": "2026-05-02T01:51:54.490521+00:00",
+                "type": "final_answer_created",
+                "payload": {
+                  "step": 1
+                }
+              },
+              {
+                "event_id": "evt_6a02ef25c722",
+                "turn_id": "turn_e4d5c8d241a9",
+                "timestamp": "2026-05-02T01:51:54.492689+00:00",
+                "type": "turn_completed",
+                "payload": {
+                  "status": "completed",
+                  "stop_reason": "completed"
+                }
+              },
+              {
+                "event_id": "evt_819814ea8b65",
+                "turn_id": "turn_e4d5c8d241a9",
+                "timestamp": "2026-05-02T01:51:54.492689+00:00",
+                "type": "summary_created",
+                "payload": {
+                  "status": "completed"
+                }
+              }
+            ],
+            "summary": {
+              "human": "结论:\n- I can help with analysis, planning, and tool-assisted execution when needed.\n做了什么:\n- 调用了 0 个工具\n调用了哪些工具:\n- 无\n改了哪些文件:\n- 无\n测试结果:\n- 无\n风险和未完成项:\n- 无\n下一步建议:\n- 如果是 partial/failed，先修复 stop_reason 对应问题后重试。",
+              "machine": {
+                "outcome": "completed",
+                "tools_used": [],
+                "files_changed": [],
+                "commands_run": [],
+                "tests_run": [],
+                "risks": [],
+                "stop_reason": "completed",
+                "handoff_summary": "I can help with analysis, planning, and tool-assisted execution when needed."
+              }
+            },
+            "stop_reason": "completed",
+            "tool_calls": [],
+            "tool_results": [],
+            "status": "completed"
+          }
+        },
+        {
+          "case_id": "web_research_003",
+          "suite": "web_research",
+          "category": "mocked_page_lookup",
+          "passed": false,
+          "score": 0.9,
+          "checks": {
+            "final_answer_exists": true,
+            "summary_exists": true,
+            "stop_reason_valid": true,
+            "event_timeline_valid": true,
+            "tool_call_schema_valid": true,
+            "must_call_tools": false,
+            "no_forbidden_tool": true,
+            "must_include": true,
+            "must_not_modify_files": true,
+            "test_passed": true
+          },
+          "run_result": {
+            "ok": true,
+            "session_id": "session_0de7690fbe45",
+            "turn_id": "turn_a17df498da7d",
+            "final_answer": "I can help with analysis, planning, and tool-assisted execution when needed.",
+            "events": [
+              {
+                "event_id": "evt_a7e34b1d03ea",
+                "turn_id": "turn_a17df498da7d",
+                "timestamp": "2026-05-02T01:51:54.497698+00:00",
+                "type": "turn_started",
+                "payload": {
+                  "session_id": "session_0de7690fbe45",
+                  "text": "Read local mocked pages and summarize flink cdc cast string"
+                }
+              },
+              {
+                "event_id": "evt_201b064fed8e",
+                "turn_id": "turn_a17df498da7d",
+                "timestamp": "2026-05-02T01:51:54.498841+00:00",
+                "type": "model_call_started",
+                "payload": {
+                  "step": 1
+                }
+              },
+              {
+                "event_id": "evt_c25349ce36e9",
+                "turn_id": "turn_a17df498da7d",
+                "timestamp": "2026-05-02T01:51:54.498841+00:00",
+                "type": "model_call_completed",
+                "payload": {
+                  "step": 1,
+                  "finish_reason": "stop"
+                }
+              },
+              {
+                "event_id": "evt_9cc162452f3e",
+                "turn_id": "turn_a17df498da7d",
+                "timestamp": "2026-05-02T01:51:54.498841+00:00",
+                "type": "final_answer_created",
+                "payload": {
+                  "step": 1
+                }
+              },
+              {
+                "event_id": "evt_baf440cf0c5e",
+                "turn_id": "turn_a17df498da7d",
+                "timestamp": "2026-05-02T01:51:54.502477+00:00",
+                "type": "turn_completed",
+                "payload": {
+                  "status": "completed",
+                  "stop_reason": "completed"
+                }
+              },
+              {
+                "event_id": "evt_8552f2f49792",
+                "turn_id": "turn_a17df498da7d",
+                "timestamp": "2026-05-02T01:51:54.502477+00:00",
+                "type": "summary_created",
+                "payload": {
+                  "status": "completed"
+                }
+              }
+            ],
+            "summary": {
+              "human": "结论:\n- I can help with analysis, planning, and tool-assisted execution when needed.\n做了什么:\n- 调用了 0 个工具\n调用了哪些工具:\n- 无\n改了哪些文件:\n- 无\n测试结果:\n- 无\n风险和未完成项:\n- 无\n下一步建议:\n- 如果是 partial/failed，先修复 stop_reason 对应问题后重试。",
+              "machine": {
+                "outcome": "completed",
+                "tools_used": [],
+                "files_changed": [],
+                "commands_run": [],
+                "tests_run": [],
+                "risks": [],
+                "stop_reason": "completed",
+                "handoff_summary": "I can help with analysis, planning, and tool-assisted execution when needed."
+              }
+            },
+            "stop_reason": "completed",
+            "tool_calls": [],
+            "tool_results": [],
+            "status": "completed"
+          }
+        },
+        {
+          "case_id": "web_research_004",
+          "suite": "web_research",
+          "category": "mocked_page_lookup",
+          "passed": false,
+          "score": 0.9,
+          "checks": {
+            "final_answer_exists": true,
+            "summary_exists": true,
+            "stop_reason_valid": true,
+            "event_timeline_valid": true,
+            "tool_call_schema_valid": true,
+            "must_call_tools": false,
+            "no_forbidden_tool": true,
+            "must_include": true,
+            "must_not_modify_files": true,
+            "test_passed": true
+          },
+          "run_result": {
+            "ok": true,
+            "session_id": "session_3ec0b06dd129",
+            "turn_id": "turn_45261b758088",
+            "final_answer": "I can help with analysis, planning, and tool-assisted execution when needed.",
+            "events": [
+              {
+                "event_id": "evt_1dcd0a6bde9f",
+                "turn_id": "turn_45261b758088",
+                "timestamp": "2026-05-02T01:51:54.508995+00:00",
+                "type": "turn_started",
+                "payload": {
+                  "session_id": "session_3ec0b06dd129",
+                  "text": "Read local mocked pages and summarize flink cdc cast string"
+                }
+              },
+              {
+                "event_id": "evt_a3b7e5ad29be",
+                "turn_id": "turn_45261b758088",
+                "timestamp": "2026-05-02T01:51:54.510993+00:00",
+                "type": "model_call_started",
+                "payload": {
+                  "step": 1
+                }
+              },
+              {
+                "event_id": "evt_1f8c17a043bc",
+                "turn_id": "turn_45261b758088",
+                "timestamp": "2026-05-02T01:51:54.510993+00:00",
+                "type": "model_call_completed",
+                "payload": {
+                  "step": 1,
+                  "finish_reason": "stop"
+                }
+              },
+              {
+                "event_id": "evt_e009f30bcfd9",
+                "turn_id": "turn_45261b758088",
+                "timestamp": "2026-05-02T01:51:54.510993+00:00",
+                "type": "final_answer_created",
+                "payload": {
+                  "step": 1
+                }
+              },
+              {
+                "event_id": "evt_05e983c209cf",
+                "turn_id": "turn_45261b758088",
+                "timestamp": "2026-05-02T01:51:54.514671+00:00",
+                "type": "turn_completed",
+                "payload": {
+                  "status": "completed",
+                  "stop_reason": "completed"
+                }
+              },
+              {
+                "event_id": "evt_3a4f906818b5",
+                "turn_id": "turn_45261b758088",
+                "timestamp": "2026-05-02T01:51:54.514671+00:00",
+                "type": "summary_created",
+                "payload": {
+                  "status": "completed"
+                }
+              }
+            ],
+            "summary": {
+              "human": "结论:\n- I can help with analysis, planning, and tool-assisted execution when needed.\n做了什么:\n- 调用了 0 个工具\n调用了哪些工具:\n- 无\n改了哪些文件:\n- 无\n测试结果:\n- 无\n风险和未完成项:\n- 无\n下一步建议:\n- 如果是 partial/failed，先修复 stop_reason 对应问题后重试。",
+              "machine": {
+                "outcome": "completed",
+                "tools_used": [],
+                "files_changed": [],
+                "commands_run": [],
+                "tests_run": [],
+                "risks": [],
+                "stop_reason": "completed",
+                "handoff_summary": "I can help with analysis, planning, and tool-assisted execution when needed."
+              }
+            },
+            "stop_reason": "completed",
+            "tool_calls": [],
+            "tool_results": [],
+            "status": "completed"
+          }
+        },
+        {
+          "case_id": "web_research_005",
+          "suite": "web_research",
+          "category": "mocked_page_lookup",
+          "passed": false,
+          "score": 0.9,
+          "checks": {
+            "final_answer_exists": true,
+            "summary_exists": true,
+            "stop_reason_valid": true,
+            "event_timeline_valid": true,
+            "tool_call_schema_valid": true,
+            "must_call_tools": false,
+            "no_forbidden_tool": true,
+            "must_include": true,
+            "must_not_modify_files": true,
+            "test_passed": true
+          },
+          "run_result": {
+            "ok": true,
+            "session_id": "session_2e5b99df5d6c",
+            "turn_id": "turn_ccfb105050c3",
+            "final_answer": "I can help with analysis, planning, and tool-assisted execution when needed.",
+            "events": [
+              {
+                "event_id": "evt_cea505ad4592",
+                "turn_id": "turn_ccfb105050c3",
+                "timestamp": "2026-05-02T01:51:54.518917+00:00",
+                "type": "turn_started",
+                "payload": {
+                  "session_id": "session_2e5b99df5d6c",
+                  "text": "Read local mocked pages and summarize python version policy"
+                }
+              },
+              {
+                "event_id": "evt_dbfa88d9825f",
+                "turn_id": "turn_ccfb105050c3",
+                "timestamp": "2026-05-02T01:51:54.520487+00:00",
+                "type": "model_call_started",
+                "payload": {
+                  "step": 1
+                }
+              },
+              {
+                "event_id": "evt_342b5a7b9d92",
+                "turn_id": "turn_ccfb105050c3",
+                "timestamp": "2026-05-02T01:51:54.520487+00:00",
+                "type": "model_call_completed",
+                "payload": {
+                  "step": 1,
+                  "finish_reason": "stop"
+                }
+              },
+              {
+                "event_id": "evt_02551e3ce23b",
+                "turn_id": "turn_ccfb105050c3",
+                "timestamp": "2026-05-02T01:51:54.521013+00:00",
+                "type": "final_answer_created",
+                "payload": {
+                  "step": 1
+                }
+              },
+              {
+                "event_id": "evt_672ce75aaea3",
+                "turn_id": "turn_ccfb105050c3",
+                "timestamp": "2026-05-02T01:51:54.524088+00:00",
+                "type": "turn_completed",
+                "payload": {
+                  "status": "completed",
+                  "stop_reason": "completed"
+                }
+              },
+              {
+                "event_id": "evt_f5fe62319450",
+                "turn_id": "turn_ccfb105050c3",
+                "timestamp": "2026-05-02T01:51:54.524088+00:00",
+                "type": "summary_created",
+                "payload": {
+                  "status": "completed"
+                }
+              }
+            ],
+            "summary": {
+              "human": "结论:\n- I can help with analysis, planning, and tool-assisted execution when needed.\n做了什么:\n- 调用了 0 个工具\n调用了哪些工具:\n- 无\n改了哪些文件:\n- 无\n测试结果:\n- 无\n风险和未完成项:\n- 无\n下一步建议:\n- 如果是 partial/failed，先修复 stop_reason 对应问题后重试。",
+              "machine": {
+                "outcome": "completed",
+                "tools_used": [],
+                "files_changed": [],
+                "commands_run": [],
+                "tests_run": [],
+                "risks": [],
+                "stop_reason": "completed",
+                "handoff_summary": "I can help with analysis, planning, and tool-assisted execution when needed."
+              }
+            },
+            "stop_reason": "completed",
+            "tool_calls": [],
+            "tool_results": [],
+            "status": "completed"
+          }
+        },
+        {
+          "case_id": "web_research_006",
+          "suite": "web_research",
+          "category": "mocked_page_lookup",
+          "passed": false,
+          "score": 0.9,
+          "checks": {
+            "final_answer_exists": true,
+            "summary_exists": true,
+            "stop_reason_valid": true,
+            "event_timeline_valid": true,
+            "tool_call_schema_valid": true,
+            "must_call_tools": false,
+            "no_forbidden_tool": true,
+            "must_include": true,
+            "must_not_modify_files": true,
+            "test_passed": true
+          },
+          "run_result": {
+            "ok": true,
+            "session_id": "session_9d6903d06186",
+            "turn_id": "turn_c50a3d3cd9d6",
+            "final_answer": "I can help with analysis, planning, and tool-assisted execution when needed.",
+            "events": [
+              {
+                "event_id": "evt_ae10a41ccb5d",
+                "turn_id": "turn_c50a3d3cd9d6",
+                "timestamp": "2026-05-02T01:51:54.529536+00:00",
+                "type": "turn_started",
+                "payload": {
+                  "session_id": "session_9d6903d06186",
+                  "text": "Read local mocked pages and summarize python version policy"
+                }
+              },
+              {
+                "event_id": "evt_3000f19070cb",
+                "turn_id": "turn_c50a3d3cd9d6",
+                "timestamp": "2026-05-02T01:51:54.530811+00:00",
+                "type": "model_call_started",
+                "payload": {
+                  "step": 1
+                }
+              },
+              {
+                "event_id": "evt_96f531364f95",
+                "turn_id": "turn_c50a3d3cd9d6",
+                "timestamp": "2026-05-02T01:51:54.530811+00:00",
+                "type": "model_call_completed",
+                "payload": {
+                  "step": 1,
+                  "finish_reason": "stop"
+                }
+              },
+              {
+                "event_id": "evt_4ada997927c6",
+                "turn_id": "turn_c50a3d3cd9d6",
+                "timestamp": "2026-05-02T01:51:54.530811+00:00",
+                "type": "final_answer_created",
+                "payload": {
+                  "step": 1
+                }
+              },
+              {
+                "event_id": "evt_f574be6893c4",
+                "turn_id": "turn_c50a3d3cd9d6",
+                "timestamp": "2026-05-02T01:51:54.534069+00:00",
+                "type": "turn_completed",
+                "payload": {
+                  "status": "completed",
+                  "stop_reason": "completed"
+                }
+              },
+              {
+                "event_id": "evt_f39efb69332c",
+                "turn_id": "turn_c50a3d3cd9d6",
+                "timestamp": "2026-05-02T01:51:54.534069+00:00",
+                "type": "summary_created",
+                "payload": {
+                  "status": "completed"
+                }
+              }
+            ],
+            "summary": {
+              "human": "结论:\n- I can help with analysis, planning, and tool-assisted execution when needed.\n做了什么:\n- 调用了 0 个工具\n调用了哪些工具:\n- 无\n改了哪些文件:\n- 无\n测试结果:\n- 无\n风险和未完成项:\n- 无\n下一步建议:\n- 如果是 partial/failed，先修复 stop_reason 对应问题后重试。",
+              "machine": {
+                "outcome": "completed",
+                "tools_used": [],
+                "files_changed": [],
+                "commands_run": [],
+                "tests_run": [],
+                "risks": [],
+                "stop_reason": "completed",
+                "handoff_summary": "I can help with analysis, planning, and tool-assisted execution when needed."
+              }
+            },
+            "stop_reason": "completed",
+            "tool_calls": [],
+            "tool_results": [],
+            "status": "completed"
+          }
+        },
+        {
+          "case_id": "web_research_007",
+          "suite": "web_research",
+          "category": "mocked_page_lookup",
+          "passed": false,
+          "score": 0.9,
+          "checks": {
+            "final_answer_exists": true,
+            "summary_exists": true,
+            "stop_reason_valid": true,
+            "event_timeline_valid": true,
+            "tool_call_schema_valid": true,
+            "must_call_tools": false,
+            "no_forbidden_tool": true,
+            "must_include": true,
+            "must_not_modify_files": true,
+            "test_passed": true
+          },
+          "run_result": {
+            "ok": true,
+            "session_id": "session_9480f9df59fd",
+            "turn_id": "turn_063be2055c9e",
+            "final_answer": "I can help with analysis, planning, and tool-assisted execution when needed.",
+            "events": [
+              {
+                "event_id": "evt_c5a8f53e2baa",
+                "turn_id": "turn_063be2055c9e",
+                "timestamp": "2026-05-02T01:51:54.538234+00:00",
+                "type": "turn_started",
+                "payload": {
+                  "session_id": "session_9480f9df59fd",
+                  "text": "Read local mocked pages and summarize python version policy"
+                }
+              },
+              {
+                "event_id": "evt_42fc9b233bcb",
+                "turn_id": "turn_063be2055c9e",
+                "timestamp": "2026-05-02T01:51:54.540586+00:00",
+                "type": "model_call_started",
+                "payload": {
+                  "step": 1
+                }
+              },
+              {
+                "event_id": "evt_4ef8d9929641",
+                "turn_id": "turn_063be2055c9e",
+                "timestamp": "2026-05-02T01:51:54.540586+00:00",
+                "type": "model_call_completed",
+                "payload": {
+                  "step": 1,
+                  "finish_reason": "stop"
+                }
+              },
+              {
+                "event_id": "evt_2c6130f71160",
+                "turn_id": "turn_063be2055c9e",
+                "timestamp": "2026-05-02T01:51:54.540586+00:00",
+                "type": "final_answer_created",
+                "payload": {
+                  "step": 1
+                }
+              },
+              {
+                "event_id": "evt_77bc73c92e85",
+                "turn_id": "turn_063be2055c9e",
+                "timestamp": "2026-05-02T01:51:54.544012+00:00",
+                "type": "turn_completed",
+                "payload": {
+                  "status": "completed",
+                  "stop_reason": "completed"
+                }
+              },
+              {
+                "event_id": "evt_6a01765be7c8",
+                "turn_id": "turn_063be2055c9e",
+                "timestamp": "2026-05-02T01:51:54.544012+00:00",
+                "type": "summary_created",
+                "payload": {
+                  "status": "completed"
+                }
+              }
+            ],
+            "summary": {
+              "human": "结论:\n- I can help with analysis, planning, and tool-assisted execution when needed.\n做了什么:\n- 调用了 0 个工具\n调用了哪些工具:\n- 无\n改了哪些文件:\n- 无\n测试结果:\n- 无\n风险和未完成项:\n- 无\n下一步建议:\n- 如果是 partial/failed，先修复 stop_reason 对应问题后重试。",
+              "machine": {
+                "outcome": "completed",
+                "tools_used": [],
+                "files_changed": [],
+                "commands_run": [],
+                "tests_run": [],
+                "risks": [],
+                "stop_reason": "completed",
+                "handoff_summary": "I can help with analysis, planning, and tool-assisted execution when needed."
+              }
+            },
+            "stop_reason": "completed",
+            "tool_calls": [],
+            "tool_results": [],
+            "status": "completed"
+          }
+        },
+        {
+          "case_id": "web_research_008",
+          "suite": "web_research",
+          "category": "mocked_page_lookup",
+          "passed": false,
+          "score": 0.9,
+          "checks": {
+            "final_answer_exists": true,
+            "summary_exists": true,
+            "stop_reason_valid": true,
+            "event_timeline_valid": true,
+            "tool_call_schema_valid": true,
+            "must_call_tools": false,
+            "no_forbidden_tool": true,
+            "must_include": true,
+            "must_not_modify_files": true,
+            "test_passed": true
+          },
+          "run_result": {
+            "ok": true,
+            "session_id": "session_77c2a5f75658",
+            "turn_id": "turn_70e9dac712d1",
+            "final_answer": "I can help with analysis, planning, and tool-assisted execution when needed.",
+            "events": [
+              {
+                "event_id": "evt_9e0a3b726b35",
+                "turn_id": "turn_70e9dac712d1",
+                "timestamp": "2026-05-02T01:51:54.549889+00:00",
+                "type": "turn_started",
+                "payload": {
+                  "session_id": "session_77c2a5f75658",
+                  "text": "Read local mocked pages and summarize jarvis fake release notes"
+                }
+              },
+              {
+                "event_id": "evt_e4216f711523",
+                "turn_id": "turn_70e9dac712d1",
+                "timestamp": "2026-05-02T01:51:54.550938+00:00",
+                "type": "model_call_started",
+                "payload": {
+                  "step": 1
+                }
+              },
+              {
+                "event_id": "evt_a17722f51d5c",
+                "turn_id": "turn_70e9dac712d1",
+                "timestamp": "2026-05-02T01:51:54.550938+00:00",
+                "type": "model_call_completed",
+                "payload": {
+                  "step": 1,
+                  "finish_reason": "stop"
+                }
+              },
+              {
+                "event_id": "evt_054cc9f3abf9",
+                "turn_id": "turn_70e9dac712d1",
+                "timestamp": "2026-05-02T01:51:54.550938+00:00",
+                "type": "final_answer_created",
+                "payload": {
+                  "step": 1
+                }
+              },
+              {
+                "event_id": "evt_d93cf8d9439f",
+                "turn_id": "turn_70e9dac712d1",
+                "timestamp": "2026-05-02T01:51:54.553036+00:00",
+                "type": "turn_completed",
+                "payload": {
+                  "status": "completed",
+                  "stop_reason": "completed"
+                }
+              },
+              {
+                "event_id": "evt_e2c895fd89a1",
+                "turn_id": "turn_70e9dac712d1",
+                "timestamp": "2026-05-02T01:51:54.553558+00:00",
+                "type": "summary_created",
+                "payload": {
+                  "status": "completed"
+                }
+              }
+            ],
+            "summary": {
+              "human": "结论:\n- I can help with analysis, planning, and tool-assisted execution when needed.\n做了什么:\n- 调用了 0 个工具\n调用了哪些工具:\n- 无\n改了哪些文件:\n- 无\n测试结果:\n- 无\n风险和未完成项:\n- 无\n下一步建议:\n- 如果是 partial/failed，先修复 stop_reason 对应问题后重试。",
+              "machine": {
+                "outcome": "completed",
+                "tools_used": [],
+                "files_changed": [],
+                "commands_run": [],
+                "tests_run": [],
+                "risks": [],
+                "stop_reason": "completed",
+                "handoff_summary": "I can help with analysis, planning, and tool-assisted execution when needed."
+              }
+            },
+            "stop_reason": "completed",
+            "tool_calls": [],
+            "tool_results": [],
+            "status": "completed"
+          }
+        },
+        {
+          "case_id": "web_research_009",
+          "suite": "web_research",
+          "category": "mocked_page_lookup",
+          "passed": false,
+          "score": 0.9,
+          "checks": {
+            "final_answer_exists": true,
+            "summary_exists": true,
+            "stop_reason_valid": true,
+            "event_timeline_valid": true,
+            "tool_call_schema_valid": true,
+            "must_call_tools": false,
+            "no_forbidden_tool": true,
+            "must_include": true,
+            "must_not_modify_files": true,
+            "test_passed": true
+          },
+          "run_result": {
+            "ok": true,
+            "session_id": "session_b1d055d8aeec",
+            "turn_id": "turn_0f780fbd74a0",
+            "final_answer": "I can help with analysis, planning, and tool-assisted execution when needed.",
+            "events": [
+              {
+                "event_id": "evt_444c974377c0",
+                "turn_id": "turn_0f780fbd74a0",
+                "timestamp": "2026-05-02T01:51:54.557519+00:00",
+                "type": "turn_started",
+                "payload": {
+                  "session_id": "session_b1d055d8aeec",
+                  "text": "Read local mocked pages and summarize jarvis fake release notes"
+                }
+              },
+              {
+                "event_id": "evt_bc12833d7966",
+                "turn_id": "turn_0f780fbd74a0",
+                "timestamp": "2026-05-02T01:51:54.561529+00:00",
+                "type": "model_call_started",
+                "payload": {
+                  "step": 1
+                }
+              },
+              {
+                "event_id": "evt_60a2fd4b2488",
+                "turn_id": "turn_0f780fbd74a0",
+                "timestamp": "2026-05-02T01:51:54.561529+00:00",
+                "type": "model_call_completed",
+                "payload": {
+                  "step": 1,
+                  "finish_reason": "stop"
+                }
+              },
+              {
+                "event_id": "evt_8279686e5b39",
+                "turn_id": "turn_0f780fbd74a0",
+                "timestamp": "2026-05-02T01:51:54.561529+00:00",
+                "type": "final_answer_created",
+                "payload": {
+                  "step": 1
+                }
+              },
+              {
+                "event_id": "evt_b4384d8afdf6",
+                "turn_id": "turn_0f780fbd74a0",
+                "timestamp": "2026-05-02T01:51:54.561529+00:00",
+                "type": "turn_completed",
+                "payload": {
+                  "status": "completed",
+                  "stop_reason": "completed"
+                }
+              },
+              {
+                "event_id": "evt_d15800beb3e8",
+                "turn_id": "turn_0f780fbd74a0",
+                "timestamp": "2026-05-02T01:51:54.561529+00:00",
+                "type": "summary_created",
+                "payload": {
+                  "status": "completed"
+                }
+              }
+            ],
+            "summary": {
+              "human": "结论:\n- I can help with analysis, planning, and tool-assisted execution when needed.\n做了什么:\n- 调用了 0 个工具\n调用了哪些工具:\n- 无\n改了哪些文件:\n- 无\n测试结果:\n- 无\n风险和未完成项:\n- 无\n下一步建议:\n- 如果是 partial/failed，先修复 stop_reason 对应问题后重试。",
+              "machine": {
+                "outcome": "completed",
+                "tools_used": [],
+                "files_changed": [],
+                "commands_run": [],
+                "tests_run": [],
+                "risks": [],
+                "stop_reason": "completed",
+                "handoff_summary": "I can help with analysis, planning, and tool-assisted execution when needed."
+              }
+            },
+            "stop_reason": "completed",
+            "tool_calls": [],
+            "tool_results": [],
+            "status": "completed"
+          }
+        },
+        {
+          "case_id": "web_research_010",
+          "suite": "web_research",
+          "category": "mocked_page_lookup",
+          "passed": false,
+          "score": 0.9,
+          "checks": {
+            "final_answer_exists": true,
+            "summary_exists": true,
+            "stop_reason_valid": true,
+            "event_timeline_valid": true,
+            "tool_call_schema_valid": true,
+            "must_call_tools": false,
+            "no_forbidden_tool": true,
+            "must_include": true,
+            "must_not_modify_files": true,
+            "test_passed": true
+          },
+          "run_result": {
+            "ok": true,
+            "session_id": "session_f9444f55dc1d",
+            "turn_id": "turn_2597103e303a",
+            "final_answer": "I can help with analysis, planning, and tool-assisted execution when needed.",
+            "events": [
+              {
+                "event_id": "evt_c9b740608a10",
+                "turn_id": "turn_2597103e303a",
+                "timestamp": "2026-05-02T01:51:54.566596+00:00",
+                "type": "turn_started",
+                "payload": {
+                  "session_id": "session_f9444f55dc1d",
+                  "text": "Read local mocked pages and summarize jarvis fake release notes"
+                }
+              },
+              {
+                "event_id": "evt_ba8a22987347",
+                "turn_id": "turn_2597103e303a",
+                "timestamp": "2026-05-02T01:51:54.572757+00:00",
+                "type": "model_call_started",
+                "payload": {
+                  "step": 1
+                }
+              },
+              {
+                "event_id": "evt_d8aea94096f5",
+                "turn_id": "turn_2597103e303a",
+                "timestamp": "2026-05-02T01:51:54.573806+00:00",
+                "type": "model_call_completed",
+                "payload": {
+                  "step": 1,
+                  "finish_reason": "stop"
+                }
+              },
+              {
+                "event_id": "evt_3456527dac7e",
+                "turn_id": "turn_2597103e303a",
+                "timestamp": "2026-05-02T01:51:54.573806+00:00",
+                "type": "final_answer_created",
+                "payload": {
+                  "step": 1
+                }
+              },
+              {
+                "event_id": "evt_a4915966c8e8",
+                "turn_id": "turn_2597103e303a",
+                "timestamp": "2026-05-02T01:51:54.577901+00:00",
+                "type": "turn_completed",
+                "payload": {
+                  "status": "completed",
+                  "stop_reason": "completed"
+                }
+              },
+              {
+                "event_id": "evt_bb8159831b77",
+                "turn_id": "turn_2597103e303a",
+                "timestamp": "2026-05-02T01:51:54.577901+00:00",
+                "type": "summary_created",
+                "payload": {
+                  "status": "completed"
+                }
+              }
+            ],
+            "summary": {
+              "human": "结论:\n- I can help with analysis, planning, and tool-assisted execution when needed.\n做了什么:\n- 调用了 0 个工具\n调用了哪些工具:\n- 无\n改了哪些文件:\n- 无\n测试结果:\n- 无\n风险和未完成项:\n- 无\n下一步建议:\n- 如果是 partial/failed，先修复 stop_reason 对应问题后重试。",
+              "machine": {
+                "outcome": "completed",
+                "tools_used": [],
+                "files_changed": [],
+                "commands_run": [],
+                "tests_run": [],
+                "risks": [],
+                "stop_reason": "completed",
+                "handoff_summary": "I can help with analysis, planning, and tool-assisted execution when needed."
+              }
+            },
+            "stop_reason": "completed",
+            "tool_calls": [],
+            "tool_results": [],
+            "status": "completed"
+          }
+        }
+      ]
+    }
+  ]
+}

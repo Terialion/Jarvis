@@ -580,7 +580,7 @@ def _build_provider_status_line() -> tuple[str, Any | None]:
         return line, provider
 
     reasons: List[str] = []
-    if provider_name != "openai_compatible":
+    if not cfg.supports_runtime:
         reasons.append(f"unknown provider={provider_name}")
     else:
         missing_fields: List[str] = []
@@ -3168,7 +3168,10 @@ def run_shell(initial_prompt: Optional[str] = None) -> int:
     state = ShellState(DEFAULT_API_BASE)
     _safe_print(_render_shell_header(os.getcwd(), state.mode, state.model, provider_line=state.provider_status_line))
     if initial_prompt:
-        _safe_print("\n" + _handle_natural_language(state, initial_prompt))
+        if os.getenv("JARVIS_CLI_LEGACY_NL", "0").strip() == "1":
+            _safe_print("\n" + _handle_natural_language(state, initial_prompt))
+        else:
+            _safe_print("\n" + run_agent_turn_for_cli(initial_prompt, state=state, output_mode="default", interactive=True))
     while True:
         try:
             line = input(SHELL_PROMPT)
@@ -3187,7 +3190,10 @@ def run_shell(initial_prompt: Optional[str] = None) -> int:
                 return 0
             _safe_print("\n" + result)
             continue
-        _safe_print("\n" + _handle_natural_language(state, raw))
+        if os.getenv("JARVIS_CLI_LEGACY_NL", "0").strip() == "1":
+            _safe_print("\n" + _handle_natural_language(state, raw))
+        else:
+            _safe_print("\n" + run_agent_turn_for_cli(raw, state=state, output_mode="default", interactive=True))
 
 
 def run_shell_from_text(input_text: str) -> int:
@@ -3205,7 +3211,10 @@ def run_shell_from_text(input_text: str) -> int:
                 return 0
             _safe_print("\n" + result)
             continue
-        _safe_print("\n" + _handle_natural_language(state, raw))
+        if os.getenv("JARVIS_CLI_LEGACY_NL", "0").strip() == "1":
+            _safe_print("\n" + _handle_natural_language(state, raw))
+        else:
+            _safe_print("\n" + run_agent_turn_for_cli(raw, state=state, output_mode="default", interactive=True))
     return 0
 
 
@@ -3217,6 +3226,259 @@ def _run_non_interactive(prompt: str) -> int:
     return 0
 
 
+def _resolve_output_mode(args: argparse.Namespace) -> str:
+    mode = str(getattr(args, "output_mode", "default") or "default").lower().strip()
+    if bool(getattr(args, "quiet", False)):
+        mode = "quiet"
+    if bool(getattr(args, "verbose", False)):
+        mode = "verbose"
+    if bool(getattr(args, "trace_output", False)):
+        mode = "trace"
+    if bool(getattr(args, "json_output", False)):
+        mode = "json"
+    if bool(getattr(args, "trace", False)):
+        mode = "trace"
+    if bool(getattr(args, "json", False)):
+        mode = "json"
+    if mode not in {"default", "quiet", "verbose", "trace", "json"}:
+        return "default"
+    return mode
+
+
+def _compact_tool_args(value: Any) -> str:
+    if not isinstance(value, dict) or not value:
+        return ""
+    parts: list[str] = []
+    for key, val in list(value.items())[:3]:
+        parts.append(f"{key}={_safe_text(str(val))[:60]}")
+    return ", ".join(parts)
+
+
+def _render_agent_result_text(*, result: Any, provider_line: str, output_mode: str) -> str:
+    try:
+        from .cli_agent_output import render_agent_result
+    except Exception:
+        import importlib.util
+
+        mod_path = Path(__file__).with_name("cli_agent_output.py")
+        spec = importlib.util.spec_from_file_location("jarvis_cli_agent_output", mod_path)
+        if spec is None or spec.loader is None:
+            raise
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        render_agent_result = getattr(module, "render_agent_result")
+
+    return render_agent_result(
+        result=result,
+        provider_line=provider_line,
+        output_mode=output_mode,
+        mask_fn=_mask_secret_like,
+    )
+
+
+def _local_model_answer(state: ShellState) -> str:
+    line = str(state.provider_status_line or "")
+    model = re.search(r"model=([^\s]+)", line)
+    provider = re.search(r"LLM provider:\s*([^\s]+)", line)
+    base = re.search(r"base_url=([^\s]+)", line)
+    key_present = "api_key=present" in line
+    key_state_text = "\u5df2\u914d\u7f6e" if key_present else "\u672a\u914d\u7f6e"
+    return (
+        f"\u5f53\u524d\u914d\u7f6e\u7684 LLM \u662f {model.group(1) if model else 'unknown'}\uff0c"
+        f"provider \u662f {provider.group(1) if provider else 'unknown'}\uff0c"
+        f"base_url \u662f {base.group(1) if base else 'unknown'}\uff0c"
+        f"API key {key_state_text}\u3002"
+    )
+
+
+def _local_capability_answer() -> str:
+    return (
+        "\u53ef\u4ee5\u3002\u6211\u53ef\u4ee5\u8bfb\u53d6\u548c\u89e3\u91ca\u5f53\u524d\u9879\u76ee\u3001\u641c\u7d22\u4ee3\u7801\u3001\u751f\u6210\u4fee\u6539\u65b9\u6848\uff0c"
+        "\u5728\u5b89\u5168\u5ba1\u6279\u540e\u4fee\u6539\u6587\u4ef6\uff0c\u5e76\u8fd0\u884c\u6d4b\u8bd5\u603b\u7ed3\u7ed3\u679c\u3002"
+    )
+
+
+def _looks_like_model_question(text: str) -> bool:
+    low = (text or "").lower()
+    return any(
+        t in low
+        for t in (
+            "\u4f60\u662f\u4ec0\u4e48\u6a21\u578b",
+            "\u5f53\u524d\u6a21\u578b\u662f\u4ec0\u4e48",
+            "\u4f60\u7528\u7684\u662f\u4ec0\u4e48\u6a21\u578b",
+            "浣犳槸浠€涔堟ā鍨",
+            "褰撳墠妯″瀷鏄粈涔",
+            "浣犵敤鐨勬槸浠€涔堟ā鍨",
+            "what model",
+            "which model",
+        )
+    )
+
+
+def _looks_like_capability_question(text: str) -> bool:
+    low = (text or "").lower()
+    return any(
+        t in low
+        for t in (
+            "\u4f60\u80fd\u5e2e\u6211\u5199\u4ee3\u7801\u5417",
+            "\u4f60\u4f1a\u5199\u4ee3\u7801\u5417",
+            "\u4f60\u80fd\u505a\u4ec0\u4e48",
+            "浣犺兘甯垜鍐欎唬鐮佸悧",
+            "浣犱細鍐欎唬鐮佸悧",
+            "浣犺兘鍋氫粈涔",
+            "what can you do",
+            "can you code",
+        )
+    )
+
+
+def _looks_like_identity_question(text: str) -> bool:
+    low = (text or "").lower()
+    return any(
+        t in low
+        for t in (
+            "\u4f60\u662f\u8c01",
+            "\u4f60\u662f\u4ec0\u4e48",
+            "浣犳槸璋",
+            "浣犳槸浠€涔",
+            "who are you",
+            "what are you",
+        )
+    )
+
+
+def _looks_like_greeting(text: str) -> bool:
+    low = (text or "").lower().strip()
+    return low in {
+        "hi",
+        "hello",
+        "hey",
+        "good morning",
+        "good afternoon",
+        "good evening",
+        "\u4e0b\u5348\u597d",
+        "\u665a\u4e0a\u597d",
+        "\u65e9\u4e0a\u597d",
+        "\u4f60\u597d",
+        "涓嬪崍濂",
+        "鏅氫笂濂",
+        "鏃╀笂濂",
+        "浣犲ソ",
+    }
+
+
+def _looks_like_joke_request(text: str) -> bool:
+    low = (text or "").lower()
+    return "\u7b11\u8bdd" in text or "绗戣瘽" in text or "joke" in low
+
+
+def _looks_like_sensitive_or_dangerous(text: str) -> bool:
+    low = (text or "").lower()
+    if any(t in low for t in (".env", "jarvis_llm_api_key", "api key", "token", "id_rsa", "password", "secret")):
+        return True
+    if ("curl " in low or "wget " in low) and ("| sh" in low or "| bash" in low):
+        return True
+    if "invoke-webrequest" in low and ("| iex" in low or "invoke-expression" in low):
+        return True
+    if "rm -rf" in low or "\u5220\u9664\u6574\u4e2a\u9879\u76ee" in text:
+        return True
+    return False
+
+
+def _looks_like_work_request(text: str) -> bool:
+    low = (text or "").lower()
+    markers = (
+        "\u8bfb\u53d6",
+        "readme",
+        "read file",
+        "\u5217\u4e00\u4e0b\u5f53\u524d\u76ee\u5f55",
+        "鍒椾竴涓嬪綋鍓嶇洰褰",
+        "current directory",
+        "run pytest",
+        "\u8fd0\u884c pytest",
+        "fix ",
+        "\u4fee\u590d",
+        "modify",
+        "\u4fee\u6539",
+        "\u6d4b\u8bd5",
+    )
+    return any(m in low for m in markers)
+
+
+def run_agent_turn_for_cli(
+    prompt: str,
+    *,
+    state: ShellState | None = None,
+    output_mode: str = "default",
+    interactive: bool = False,
+) -> str:
+    state = state or ShellState(DEFAULT_API_BASE)
+    if _looks_like_sensitive_or_dangerous(prompt):
+        return "Jarvis\n这个请求涉及敏感信息或危险操作，不能直接执行。"
+    from src.jarvis.agent.loop import AgentLoop
+    from src.jarvis.agent.types import ChatInput
+
+    loop = AgentLoop(
+        project_root=str(_ROOT),
+        permission_mode="workspace_write" if state.mode in {"edit", "ask"} else "read_only",
+        auto_approve=False,
+    )
+    result = loop.run_turn(
+        ChatInput(
+            text=prompt,
+            cwd=str(Path.cwd()),
+            session_id="cli_shell",
+            metadata={"source": "jarvis.cli", "mode": output_mode},
+        )
+    )
+    rendered = _render_agent_result_text(result=result, provider_line=state.provider_status_line, output_mode=output_mode)
+    final_answer = str(getattr(result, "final_answer", "") or "")
+    has_provider_failure = "无法连接 LLM" in rendered
+    if not interactive:
+        return rendered
+    if final_answer and not has_provider_failure:
+        return rendered
+    # interactive fallback for model/capability Q should be direct, not generic clarify/network noise
+    if _looks_like_model_question(prompt):
+        return "Jarvis\n" + _local_model_answer(state)
+    if _looks_like_identity_question(prompt):
+        return "Jarvis\n\u6211\u662f Jarvis\uff0c\u672c\u5730\u5f00\u53d1\u52a9\u624b\u3002\u6211\u53ef\u4ee5\u5e2e\u4f60\u8bfb\u9879\u76ee\u3001\u89c4\u5212\u4fee\u6539\u3001\u5728\u5ba1\u6279\u540e\u6267\u884c\u6539\u52a8\u548c\u6d4b\u8bd5\u3002"
+    if _looks_like_capability_question(prompt):
+        return "Jarvis\n" + _local_capability_answer()
+    if _looks_like_greeting(prompt):
+        return "Jarvis\nHi, I’m here. I can inspect repositories, explain code, plan changes, and run approved tests."
+    if _looks_like_joke_request(prompt):
+        return "Jarvis\n\u4e3a\u4ec0\u4e48\u7a0b\u5e8f\u5458\u559c\u6b22\u6df1\u591c\u4fee bug\uff1f\u56e0\u4e3a\u767d\u5929 bug \u4f1a\u88c5\u4f5c\u9700\u6c42\u3002"
+    if _looks_like_work_request(prompt):
+        return "Jarvis\n[WORK] 无法连接 LLM，未执行工具。请检查网络后重试。"
+    return rendered
+
+
+def _run_non_interactive_with_mode(prompt: str, *, output_mode: str = "default") -> int:
+    state = ShellState(DEFAULT_API_BASE)
+    state.trace_enabled = output_mode == "trace"
+    try:
+        _safe_print(run_agent_turn_for_cli(prompt, state=state, output_mode=output_mode))
+        return 0
+    except Exception as exc:
+        if output_mode == "json":
+            _safe_print(
+                json.dumps(
+                    {
+                        "provider_status": state.provider_status_line,
+                        "error": {"type": type(exc).__name__, "message": _safe_text(str(exc))},
+                    },
+                    ensure_ascii=False,
+                    indent=2,
+                )
+            )
+            return 1
+        _safe_print(state.provider_status_line)
+        _safe_print(f"[ERROR] CLI render failed: {type(exc).__name__}: {_safe_text(str(exc))}")
+        return 1
+    return 0
+
+
 def main() -> int:
     _write_cli_diagnostic("cli_entry")
     _load_local_env_file(_ROOT / ".env")
@@ -3224,6 +3486,19 @@ def main() -> int:
     parser.add_argument("--minimal", action="store_true", help="minimal mode (no voice, no model downloads)")
     parser.add_argument("-p", "--print", dest="print_prompt", nargs="?", const="__PIPE__", help="run one-shot prompt")
     parser.add_argument("--ask", dest="ask_prompt", nargs="?", const="__PIPE__", help="run one-shot prompt (Codex-style)")
+    parser.add_argument(
+        "--output",
+        dest="output_mode",
+        choices=["default", "quiet", "verbose", "trace", "json"],
+        default="default",
+        help="one-shot output mode",
+    )
+    parser.add_argument("--quiet", action="store_true", help="alias: --output quiet")
+    parser.add_argument("--verbose", action="store_true", help="alias: --output verbose")
+    parser.add_argument("--trace", action="store_true", help="alias: --output trace")
+    parser.add_argument("--json", action="store_true", help="alias: --output json")
+    parser.add_argument("--trace-output", action="store_true", help="alias: --output trace")
+    parser.add_argument("--json-output", action="store_true", help="alias: --output json")
     parser.add_argument("-c", "--continue", dest="resume_latest", action="store_true", help="resume latest session")
     parser.add_argument("-r", "--resume", dest="resume_id", help="resume by session or task id")
     sub = parser.add_subparsers(dest="cmd", help="subcommands")
@@ -3383,6 +3658,7 @@ def main() -> int:
         initial_prompt = argv[0]
         argv = argv[1:]
     args = parser.parse_args(argv)
+    output_mode = _resolve_output_mode(args)
 
     # Handle --minimal flag (no voice, no model downloads)
     if getattr(args, "minimal", False):
@@ -3407,7 +3683,7 @@ def main() -> int:
             return cmd_test(args)
         if args.cmd == "chat":
             if args.prompt:
-                return _run_non_interactive(args.prompt)
+                return _run_non_interactive_with_mode(args.prompt, output_mode=output_mode)
             if sys.stdin and sys.stdin.isatty():
                 return run_shell()
             _safe_print("Non-interactive shell: use python -m jarvis.cli -p \"...\".")
@@ -3467,7 +3743,7 @@ def main() -> int:
             if not prompt:
                 _safe_print("No prompt provided.")
                 return 1
-            return _run_non_interactive(prompt)
+            return _run_non_interactive_with_mode(prompt, output_mode=output_mode)
 
         if args.ask_prompt is not None:
             if args.ask_prompt not in {None, "__PIPE__"}:
@@ -3477,9 +3753,11 @@ def main() -> int:
             if not prompt:
                 _safe_print("No prompt provided.")
                 return 1
-            return _run_non_interactive(prompt)
+            return _run_non_interactive_with_mode(prompt, output_mode=output_mode)
 
         if prompt:
+            if os.getenv("JARVIS_CLI_AGENT_ONESHOT", "0").strip() == "1":
+                return _run_non_interactive_with_mode(prompt, output_mode=output_mode)
             return _run_non_interactive(prompt)
 
         if sys.stdin and sys.stdin.isatty():

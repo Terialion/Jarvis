@@ -118,7 +118,7 @@ ffmpeg-8.1-full_build/
 temp/
 tmp/
 *.tmp
-
+.workbuddy/
 hermes-agent/
 openclaw/
 codex/

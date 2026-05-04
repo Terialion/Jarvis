@@ -8,7 +8,19 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from .config import LLMConfig, load_llm_config
 from .provider import LLMProvider
+
+OPENAI_COMPATIBLE_PROVIDERS = {
+    "openai_compatible",
+    "openai",
+    "deepseek",
+    "openrouter",
+    "gemini",
+    "minimax",
+    "ollama",
+    "custom",
+}
 
 
 @dataclass(frozen=True)
@@ -20,10 +32,18 @@ class LLMProviderConfig:
     temperature: float = 0.2
     timeout_seconds: float = 60.0
     max_tokens: int = 4096
+    api_key_source: str = "missing"
+    base_url_source: str = "missing"
+    model_source: str = "missing"
+    deprecated_env_used: tuple[str, ...] = ()
 
     @property
     def is_available(self) -> bool:
         return bool(self.base_url and self.api_key and self.model)
+
+    @property
+    def supports_runtime(self) -> bool:
+        return self.provider in OPENAI_COMPATIBLE_PROVIDERS
 
     def redacted_summary(self) -> str:
         key_state = "present" if self.api_key else "missing"
@@ -34,35 +54,34 @@ class LLMProviderConfig:
             f"api_key={key_state}"
         )
 
+    @classmethod
+    def from_llm_config(cls, cfg: LLMConfig) -> "LLMProviderConfig":
+        return cls(
+            provider=cfg.provider,
+            base_url=cfg.base_url,
+            api_key=cfg.api_key,
+            model=cfg.model,
+            temperature=cfg.temperature,
+            timeout_seconds=cfg.timeout_seconds,
+            max_tokens=cfg.max_tokens,
+            api_key_source=cfg.api_key_source,
+            base_url_source=cfg.base_url_source,
+            model_source=cfg.model_source,
+            deprecated_env_used=cfg.deprecated_env_used,
+        )
+
 
 def load_llm_provider_config() -> LLMProviderConfig:
-    provider = (os.getenv("JARVIS_LLM_PROVIDER", "openai_compatible") or "").strip() or "openai_compatible"
-    base_url = (os.getenv("JARVIS_LLM_BASE_URL", "") or "").strip().rstrip("/")
-    api_key = (os.getenv("JARVIS_LLM_API_KEY", "") or "").strip()
-    model = (os.getenv("JARVIS_LLM_MODEL", "") or "").strip()
+    return LLMProviderConfig.from_llm_config(load_llm_config())
 
-    try:
-        temperature = float((os.getenv("JARVIS_LLM_TEMPERATURE", "0.2") or "0.2").strip())
-    except ValueError:
-        temperature = 0.2
-    try:
-        timeout_seconds = float((os.getenv("JARVIS_LLM_TIMEOUT_SECONDS", "60") or "60").strip())
-    except ValueError:
-        timeout_seconds = 60.0
-    try:
-        max_tokens = int((os.getenv("JARVIS_LLM_MAX_TOKENS", "4096") or "4096").strip())
-    except ValueError:
-        max_tokens = 4096
 
-    return LLMProviderConfig(
-        provider=provider,
-        base_url=base_url,
-        api_key=api_key,
-        model=model,
-        temperature=temperature,
-        timeout_seconds=timeout_seconds,
-        max_tokens=max_tokens,
-    )
+def _build_chat_completions_url(base_url: str) -> str:
+    root = (base_url or "").rstrip("/")
+    if not root:
+        return "/v1/chat/completions"
+    if root.endswith("/v1"):
+        return f"{root}/chat/completions"
+    return f"{root}/v1/chat/completions"
 
 
 class OpenAICompatibleProvider(LLMProvider):
@@ -70,21 +89,33 @@ class OpenAICompatibleProvider(LLMProvider):
         self.config = config
         self.model_name = config.model or "unknown"
 
-    def complete(self, prompt: str, *, system: str | None = None, temperature: float = 0.2) -> str:
+    def chat_completion(
+        self,
+        *,
+        messages: list[dict[str, Any]],
+        tools: list[dict[str, Any]] | None = None,
+        temperature: float = 0.2,
+        max_tokens: int | None = None,
+        system: str | None = None,
+    ) -> dict[str, Any]:
         if not self.config.is_available:
             raise RuntimeError(f"LLM provider unavailable: {self.config.redacted_summary()}")
 
-        messages = []
+        request_messages = list(messages or [])
         if system:
-            messages.append({"role": "system", "content": system})
-        messages.append({"role": "user", "content": prompt})
-        payload = {
+            request_messages = [{"role": "system", "content": system}] + request_messages
+
+        payload: dict[str, Any] = {
             "model": self.config.model,
-            "messages": messages,
+            "messages": request_messages,
             "temperature": self.config.temperature if temperature == 0.2 else temperature,
-            "max_tokens": self.config.max_tokens,
+            "max_tokens": self.config.max_tokens if max_tokens is None else int(max_tokens),
         }
-        request_url = f"{self.config.base_url}/chat/completions"
+        if tools:
+            payload["tools"] = tools
+            payload["tool_choice"] = "auto"
+
+        request_url = _build_chat_completions_url(self.config.base_url)
         body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
         req = urllib.request.Request(
             request_url,
@@ -104,11 +135,11 @@ class OpenAICompatibleProvider(LLMProvider):
                 {
                     "request_url": request_url,
                     "model": self.config.model,
-                    "message_count": len(messages),
+                    "message_count": len(request_messages),
                     "system_prompt_length": len(system or ""),
-                    "user_prompt_length": len(prompt or ""),
+                    "user_prompt_length": len(str(request_messages[-1].get("content") or "")) if request_messages else 0,
                     "temperature": payload["temperature"],
-                    "max_tokens": self.config.max_tokens,
+                    "max_tokens": payload["max_tokens"],
                     "http_status": int(exc.code),
                     "error": {"type": "HTTPError", "message": f"status={exc.code}"},
                 }
@@ -119,11 +150,11 @@ class OpenAICompatibleProvider(LLMProvider):
                 {
                     "request_url": request_url,
                     "model": self.config.model,
-                    "message_count": len(messages),
+                    "message_count": len(request_messages),
                     "system_prompt_length": len(system or ""),
-                    "user_prompt_length": len(prompt or ""),
+                    "user_prompt_length": len(str(request_messages[-1].get("content") or "")) if request_messages else 0,
                     "temperature": payload["temperature"],
-                    "max_tokens": self.config.max_tokens,
+                    "max_tokens": payload["max_tokens"],
                     "error": {"type": "URLError", "message": str(exc.reason)},
                 }
             )
@@ -136,11 +167,11 @@ class OpenAICompatibleProvider(LLMProvider):
                 {
                     "request_url": request_url,
                     "model": self.config.model,
-                    "message_count": len(messages),
+                    "message_count": len(request_messages),
                     "system_prompt_length": len(system or ""),
-                    "user_prompt_length": len(prompt or ""),
+                    "user_prompt_length": len(str(request_messages[-1].get("content") or "")) if request_messages else 0,
                     "temperature": payload["temperature"],
-                    "max_tokens": self.config.max_tokens,
+                    "max_tokens": payload["max_tokens"],
                     "http_status": status,
                     "content_length": len(raw or ""),
                     "content_preview": str(raw or "")[:200],
@@ -148,14 +179,40 @@ class OpenAICompatibleProvider(LLMProvider):
                 }
             )
             raise RuntimeError("LLM response was not valid JSON") from exc
+        if isinstance(data.get("error"), dict):
+            err = data["error"]
+            err_type = str(err.get("type") or "provider_error")
+            err_message = str(err.get("message") or "unknown error")
+            _write_provider_debug(
+                {
+                    "request_url": request_url,
+                    "model": self.config.model,
+                    "message_count": len(request_messages),
+                    "http_status": status,
+                    "error": {"type": err_type, "message": err_message[:300]},
+                }
+            )
+            raise RuntimeError(f"LLM provider error: type={err_type} message={err_message}")
+        return data
+
+    def complete(self, prompt: str, *, system: str | None = None, temperature: float = 0.2) -> str:
+        messages = [{"role": "user", "content": prompt}]
+        data = self.chat_completion(
+            messages=messages,
+            tools=None,
+            temperature=temperature,
+            max_tokens=self.config.max_tokens,
+            system=system,
+        )
+        status = 200
         return _extract_response_content(
             data=data,
-            request_url=request_url,
+            request_url=_build_chat_completions_url(self.config.base_url),
             model=self.config.model,
-            message_count=len(messages),
+            message_count=1 + (1 if system else 0),
             system_prompt_length=len(system or ""),
             user_prompt_length=len(prompt or ""),
-            temperature=payload["temperature"],
+            temperature=self.config.temperature if temperature == 0.2 else temperature,
             max_tokens=self.config.max_tokens,
             http_status=status,
         )
@@ -163,7 +220,7 @@ class OpenAICompatibleProvider(LLMProvider):
 
 def build_runtime_llm_provider(config: LLMProviderConfig | None = None) -> LLMProvider | None:
     cfg = config or load_llm_provider_config()
-    if cfg.provider != "openai_compatible":
+    if not cfg.supports_runtime:
         return None
     if not cfg.is_available:
         return None

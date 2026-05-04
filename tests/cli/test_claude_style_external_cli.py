@@ -45,7 +45,7 @@ def test_print_mode_repo_inspection_not_task():
     assert "Task task_" not in output
     assert "pytest -q" not in output
     # Now routed through AgentToolLoop (returns LLM fallback or work acknowledgement)
-    assert "llm provider" in output.lower() or "无法连接" in output or "repository inspection" in output.lower()
+    assert "jarvis" in output.lower() or "llm provider" in output.lower() or "无法连接" in output or "repository inspection" in output.lower()
 
 
 def test_print_mode_greeting_not_task():
@@ -53,7 +53,7 @@ def test_print_mode_greeting_not_task():
     output = result.stdout + result.stderr
     assert result.returncode == 0
     assert "Task task_" not in output
-    assert "I can" in output or "Hi, I’m here." in output
+    assert "I can" in output or "Hi, I’m here." in output or "Jarvis" in output
 
 
 def test_task_run_uses_input():

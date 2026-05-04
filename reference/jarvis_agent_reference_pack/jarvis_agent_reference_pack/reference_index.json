@@ -1,0 +1,80 @@
+{
+  "codex": {
+    "primary_lessons": [
+      "run_turn",
+      "TurnContext",
+      "message_history",
+      "MCP tool approval/events",
+      "exec policy"
+    ],
+    "files": [
+      "codex-rs/core/src/session/turn.rs",
+      "codex-rs/core/src/session/turn_context.rs",
+      "codex-rs/core/src/message_history.rs",
+      "codex-rs/core/src/mcp_tool_call.rs",
+      "codex-rs/core/src/exec.rs",
+      "codex-rs/app-server/src/thread_state.rs",
+      "codex-rs/app-server-protocol/src/lib.rs"
+    ]
+  },
+  "hermes": {
+    "primary_lessons": [
+      "context compression",
+      "error classification",
+      "fallback text tool_call",
+      "ACP tool events",
+      "shell hooks"
+    ],
+    "files": [
+      "agent/context_engine.py",
+      "agent/context_compressor.py",
+      "agent/error_classifier.py",
+      "agent/copilot_acp_client.py",
+      "acp_adapter/tools.py",
+      "agent/shell_hooks.py"
+    ]
+  },
+  "openclaw": {
+    "primary_lessons": [
+      "agent loop lifecycle",
+      "session queue",
+      "messages",
+      "session compaction",
+      "exec approvals",
+      "skills"
+    ],
+    "files": [
+      "docs/concepts/agent-loop.md",
+      "docs/concepts/queue.md",
+      "docs/concepts/messages.md",
+      "docs/concepts/session.md",
+      "docs/reference/session-management-compaction.md",
+      "docs/tools/exec-approvals.md",
+      "docs/tools/skills.md"
+    ]
+  },
+  "claude_code": {
+    "primary_lessons": [
+      "permissions",
+      "hooks",
+      "skills",
+      "allowed-tools frontmatter"
+    ],
+    "files": [
+      "examples/settings/settings-strict.json",
+      "examples/hooks/bash_command_validator_example.py",
+      "plugins/plugin-dev/skills/hook-development/SKILL.md",
+      "plugins/plugin-dev/skills/skill-development/SKILL.md",
+      "plugins/commit-commands/commands/commit.md"
+    ]
+  },
+  "jarvis_target_modules": [
+    "src/jarvis/agent/types.py",
+    "src/jarvis/agent/events.py",
+    "src/jarvis/agent/context.py",
+    "src/jarvis/agent/model.py",
+    "src/jarvis/agent/tools.py",
+    "src/jarvis/agent/loop.py",
+    "src/jarvis/agent/summary.py"
+  ]
+}
