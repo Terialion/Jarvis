@@ -114,6 +114,8 @@ class TestRunner:
                     shell=True,
                     capture_output=True,
                     text=True,
+                    encoding="utf-8",
+                    errors="replace",
                 )
                 passed = completed.returncode == 0
                 summary = None if passed else self._extract_failure_summary(completed.stdout, completed.stderr)

@@ -15,7 +15,7 @@ Key design principle:
 - ClarificationPolicy is NOT the default path for natural language
 - DeterministicRouter only handles structural/high-confidence rules
 - NOTE: This module NO LONGER imports clarification.py at module level.
-  The legacy JARVIS_CLI_LEGACY_NL=1 path uses inline stubs instead.
+  The removed legacy CLI natural-language path used inline stubs instead.
   Default path uses AgentLoop._build_clarification_if_needed().
 """
 
@@ -37,8 +37,8 @@ def _legacy_clarify_fallback(envelope: InputEnvelope, reason: str, confidence: f
     """Return a safe fallback clarification route for the legacy path.
 
     This is an inline stub so that intent_gateway.py does NOT import
-    clarification.py at module load time. The legacy path
-    (JARVIS_CLI_LEGACY_NL=1) uses this instead of build_clarification_route.
+    clarification.py at module load time. The removed legacy CLI natural-language
+    path used this instead of build_clarification_route.
     """
     low = envelope.normalized_text.lower()
     if any(token in envelope.normalized_text for token in ("写一段说明", "写个东西", "帮我写一下", "写个总结", "写一封邮件", "项目介绍")):

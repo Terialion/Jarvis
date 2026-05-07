@@ -4,7 +4,7 @@ from jarvis import cli as cli_mod
 def test_cli_coding_task_uses_orchestrator(monkeypatch) -> None:
     state = cli_mod.ShellState(cli_mod.DEFAULT_API_BASE)
     output = cli_mod._handle_natural_language(state, "fix this bug and run tests")
-    # Coding verb -> work path -> AgentToolLoop (not _run_coding_loop directly).
+    # Coding verb -> AgentLoop path (not _run_coding_loop directly).
     # Verify it was routed as work (not a simple chat answer).
     assert ("[WORK]" in output
             or "Coding loop complete." in output

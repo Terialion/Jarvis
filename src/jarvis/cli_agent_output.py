@@ -56,6 +56,12 @@ def render_agent_result(
     status = safe_text(mask_fn, getattr(result, "status", "") or "")
     output_type = safe_text(mask_fn, getattr(result, "output_type", "") or "answer")
     tool_calls = list(getattr(result, "tool_calls", []) or [])
+    available_skills = list(getattr(result, "available_skills", []) or [])
+    loaded_skills = list(getattr(result, "loaded_skills", []) or [])
+    skill_loads_count = int(getattr(result, "skill_loads_count", 0) or 0)
+    skills_used = list(getattr(result, "skills_used", []) or [])
+    skill_calls_count = int(getattr(result, "skill_calls_count", 0) or 0)
+    skill_results = list(getattr(result, "skill_results", []) or [])
     events = list(getattr(result, "events", []) or [])
     summary = dict(getattr(result, "summary", {}) or {})
     summary_machine = dict(summary.get("machine") or {})
@@ -91,6 +97,12 @@ def render_agent_result(
                 "tool_calls_count": len(tool_calls),
                 "tools_used": tools_used,
                 "tool_calls": tool_calls,
+                "available_skills": available_skills,
+                "loaded_skills": loaded_skills,
+                "skill_loads_count": skill_loads_count,
+                "skills_used": skills_used,
+                "skill_calls_count": skill_calls_count,
+                "skill_results": skill_results,
                 "summary": summary,
                 "events": events,
                 "model_backend": model_backend,
@@ -156,6 +168,20 @@ def render_agent_result(
             lines.append(f"tests_run={tests_run}")
         if risks:
             lines.append(f"risks={'; '.join(safe_text(mask_fn, x) for x in risks[:5])}")
+        if available_skills:
+            lines.append(f"available_skills={', '.join(safe_text(mask_fn, x) for x in available_skills[:8])}")
+        if loaded_skills:
+            lines.append(f"loaded_skills={', '.join(safe_text(mask_fn, x) for x in loaded_skills[:8])}")
+        lines.append(f"skill_loads_count={skill_loads_count}")
+        if skills_used:
+            lines.append(f"skills_used={', '.join(safe_text(mask_fn, x) for x in skills_used[:8])}")
+        lines.append(f"skill_calls_count={skill_calls_count}")
+        active_task = summary_machine.get("active_task") if isinstance(summary_machine.get("active_task"), dict) else {}
+        if active_task:
+            lines.append(f"active_task_phase={safe_text(mask_fn, active_task.get('current_phase', ''))}")
+        handoff = summary_machine.get("handoff_summary") if isinstance(summary_machine.get("handoff_summary"), dict) else {}
+        if handoff:
+            lines.append(f"handoff_state={safe_text(mask_fn, handoff.get('current_state', ''))}")
 
     if output_mode == "trace":
         lines.append("")

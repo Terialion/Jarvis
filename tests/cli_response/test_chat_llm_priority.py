@@ -88,7 +88,7 @@ def test_work_still_uses_tool_loop_not_llm_chat():
         **kwargs,
     )
     assert mode == "file_listing"
-    assert "agent_tool_loop" in desc
+    assert "work_runner" in desc
     assert response == "tool_loop_result"
     kwargs["run_agent_tool_loop"].assert_called_once()
     llm_runner.assert_not_called()

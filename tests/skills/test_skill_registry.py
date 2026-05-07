@@ -5,6 +5,7 @@ from pathlib import Path
 import pytest
 
 from jarvis.core.skills.registry import SkillRegistry, SkillSpec
+from src.jarvis.skills.registry import SkillRegistry as Phase9SkillRegistry
 
 ROOT = Path(__file__).resolve().parents[2]
 
@@ -143,3 +144,21 @@ class TestDynamicSkillCommand:
         spec = _make_skill("new-skill", trust_level="untrusted")
         assert spec.installed is True
         assert spec.trust_level == "untrusted"
+
+
+def test_phase9_registry_lists_builtin_skills():
+    registry = Phase9SkillRegistry()
+    names = registry.available_names()
+    assert "repo_overview" in names
+    assert "summarize_file" in names
+    assert "run_tests" in names
+    assert "fix_test_failure" in names
+
+
+def test_phase9_registry_exports_metadata_only():
+    registry = Phase9SkillRegistry()
+    rows = registry.export_index()
+    summarize_file = next(row for row in rows if row["name"] == "summarize_file")
+    assert summarize_file["description"]
+    assert "allowed_tools" in summarize_file
+    assert "# Steps" not in str(summarize_file)

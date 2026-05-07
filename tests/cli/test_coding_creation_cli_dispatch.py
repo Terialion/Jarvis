@@ -27,7 +27,7 @@ def test_cli_coding_creation_uses_orchestrator(monkeypatch) -> None:
     monkeypatch.setattr(cli_mod, "_run_coding_loop", fake_run)
     state = cli_mod.ShellState(cli_mod.DEFAULT_API_BASE)
     output = cli_mod._handle_natural_language(state, "在这个工作空间写一个python程序，打印helloworld。")
-    # Coding creation now routes through AgentToolLoop (not _run_coding_loop directly).
+    # Coding creation now routes through AgentLoop output handling.
     # Verify it was processed (not a crash, not a simple chat answer).
     assert output != ""
     assert "我需要再确认一下" not in output

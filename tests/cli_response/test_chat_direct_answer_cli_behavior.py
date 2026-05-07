@@ -87,7 +87,7 @@ def test_work_request_still_enters_tool_loop_not_chat_prompt():
 
     assert response == "tool_loop_result"
     assert mode == "coding_loop"
-    assert "agent_tool_loop" in desc
+    assert "work_runner" in desc
     llm_runner.assert_not_called()
     kwargs["run_agent_tool_loop"].assert_called_once_with("读取 src 目录并修改 router.py。")
 

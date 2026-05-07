@@ -1,10 +1,9 @@
-"""Core tools module — ToolRegistry, ToolSpec, ToolCall, ToolResult, ToolRuntime, AgentToolLoop."""
+"""Core tools module: ToolRegistry, ToolSpec, ToolCall, ToolResult, ToolRuntime."""
 
-from .schema import ToolCall, ToolContext, ToolResult, ToolSpec
-from .registry import ToolRegistry
 from .builtin import BUILTIN_TOOL_SPECS, register_builtin_tools
+from .registry import ToolRegistry
 from .runtime import ApprovalGate, ToolRuntime
-from .loop import AgentToolLoop, LoopResult, LoopStep
+from .schema import ToolCall, ToolContext, ToolResult, ToolSpec
 
 __all__ = [
     "ToolSpec",
@@ -14,9 +13,6 @@ __all__ = [
     "ToolRegistry",
     "ApprovalGate",
     "ToolRuntime",
-    "AgentToolLoop",
-    "LoopResult",
-    "LoopStep",
     "BUILTIN_TOOL_SPECS",
     "register_builtin_tools",
 ]

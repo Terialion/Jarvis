@@ -38,6 +38,14 @@ class FakeModelClient:
     def __init__(self, scripted: list[ModelResponse] | None = None) -> None:
         self.scripted = list(scripted or [])
 
+    def backend_info(self) -> dict[str, str]:
+        return {
+            "model_backend": "fake",
+            "model_provider": "fake",
+            "model_name": "fake-agent-v0",
+            "api_key_source": "none",
+        }
+
     def complete(
         self,
         messages: list[dict[str, Any]],
@@ -75,7 +83,20 @@ class FakeModelClient:
                 tool_calls=[ToolCall.new(name="repo_reader.read_file", arguments={"path": "README.md"})],
                 finish_reason="tool_calls",
             )
-        if any(k in text for k in ("run pytest", "运行 pytest", "run tests", "fix bug", "scoped tests")):
+        if any(
+            k in text
+            for k in (
+                "run pytest",
+                "运行 pytest",
+                "run tests",
+                "fix bug",
+                "scoped tests",
+                "修复",
+                "跑测试",
+                "运行测试",
+                "bug",
+            )
+        ):
             return ModelResponse(
                 reasoning_summary="Need scoped tests.",
                 tool_calls=[ToolCall.new(name="test_runner.run_test", arguments={"command": "python -m pytest -q"})],

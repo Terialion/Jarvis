@@ -1,30 +1,35 @@
-"""Tests for ClarificationPolicy — DEPRECATED.
+"""Clarification behavior tests for the default AgentLoop path."""
 
-These tests verify the deprecated ClarificationPolicy behavior in clarification.py.
-They test behavior that is NO LONGER on the default runtime path.
-Default path uses: AgentLoop._build_clarification_if_needed() instead.
+from __future__ import annotations
 
-These tests will emit DeprecationWarning because clarification.py is deprecated.
-They are kept for regression coverage of the legacy JARVIS_CLI_LEGACY_NL=1 path.
-"""
+from pathlib import Path
 
-import warnings
-
-import pytest
-
-from src.jarvis.core.routing.clarification import build_clarification_route
-from src.jarvis.core.routing.input_gateway import build_input_envelope
+from src.jarvis.agent.loop import AgentLoop
+from src.jarvis.agent.model import FakeModelClient
+from src.jarvis.agent.types import ChatInput, ModelResponse
 
 
-@pytest.mark.filterwarnings("ignore::DeprecationWarning")
-def test_clarification_policy_asks_specific_non_code_question():
-    route = build_clarification_route(build_input_envelope("写一段说明"), reason="needs_specificity")
-    assert "普通说明文本" in (route.clarify_question or "")
-    assert "代码文件" in (route.clarify_question or "")
+def _run_turn(text: str, tmp_path: Path):
+    loop = AgentLoop(
+        project_root=str(tmp_path),
+        model_client=FakeModelClient(
+            scripted=[ModelResponse(final_answer="unused", finish_reason="stop")]
+        ),
+        auto_approve=True,
+    )
+    return loop.run_turn(ChatInput(text=text, cwd=str(tmp_path), project_id="test"))
 
 
-@pytest.mark.filterwarnings("ignore::DeprecationWarning")
-def test_clarification_policy_handles_generic_ambiguous_input():
-    route = build_clarification_route(build_input_envelope("弄一下"), reason="generic_ambiguous")
-    assert "读项目" in (route.clarify_question or "")
-    assert "修改代码" in (route.clarify_question or "")
+def test_clarification_policy_handles_generic_ambiguous_input(tmp_path: Path):
+    result = _run_turn("帮我弄一下", tmp_path)
+    assert result.output_type == "clarification"
+    assert result.stop_reason == "needs_user_clarification"
+    assert result.final_answer
+
+
+def test_clarification_policy_handles_missing_file_target(tmp_path: Path):
+    result = _run_turn("读取那个文件", tmp_path)
+    assert result.output_type == "clarification"
+    assert result.stop_reason == "needs_user_clarification"
+    assert "文件" in result.final_answer
+

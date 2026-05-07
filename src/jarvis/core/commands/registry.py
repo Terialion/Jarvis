@@ -8,6 +8,7 @@ from .schema import CommandMetadata
 _LOCAL_COMMANDS = {
     "/help",
     "/context",
+    "/threads",
     "/resume",
     "/compact",
     "/continue",
@@ -18,6 +19,7 @@ _LOCAL_COMMANDS = {
 }
 _TOOL_COMMANDS = {
     "/approve": ["approval.resolve"],
+    "/deny": ["approval.resolve"],
     "/reject": ["approval.resolve"],
     "/test": ["shell.run_scoped_tests"],
 }

@@ -554,11 +554,24 @@ def _safe_registry():
 
 def _safe_skill_registry(refresh: bool = False):
     try:
-        from src.jarvis.core.skill_harness.registry import get_skill_registry
+        from src.jarvis.skills.registry import SkillRegistry
 
-        return get_skill_registry(_ROOT, refresh=refresh)
+        _ = refresh
+        return SkillRegistry(project_root=_ROOT)
     except Exception:
         return None
+
+
+def _thread_store():
+    from src.jarvis.store.thread_store import ThreadStore
+
+    return ThreadStore()
+
+
+def _memory_store():
+    from src.jarvis.store.memory_store import MemoryStore
+
+    return MemoryStore()
 
 
 def _build_provider_status_line() -> tuple[str, Any | None]:
@@ -1381,6 +1394,8 @@ class ShellState:
         self.approval_counter = 0
         self.task_records: Dict[str, Dict[str, Any]] = {}
         self.latest_task_id: str = ""
+        self.current_thread_id: str = "cli_shell"
+        self.current_project_id: str = "cli"
         self.provider_status_line, self.llm_provider = _build_provider_status_line()
 
 
@@ -1742,6 +1757,7 @@ def _render_approval(approval_id: str, action: str, reason: str) -> str:
             "",
             "Options",
             f"  /approve {approval_id}",
+            f"  /deny {approval_id}",
             f"  /reject {approval_id}",
         ]
     )
@@ -1785,6 +1801,8 @@ def _shell_status(state: ShellState) -> str:
 
 
 def _shell_permissions(state: ShellState) -> str:
+    from src.jarvis.core.policy import PermissionPolicy, get_approval_store
+
     registry = _safe_skill_registry()
     total = 0
     quarantined = 0
@@ -1795,12 +1813,20 @@ def _shell_permissions(state: ShellState) -> str:
             quarantined = len([i for i in list(snap.get("items") or []) if i.get("quarantine")])
         except Exception:
             pass
+    permission_mode = "workspace_write" if state.mode in {"edit", "ask"} else "read_only"
+    policy = PermissionPolicy.from_permission_mode(permission_mode)
+    pending = len(get_approval_store().list_pending())
     return "\n".join(
         [
             "Policy: safe by default",
             f"Mode: {state.mode}",
+            f"Permission profile: {policy.profile}",
+            f"Default action: {policy.default_action}",
+            f"Pending approvals: {pending}",
             "Dangerous actions require approval or dry-run.",
             f"Skill trust/quarantine enforcement: loaded={total}, quarantined={quarantined}",
+            "Tool rules:",
+            *[f"  - {row.tool_name}: {row.action} ({row.risk_level})" for row in policy.tool_rules[:10]],
         ]
     )
 
@@ -2181,60 +2207,16 @@ def _shell_tools() -> str:
 
 def _shell_skills(args: Optional[List[str]] = None) -> str:
     args = list(args or [])
-    if args and args[0].lower() in {"insights"}:
-        return _render_skill_insights()
-    debug = bool(args and args[0].lower() in {"debug", "--debug"})
-    source_filter = ""
-    trust_filter = ""
-    status_filter = ""
-    shadowed_only = False
-    limit = 0
-    if debug and len(args) > 1:
-        idx = 1
-        while idx < len(args):
-            token = args[idx].strip().lower()
-            if token == "--source" and idx + 1 < len(args):
-                source_filter = args[idx + 1]
-                idx += 2
-                continue
-            if token == "--trust" and idx + 1 < len(args):
-                trust_filter = args[idx + 1]
-                idx += 2
-                continue
-            if token == "--status" and idx + 1 < len(args):
-                status_filter = args[idx + 1]
-                idx += 2
-                continue
-            if token == "--limit" and idx + 1 < len(args):
-                try:
-                    limit = int(args[idx + 1])
-                except Exception:
-                    limit = 0
-                idx += 2
-                continue
-            if token == "--shadowed":
-                shadowed_only = True
-                idx += 1
-                continue
-            idx += 1
     registry = _safe_skill_registry()
     if registry is None:
         return _render_capabilities("Skills", _list_builtin_capabilities())
-    snap = registry.snapshot().get("data", {})
-    items = list(snap.get("items") or [])
+    items = _skill_items()
     if not items:
         return _render_capabilities("Skills", _list_builtin_capabilities())
-    table = _render_skill_table(items)
-    if debug:
-        return table + "\n\n" + _render_skill_debug(
-            snap,
-            source_filter=source_filter,
-            trust_filter=trust_filter,
-            status_filter=status_filter,
-            shadowed_only=shadowed_only,
-            limit=limit,
-        )
-    return table
+    lines = ["Jarvis Skills:"]
+    for item in items:
+        lines.append(f"- {item.get('name')}: {item.get('description')}")
+    return "\n".join(lines)
 
 
 def _skill_usage() -> str:
@@ -2244,20 +2226,33 @@ def _skill_usage() -> str:
             "",
             "Examples:",
             "  /skill list",
-            "  /skill show code-generator",
-            "  /skill jarvis-code-agent fix greeting bug",
+            "  /skill show summarize_file",
+            "  /skill create my_skill",
+            "  /skill install path/to/skill",
+            "  /skill enable my_skill",
+            "  /skill disable my_skill",
+            "  /skill update my_skill",
+            "  /skill check my_skill",
+            "  /skill trust my_skill",
+            "  /skill quarantine my_skill",
+            "  /skill source list",
+            "  /skill source add local_pack path/to/skills",
+            "  /skill source remove local_pack",
+            "  /skill validate summarize_file",
+            "  /skill doctor",
+            "  /skill index",
             "",
             "Skill commands keep raw args intact. Write, shell, and network actions stay approval-gated.",
         ]
     )
 
 
-def _skill_items() -> List[Dict[str, Any]]:
+def _skill_items(include_inactive: bool = False) -> List[Dict[str, Any]]:
     registry = _safe_skill_registry()
     if registry is None:
         return []
     try:
-        return list((registry.snapshot().get("data") or {}).get("items") or [])
+        return list(registry.export_index(include_inactive=include_inactive))
     except Exception:
         return []
 
@@ -2266,15 +2261,10 @@ def _find_skill_item(name: str) -> Optional[Dict[str, Any]]:
     needle = str(name or "").strip().lower()
     if not needle:
         return None
-    for item in _skill_items():
+    for item in _skill_items(include_inactive=True):
         aliases = {
-            str(item.get("id") or "").strip().lower(),
             str(item.get("name") or "").strip().lower(),
-            str(item.get("skill_id") or "").strip().lower(),
-            str(item.get("skill_name") or "").strip().lower(),
         }
-        metadata = dict(item.get("metadata") or {})
-        aliases.add(str(metadata.get("command_name") or "").strip().lower())
         if needle in aliases:
             return dict(item)
     return None
@@ -2282,6 +2272,7 @@ def _find_skill_item(name: str) -> Optional[Dict[str, Any]]:
 
 def _skill_body_has_policy_violation(item: Dict[str, Any]) -> bool:
     candidates = [
+        item.get("path"),
         item.get("skill_md_path"),
         (dict(item.get("metadata") or {})).get("body_path"),
     ]
@@ -2368,38 +2359,209 @@ def _render_skill_show(name: str) -> str:
         return f"skill-not-found: {name}\nUse /skills to list available skills."
     return "\n".join(
         [
-            f"Skill: {item.get('skill_id') or item.get('id') or name}",
-            f"Status: {item.get('status', '-')}",
-            f"Trust: {item.get('trust', '-')}",
-            f"Source: {item.get('source', '-')}",
+            f"name: {item.get('name') or name}",
             f"Description: {item.get('description', '-')}",
+            f"source: {item.get('source', '-')}",
+            f"source_format: {item.get('source_format', '-')}",
+            f"risk_level: {item.get('risk_level', '-')}",
+            f"risk_level_source: {item.get('risk_level_source', '-')}",
+            f"raw_allowed_tools: {item.get('raw_allowed_tools')}",
             "Allowed tools: " + (", ".join([str(t) for t in list(item.get("allowed_tools") or [])]) or "none"),
+            f"enabled: {item.get('enabled')}",
+            f"trust_status: {item.get('trust_status')}",
+            f"quarantined: {item.get('quarantined')}",
         ]
     )
 
 
 def _shell_skill(args: List[str], envelope: Any) -> str:
-    from src.jarvis.core.routing.skill_command_router import route_skill_command
+    from src.jarvis.skills.authoring import create_skill, format_skill_doctor, format_skill_index, format_validation_result
+    from src.jarvis.skills.lifecycle import SkillLifecycleManager
+    from src.jarvis.skills.validator import SkillValidator, default_validation_mode_for_spec
 
     if not args or args[0].lower() in {"help", "--help", "-h"}:
         return _skill_usage()
     action = args[0].lower()
+    registry = _safe_skill_registry()
+    if registry is None:
+        return "skill-registry-unavailable"
+    lifecycle = SkillLifecycleManager(
+        project_root=_ROOT,
+        install_root=Path(os.getenv("JARVIS_SKILL_CREATE_DIR", str(_ROOT / ".jarvis" / "skills"))),
+        config_path=os.getenv("JARVIS_SKILL_CONFIG_PATH"),
+    )
     if action == "list":
-        return _shell_skills([])
+        items = _skill_items(include_inactive=True)
+        lines = ["Jarvis Skills:"]
+        for item in items:
+            lines.append(
+                f"- {item.get('name')}: {item.get('description')} "
+                f"[enabled={item.get('enabled')} trust={item.get('trust_status')} quarantined={item.get('quarantined')}]"
+            )
+        return "\n".join(lines)
     if action == "show":
         if len(args) < 2:
             return "Usage: /skill show <name>"
         return _render_skill_show(args[1])
+    if action == "create":
+        if len(args) < 2:
+            return "Usage: /skill create <name>"
+        create_root = Path(os.getenv("JARVIS_SKILL_CREATE_DIR", str(_ROOT / ".jarvis" / "skills")))
+        try:
+            created = create_skill(args[1], base_dir=create_root)
+        except FileExistsError:
+            return f"Skill already exists: {create_root / args[1] / 'SKILL.md'}"
+        except ValueError:
+            return f"Invalid skill name: {args[1]}"
+        return "\n".join(
+            [
+                f"Created skill template: {created}",
+                "Next: edit description, allowed-tools, workflow, safety rules, and examples.",
+            ]
+        )
+    if action == "validate":
+        if len(args) < 2:
+            return "Usage: /skill validate <name> [--compat]"
+        try:
+            spec = registry.get(args[1])
+        except KeyError:
+            return f"skill-not-found: {args[1]}\nUse /skills to list available skills."
+        mode = "compatibility" if any(token in {"--compat", "--compatibility"} for token in args[2:]) else default_validation_mode_for_spec(spec)
+        return format_validation_result(SkillValidator().validate_spec(spec, mode=mode))
+    if action == "doctor":
+        specs = registry.list_skills()
+        validator = SkillValidator()
+        results = [validator.validate_spec(spec, mode=default_validation_mode_for_spec(spec)) for spec in specs]
+        return format_skill_doctor(results, specs)
+    if action == "index":
+        return format_skill_index(registry.export_index())
+    if action == "install":
+        if len(args) < 2:
+            return "Usage: /skill install <source> [--strict|--compat]"
+        mode = "strict" if "--strict" in args[2:] else "compatibility" if any(token in {"--compat", "--compatibility"} for token in args[2:]) else "auto"
+        result = lifecycle.install_skill(args[1], mode=mode, enabled=False)
+        if not result.get("ok"):
+            if result.get("validation"):
+                validation = dict(result.get("validation") or {})
+                return "\n".join(
+                    [
+                        f"Skill install failed: {args[1]}",
+                        f"Validation: {validation.get('mode')} -> ERROR",
+                        "Errors:",
+                        *[f"- {str(f.get('code') or 'error')}: {str(f.get('message') or '')}" for f in list(validation.get('findings') or []) if str(f.get('level') or '') == 'error'],
+                    ]
+                )
+            return f"Skill install failed: {result.get('error') or 'unknown_error'}"
+        record = dict(result.get("record") or {})
+        return "\n".join(
+            [
+                f"Skill installed: {record.get('name')}",
+                f"Validation: {record.get('validation_status')}",
+                f"Enabled: {record.get('enabled')}",
+                f"Trust: {record.get('trust_status')}",
+                f"Quarantine: {record.get('quarantine_status')}",
+                f"Hash: {record.get('hash')}",
+                f"Next: /skill enable {record.get('name')}",
+            ]
+        )
+    if action == "enable":
+        if len(args) < 2:
+            return "Usage: /skill enable <name>"
+        result = lifecycle.set_enabled(args[1], True)
+        return f"Skill enabled: {args[1]}" if result.get("ok") else f"Skill enable failed: {result.get('error')}"
+    if action == "disable":
+        if len(args) < 2:
+            return "Usage: /skill disable <name>"
+        result = lifecycle.set_enabled(args[1], False, reason="cli_disable")
+        return f"Skill disabled: {args[1]}" if result.get("ok") else f"Skill disable failed: {result.get('error')}"
+    if action == "update":
+        if len(args) < 2:
+            return "Usage: /skill update <name>"
+        result = lifecycle.update_skill(args[1])
+        if not result.get("ok"):
+            return f"Skill update failed: {result.get('error')}"
+        return "\n".join(
+            [
+                f"Skill updated: {args[1]}",
+                f"old_hash: {result.get('old_hash')}",
+                f"new_hash: {result.get('new_hash')}",
+            ]
+        )
+    if action == "check":
+        if len(args) < 2:
+            return "Usage: /skill check <name>"
+        try:
+            data = registry.check_skill(args[1])
+        except KeyError:
+            return f"skill-not-found: {args[1]}\nUse /skills to list available skills."
+        return "\n".join(
+            [
+                f"name: {data.get('name')}",
+                f"source: {data.get('source')}",
+                f"path: {data.get('path')}",
+                f"hash: {data.get('hash')}",
+                f"version: {data.get('version')}",
+                f"enabled: {data.get('enabled')}",
+                f"trust_status: {data.get('trust_status')}",
+                f"quarantine_status: {data.get('quarantine_status')}",
+                f"validation_mode: {data.get('validation_mode')}",
+                f"validation_status: {data.get('validation_status')}",
+                f"duplicate_status: {data.get('duplicate_status')}",
+                f"loadable: {data.get('loadable')}",
+                f"executable: {data.get('executable')}",
+                f"risk_level: {data.get('risk_level')}",
+                "allowed_tools: " + (", ".join([str(t) for t in list(data.get("allowed_tools") or [])]) or "none"),
+            ]
+        )
+    if action == "trust":
+        if len(args) < 2:
+            return "Usage: /skill trust <name>"
+        result = lifecycle.trust_skill(args[1], trusted=True, reason="cli_trust")
+        return f"Skill trust updated: {args[1]} -> {dict(result.get('trust') or {}).get('status')}" if result.get("ok") else f"Skill trust failed: {result.get('error')}"
+    if action == "quarantine":
+        if len(args) < 2:
+            return "Usage: /skill quarantine <name>"
+        result = lifecycle.quarantine_skill(args[1], quarantined=True, reason="cli_quarantine")
+        return f"Skill quarantined: {args[1]}" if result.get("ok") else f"Skill quarantine failed: {result.get('error')}"
+    if action == "source":
+        if len(args) < 2:
+            return "Usage: /skill source <list|add|remove> ..."
+        sub = args[1].lower()
+        if sub == "list":
+            rows = lifecycle.store.list_sources()
+            lines = ["Skill sources:"]
+            for row in rows:
+                lines.append(f"- {row.name}: kind={row.kind} enabled={row.enabled} priority={row.priority} path={row.uri_or_path}")
+            if len(lines) == 1:
+                lines.append("- none")
+            return "\n".join(lines)
+        if sub == "add":
+            if len(args) < 4:
+                return "Usage: /skill source add <name> <path_or_uri>"
+            row = lifecycle.store.add_source(args[2], args[3])
+            return f"Skill source added: {row.name} -> {row.uri_or_path}"
+        if sub == "remove":
+            if len(args) < 3:
+                return "Usage: /skill source remove <name>"
+            removed = lifecycle.store.remove_source(args[2])
+            return f"Skill source removed: {args[2]}" if removed else f"Skill source not found: {args[2]}"
+        return "Usage: /skill source <list|add|remove> ..."
 
     item = _find_skill_item(args[0])
     if item is None:
         return f"skill-not-found: {args[0]}\nUse /skills to list available skills."
-    if str(item.get("status") or "").lower() not in {"enabled", "available"}:
-        return f"skill-unavailable: {args[0]}\nStatus: {item.get('status', '-')}"
-    skill_route = route_skill_command(envelope)
-    if not skill_route.handled:
-        return f"skill-not-found: {args[0]}\nUse /skills to list available skills."
-    return _render_skill_invocation(skill_route, item=item, trigger=f"/skill {args[0]}")
+    raw_args = " ".join(args[1:]).strip()
+    lines = [
+        f"Skill command recognized: /skill {args[0]}",
+        f"Skill: {item.get('name')}",
+        f"Description: {item.get('description')}",
+        f"Risk: {item.get('risk_level')}",
+        "Allowed tools: " + (", ".join([str(t) for t in list(item.get("allowed_tools") or [])]) or "none"),
+    ]
+    if raw_args:
+        lines.append(f"Args: {raw_args}")
+    lines.append("Execution: not implemented in Phase 9; use AgentLoop + skill.load for on-demand loading.")
+    return "\n".join(lines)
 
 
 def _shell_commands(args: List[str]) -> str:
@@ -2407,8 +2569,100 @@ def _shell_commands(args: List[str]) -> str:
     return render_command_table(list_command_specs(category=category))
 
 
-def _shell_memory(_state: ShellState) -> str:
-    return "Memory: read-only summary mode. Write operations require task/runtime flow."
+def _shell_context(state: ShellState, args: List[str]) -> str:
+    args = list(args or [])
+    store = _thread_store()
+    if not args:
+        return "Usage: /context <save|resume> [thread_id]"
+    action = str(args[0]).strip().lower()
+    if action == "save":
+        thread = store.get_thread(state.current_thread_id)
+        if thread is None:
+            thread = store.create_thread(title="CLI session", metadata={"source": "cli"})
+            state.current_thread_id = thread.thread_id
+        return "\n".join(
+            [
+                f"Context saved: {state.current_thread_id}",
+                f"Schema version: {store.schema_version()}",
+                "Status: persisted",
+            ]
+        )
+    if action == "resume":
+        if len(args) < 2:
+            return "Usage: /context resume <thread_id>"
+        thread_id = str(args[1]).strip()
+        thread = store.get_thread(thread_id)
+        if thread is None:
+            return f"Thread not found: {thread_id}"
+        state.current_thread_id = thread_id
+        return "\n".join(
+            [
+                f"Context resumed: {thread_id}",
+                "Mode: background-only",
+                "Note: persisted memory is historical context, not a new instruction.",
+            ]
+        )
+    return "Usage: /context <save|resume> [thread_id]"
+
+
+def _shell_threads(state: ShellState, args: List[str]) -> str:
+    args = list(args or [])
+    store = _thread_store()
+    action = str(args[0]).strip().lower() if args else "list"
+    if action == "list":
+        rows = store.list_threads(limit=20)
+        if not rows:
+            return "No persisted threads."
+        lines = ["Threads:"]
+        for row in rows:
+            marker = "*" if row.thread_id == state.current_thread_id else " "
+            lines.append(f"{marker} {row.thread_id}  title={row.title or '-'}  updated_at={row.updated_at}")
+        return "\n".join(lines)
+    if action == "open":
+        if len(args) < 2:
+            return "Usage: /threads open <thread_id>"
+        thread_id = str(args[1]).strip()
+        thread = store.get_thread(thread_id)
+        if thread is None:
+            return f"Thread not found: {thread_id}"
+        turns = store.get_recent_turns(thread_id, limit=5)
+        handoff = store.get_handoff_summary(thread_id)
+        lines = [
+            f"Thread: {thread.thread_id}",
+            f"Title: {thread.title or '-'}",
+            f"Updated: {thread.updated_at}",
+            "Recent turns:",
+        ]
+        lines.extend([f"  - {row.turn_id}: {row.output_type} / {row.stop_reason or '-'}" for row in turns] or ["  - none"])
+        if handoff is not None:
+            lines.extend(["Handoff summary:", f"  {handoff.summary_redacted}"])
+        return "\n".join(lines)
+    return "Usage: /threads <list|open> [thread_id]"
+
+
+def _shell_memory(state: ShellState, args: Optional[List[str]] = None) -> str:
+    args = list(args or [])
+    store = _memory_store()
+    if not args or str(args[0]).strip().lower() == "show":
+        user_memory = store.get_user_memory()
+        project_memory = store.get_project_memory(state.current_project_id)
+        lines = ["Memory", "", "User memory:"]
+        lines.extend([f"  - {k}: {v}" for k, v in user_memory.items()] or ["  - none"])
+        lines.extend(["", f"Project memory ({state.current_project_id}):"])
+        lines.extend([f"  - {k}: {v}" for k, v in project_memory.items()] or ["  - none"])
+        return "\n".join(lines)
+    action = str(args[0]).strip().lower()
+    if action == "edit":
+        if len(args) < 3:
+            return "Usage: /memory edit <key> <value>"
+        key = str(args[1]).strip()
+        value = " ".join(str(part) for part in args[2:])
+        record = store.set_user_memory(key, value)
+        return f"Memory updated: {record.key}\nValue: {record.value_redacted}"
+    if action == "clear":
+        store.clear_user_memory()
+        return "User memory cleared."
+    return "Usage: /memory <show|edit|clear> ..."
 
 
 def _shell_agents(_state: ShellState) -> str:
@@ -2480,9 +2734,21 @@ def _shell_doctor(state: ShellState) -> str:
 
 
 def _shell_approve(state: ShellState, args: List[str]) -> str:
+    from src.jarvis.core.policy import get_approval_store
+
     if not args:
         return "Usage: /approve <id>"
     approval_id = args[0]
+    store = get_approval_store()
+    response = store.approve(approval_id, decided_by="cli")
+    if response is not None:
+        return "\n".join(
+            [
+                f"Approved: {approval_id}",
+                "Status: approved",
+                "Note: approval recorded; retry the original action to continue execution.",
+            ]
+        )
     if approval_id.lower() == "last":
         approval_id = next(reversed(state.approvals), "") if state.approvals else ""
     if approval_id not in state.approvals:
@@ -2576,9 +2842,15 @@ def _shell_approve(state: ShellState, args: List[str]) -> str:
 
 
 def _shell_reject(state: ShellState, args: List[str]) -> str:
+    from src.jarvis.core.policy import get_approval_store
+
     if not args:
-        return "Usage: /reject <id>"
+        return "Usage: /deny <id>"
     approval_id = args[0]
+    store = get_approval_store()
+    response = store.deny(approval_id, decided_by="cli")
+    if response is not None:
+        return f"Denied: {approval_id}\nStatus: denied"
     if approval_id.lower() == "last":
         approval_id = next(reversed(state.approvals), "") if state.approvals else ""
     if approval_id not in state.approvals:
@@ -3013,69 +3285,19 @@ def _apply_library_project(state: ShellState, task_id: str) -> Dict[str, Any]:
 
 
 def _handle_natural_language(state: ShellState, user_input: str) -> str:
-    from src.jarvis.core.cli_response.dispatcher import dispatch_natural_language
-    from src.jarvis.core.cli_response.tool_loop_adapter import (
-        build_default_tool_loop,
-        execute_agent_tool_loop,
-    )
-    from src.jarvis.core.llm.prompt_builder import generate_chat_response
+    _maybe_warn_legacy_nl_escape_hatch(state)
+    return run_agent_turn_for_cli(user_input, state=state, output_mode="default", interactive=True)
 
-    route_before = _detect_intent_route(user_input)
-    route_after = _apply_route_safety(route_before, user_input, state.mode)
-    if route_after.get("response_mode") == "coding_loop" and _is_library_project_request(user_input):
-        response = _queue_library_project_approval(state, user_input)
-        _append_intent_route_trace(
-            state=state,
-            user_input=user_input,
-            route_before_safety=route_before,
-            route_after_safety=route_after,
-            final_response_mode="coding_loop",
-            entered_task_flow=True,
-            notes="library project approval gate",
-        )
-        return response
 
-    # Build AgentToolLoop once per session and reuse
-    if not hasattr(state, "_agent_tool_loop"):
-        try:
-            state._agent_tool_loop = build_default_tool_loop(
-                permission_mode="workspace_write" if state.mode in {"edit", "ask"} else "read_only",
-                auto_approve=False,
-                llm_provider=state.llm_provider,
-                max_rounds=10,
-            )
-        except Exception:
-            state._agent_tool_loop = None
-
-    response, entered_task_flow, final_response_mode, notes = dispatch_natural_language(
-        user_input=user_input,
-        route_after_safety=route_after,
-        run_existing_task_flow=lambda text: _run_existing_task_flow(state, text),
-        run_skill_admin=lambda: _shell_skills([]),
-        run_repo_inspection=lambda text: _run_repo_inspection(text),
-        run_coding_loop=lambda text: _run_coding_loop(text),
-        run_agent_tool_loop=lambda text: execute_agent_tool_loop(
-            text,
-            tool_loop=state._agent_tool_loop,
-            permission_mode="workspace_write" if state.mode in {"edit", "ask"} else "read_only",
-        ),
-        run_llm_chat=lambda text, mode: generate_chat_response(
-            user_input=text,
-            chat_type=mode,
-            llm_provider=state.llm_provider,
-        ),
-        llm_provider_available=state.llm_provider is not None,
+def _maybe_warn_legacy_nl_escape_hatch(state: ShellState) -> None:
+    if os.getenv("JARVIS_CLI_LEGACY_NL", "0").strip() != "1":
+        return
+    if bool(getattr(state, "_legacy_nl_warned", False)):
+        return
+    setattr(state, "_legacy_nl_warned", True)
+    _safe_print(
+        "JARVIS_CLI_LEGACY_NL is deprecated and ignored; natural language input now always uses AgentLoop.run_turn()."
     )
-    _append_intent_route_trace(
-        state=state,
-        user_input=user_input,
-        route_before_safety=route_before,
-        route_after_safety=route_after,
-        final_response_mode=final_response_mode,
-        entered_task_flow=entered_task_flow,
-        notes=notes,
-    )
-    return response
 
 
 def _handle_slash_command(state: ShellState, raw: str, envelope: Optional[Any] = None) -> Optional[str]:
@@ -3114,6 +3336,7 @@ def _handle_slash_command(state: ShellState, raw: str, envelope: Optional[Any] =
         "/allowed-tools": lambda: _shell_allowed_tools(state),
         "/approvals": lambda: _shell_approvals(state, args),
         "/approve": lambda: _shell_approve(state, args),
+        "/deny": lambda: _shell_reject(state, args),
         "/reject": lambda: _shell_reject(state, args),
         "/mode": lambda: _shell_mode(state, args),
         "/plan": lambda: _shell_plan(state, args),
@@ -3131,7 +3354,9 @@ def _handle_slash_command(state: ShellState, raw: str, envelope: Optional[Any] =
         "/tasks": lambda: _shell_tasks(state, args),
         "/state": lambda: _shell_state(),
         "/trace": lambda: _shell_trace(state, args),
-        "/memory": lambda: _shell_memory(state),
+        "/context": lambda: _shell_context(state, args),
+        "/threads": lambda: _shell_threads(state, args),
+        "/memory": lambda: _shell_memory(state, args),
         "/agents": lambda: _shell_agents(state),
     }
     if cmd in handlers:
@@ -3168,10 +3393,7 @@ def run_shell(initial_prompt: Optional[str] = None) -> int:
     state = ShellState(DEFAULT_API_BASE)
     _safe_print(_render_shell_header(os.getcwd(), state.mode, state.model, provider_line=state.provider_status_line))
     if initial_prompt:
-        if os.getenv("JARVIS_CLI_LEGACY_NL", "0").strip() == "1":
-            _safe_print("\n" + _handle_natural_language(state, initial_prompt))
-        else:
-            _safe_print("\n" + run_agent_turn_for_cli(initial_prompt, state=state, output_mode="default", interactive=True))
+        _safe_print("\n" + _handle_natural_language(state, initial_prompt))
     while True:
         try:
             line = input(SHELL_PROMPT)
@@ -3190,10 +3412,7 @@ def run_shell(initial_prompt: Optional[str] = None) -> int:
                 return 0
             _safe_print("\n" + result)
             continue
-        if os.getenv("JARVIS_CLI_LEGACY_NL", "0").strip() == "1":
-            _safe_print("\n" + _handle_natural_language(state, raw))
-        else:
-            _safe_print("\n" + run_agent_turn_for_cli(raw, state=state, output_mode="default", interactive=True))
+        _safe_print("\n" + _handle_natural_language(state, raw))
 
 
 def run_shell_from_text(input_text: str) -> int:
@@ -3211,10 +3430,7 @@ def run_shell_from_text(input_text: str) -> int:
                 return 0
             _safe_print("\n" + result)
             continue
-        if os.getenv("JARVIS_CLI_LEGACY_NL", "0").strip() == "1":
-            _safe_print("\n" + _handle_natural_language(state, raw))
-        else:
-            _safe_print("\n" + run_agent_turn_for_cli(raw, state=state, output_mode="default", interactive=True))
+        _safe_print("\n" + _handle_natural_language(state, raw))
     return 0
 
 
@@ -3306,9 +3522,6 @@ def _looks_like_model_question(text: str) -> bool:
             "\u4f60\u662f\u4ec0\u4e48\u6a21\u578b",
             "\u5f53\u524d\u6a21\u578b\u662f\u4ec0\u4e48",
             "\u4f60\u7528\u7684\u662f\u4ec0\u4e48\u6a21\u578b",
-            "浣犳槸浠€涔堟ā鍨",
-            "褰撳墠妯″瀷鏄粈涔",
-            "浣犵敤鐨勬槸浠€涔堟ā鍨",
             "what model",
             "which model",
         )
@@ -3323,9 +3536,6 @@ def _looks_like_capability_question(text: str) -> bool:
             "\u4f60\u80fd\u5e2e\u6211\u5199\u4ee3\u7801\u5417",
             "\u4f60\u4f1a\u5199\u4ee3\u7801\u5417",
             "\u4f60\u80fd\u505a\u4ec0\u4e48",
-            "浣犺兘甯垜鍐欎唬鐮佸悧",
-            "浣犱細鍐欎唬鐮佸悧",
-            "浣犺兘鍋氫粈涔",
             "what can you do",
             "can you code",
         )
@@ -3339,8 +3549,6 @@ def _looks_like_identity_question(text: str) -> bool:
         for t in (
             "\u4f60\u662f\u8c01",
             "\u4f60\u662f\u4ec0\u4e48",
-            "浣犳槸璋",
-            "浣犳槸浠€涔",
             "who are you",
             "what are you",
         )
@@ -3360,16 +3568,12 @@ def _looks_like_greeting(text: str) -> bool:
         "\u665a\u4e0a\u597d",
         "\u65e9\u4e0a\u597d",
         "\u4f60\u597d",
-        "涓嬪崍濂",
-        "鏅氫笂濂",
-        "鏃╀笂濂",
-        "浣犲ソ",
     }
 
 
 def _looks_like_joke_request(text: str) -> bool:
     low = (text or "").lower()
-    return "\u7b11\u8bdd" in text or "绗戣瘽" in text or "joke" in low
+    return "\u7b11\u8bdd" in text or "joke" in low
 
 
 def _looks_like_sensitive_or_dangerous(text: str) -> bool:
@@ -3415,6 +3619,17 @@ def run_agent_turn_for_cli(
     state = state or ShellState(DEFAULT_API_BASE)
     if _looks_like_sensitive_or_dangerous(prompt):
         return "Jarvis\n这个请求涉及敏感信息或危险操作，不能直接执行。"
+    if not _looks_like_work_request(prompt):
+        if _looks_like_identity_question(prompt):
+            return "Jarvis\nI am Jarvis, a local coding assistant. I can inspect repositories, explain code, plan changes, and run approved tests."
+        if _looks_like_capability_question(prompt):
+            return "Jarvis\n" + _local_capability_answer()
+        if _looks_like_model_question(prompt):
+            return "Jarvis\n" + _local_model_answer(state)
+        if _looks_like_greeting(prompt):
+            return "Jarvis\nHi, I'm here. I can inspect repositories, explain code, plan changes, and run approved tests."
+        if _looks_like_joke_request(prompt):
+            return "Jarvis\nWhy did the programmer like nighttime debugging? Because during the day, bugs pretend to be requirements."
     from src.jarvis.agent.loop import AgentLoop
     from src.jarvis.agent.types import ChatInput
 
@@ -3427,7 +3642,7 @@ def run_agent_turn_for_cli(
         ChatInput(
             text=prompt,
             cwd=str(Path.cwd()),
-            session_id="cli_shell",
+            session_id=state.current_thread_id,
             metadata={"source": "jarvis.cli", "mode": output_mode},
         )
     )

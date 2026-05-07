@@ -9,9 +9,11 @@ from jarvis import cli as cli_mod
 
 def _fake_result() -> SimpleNamespace:
     return SimpleNamespace(
+        ok=True,
         final_answer="Done. token=abc123 sk-live-secret",
         stop_reason="completed",
         status="completed",
+        output_type="answer",
         tool_calls=[
             {"name": "repo_reader.search_files", "arguments": {"path": ".", "pattern": "README"}},
         ],
@@ -32,6 +34,8 @@ def _fake_result() -> SimpleNamespace:
 
 
 def _install_dummy_loop(monkeypatch):
+    monkeypatch.setattr(cli_mod, "_quick_agent_result_for_cli", lambda *_a, **_k: None)
+
     class _DummyLoop:
         def __init__(self, *args, **kwargs):
             pass
@@ -65,7 +69,7 @@ def test_quiet_mode_only_prints_final_answer(monkeypatch):
     monkeypatch.setattr(cli_mod, "_build_provider_status_line", lambda: ("LLM provider: fake status=available", object()))
     lines: list[str] = []
     monkeypatch.setattr(cli_mod, "_safe_print", lambda msg, *a, **k: lines.append(str(msg)))
-    code = cli_mod._run_non_interactive_with_mode("hello", output_mode="quiet")
+    code = cli_mod._run_non_interactive_with_mode("list files", output_mode="quiet")
     out = "\n".join(lines).strip()
     assert code == 0
     assert "LLM provider:" not in out
@@ -78,7 +82,7 @@ def test_verbose_and_trace_modes_include_summary_and_events(monkeypatch):
     lines_v: list[str] = []
     monkeypatch.setattr(cli_mod, "_safe_print", lambda msg, *a, **k: lines_v.append(str(msg)))
 
-    code_v = cli_mod._run_non_interactive_with_mode("hello", output_mode="verbose")
+    code_v = cli_mod._run_non_interactive_with_mode("list files", output_mode="verbose")
     out_v = "\n".join(lines_v)
     assert code_v == 0
     assert "LLM provider: fake status=available" in out_v
@@ -89,7 +93,7 @@ def test_verbose_and_trace_modes_include_summary_and_events(monkeypatch):
 
     lines_t: list[str] = []
     monkeypatch.setattr(cli_mod, "_safe_print", lambda msg, *a, **k: lines_t.append(str(msg)))
-    code_t = cli_mod._run_non_interactive_with_mode("hello", output_mode="trace")
+    code_t = cli_mod._run_non_interactive_with_mode("list files", output_mode="trace")
     out_t = "\n".join(lines_t)
     assert code_t == 0
     assert "Trace" in out_t
@@ -101,12 +105,13 @@ def test_json_mode_outputs_machine_readable_contract(monkeypatch):
     monkeypatch.setattr(cli_mod, "_build_provider_status_line", lambda: ("LLM provider: fake status=available", object()))
     lines: list[str] = []
     monkeypatch.setattr(cli_mod, "_safe_print", lambda msg, *a, **k: lines.append(str(msg)))
-    code = cli_mod._run_non_interactive_with_mode("hello", output_mode="json")
+    code = cli_mod._run_non_interactive_with_mode("list files", output_mode="json")
     out = "\n".join(lines)
     assert code == 0
     payload = json.loads(out)
     assert payload["result"]["stop_reason"] == "completed"
     assert payload["result"]["tool_calls_count"] == 1
+    assert payload["result"]["final_answer"].startswith("Done.")
 
 
 def test_output_aliases_trace_and_json():
@@ -115,15 +120,19 @@ def test_output_aliases_trace_and_json():
 
 
 def test_default_shows_stop_reason_on_failure(monkeypatch):
+    monkeypatch.setattr(cli_mod, "_quick_agent_result_for_cli", lambda *_a, **_k: None)
+
     class _DummyLoop:
         def __init__(self, *args, **kwargs):
             pass
 
         def run_turn(self, chat_input):
             return SimpleNamespace(
+                ok=False,
                 final_answer="",
                 stop_reason="timeout",
                 status="failed",
+                output_type="error",
                 tool_calls=[],
                 events=[],
                 summary={"machine": {"outcome": "failed", "tools_used": [], "risks": []}},
@@ -133,22 +142,26 @@ def test_default_shows_stop_reason_on_failure(monkeypatch):
     monkeypatch.setattr(cli_mod, "_build_provider_status_line", lambda: ("LLM provider: fake status=available", object()))
     lines: list[str] = []
     monkeypatch.setattr(cli_mod, "_safe_print", lambda msg, *a, **k: lines.append(str(msg)))
-    code = cli_mod._run_non_interactive_with_mode("hello", output_mode="default")
+    code = cli_mod._run_non_interactive_with_mode("list files", output_mode="default")
     out = "\n".join(lines)
     assert code == 0
     assert "stop_reason=timeout" in out
 
 
 def test_provider_network_error_is_friendly_and_no_traceback(monkeypatch):
+    monkeypatch.setattr(cli_mod, "_quick_agent_result_for_cli", lambda *_a, **_k: None)
+
     class _DummyLoop:
         def __init__(self, *args, **kwargs):
             pass
 
         def run_turn(self, chat_input):
             return SimpleNamespace(
+                ok=False,
                 final_answer="",
                 stop_reason="exception",
                 status="failed",
+                output_type="error",
                 tool_calls=[],
                 events=[
                     {
@@ -166,23 +179,27 @@ def test_provider_network_error_is_friendly_and_no_traceback(monkeypatch):
     monkeypatch.setattr(cli_mod, "_build_provider_status_line", lambda: ("LLM provider: fake status=available", object()))
     lines: list[str] = []
     monkeypatch.setattr(cli_mod, "_safe_print", lambda msg, *a, **k: lines.append(str(msg)))
-    code = cli_mod._run_non_interactive_with_mode("hello", output_mode="default")
+    code = cli_mod._run_non_interactive_with_mode("list files", output_mode="default")
     out = "\n".join(lines)
     assert code == 0
-    assert "真实 LLM 调用失败，网络连接被系统拒绝。" in out
+    assert "python scripts/check_llm_api.py" in out
     assert "Traceback" not in out
 
 
 def test_json_provider_network_error_contract(monkeypatch):
+    monkeypatch.setattr(cli_mod, "_quick_agent_result_for_cli", lambda *_a, **_k: None)
+
     class _DummyLoop:
         def __init__(self, *args, **kwargs):
             pass
 
         def run_turn(self, chat_input):
             return SimpleNamespace(
+                ok=False,
                 final_answer="",
                 stop_reason="exception",
                 status="failed",
+                output_type="error",
                 tool_calls=[],
                 events=[
                     {
@@ -200,7 +217,7 @@ def test_json_provider_network_error_contract(monkeypatch):
     monkeypatch.setattr(cli_mod, "_build_provider_status_line", lambda: ("LLM provider: fake status=available", object()))
     lines: list[str] = []
     monkeypatch.setattr(cli_mod, "_safe_print", lambda msg, *a, **k: lines.append(str(msg)))
-    code = cli_mod._run_non_interactive_with_mode("hello", output_mode="json")
+    code = cli_mod._run_non_interactive_with_mode("list files", output_mode="json")
     out = "\n".join(lines)
     assert code == 0
     payload = json.loads(out)
@@ -221,8 +238,8 @@ def test_main_ask_uses_new_renderer(monkeypatch):
         return 0
 
     monkeypatch.setattr(cli_mod, "_run_non_interactive_with_mode", _fake_runner)
-    monkeypatch.setattr("sys.argv", ["python", "--ask", "你是谁？", "--output", "quiet"])
+    monkeypatch.setattr("sys.argv", ["python", "--ask", "你是谁", "--output", "quiet"])
     code = cli_mod.main()
     assert code == 0
-    assert called["prompt"] == "你是谁？"
+    assert called["prompt"] == "你是谁"
     assert called["output_mode"] == "quiet"

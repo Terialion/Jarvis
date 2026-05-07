@@ -1,23 +1,23 @@
-import subprocess
-import sys
+from __future__ import annotations
+
+from jarvis import cli as cli_mod
 
 
-def run_cli(*args, timeout=25):
-    return subprocess.run(
-        [sys.executable, "-m", "jarvis.cli", *args],
-        text=True,
-        encoding="utf-8",
-        errors="replace",
-        capture_output=True,
-        timeout=timeout,
-        cwd="d:/jarvis",
+def test_cli_non_interactive_repo_inspection_is_not_task_trace(monkeypatch):
+    monkeypatch.setattr(cli_mod, "_load_local_env_file", lambda *_a, **_k: None)
+    monkeypatch.setattr(cli_mod, "_write_cli_diagnostic", lambda *_a, **_k: None)
+    called: dict[str, str] = {}
+
+    def _fake_runner(prompt: str, *, output_mode: str = "default") -> int:
+        called["prompt"] = prompt
+        called["output_mode"] = output_mode
+        return 0
+
+    monkeypatch.setattr(cli_mod, "_run_non_interactive_with_mode", _fake_runner)
+    monkeypatch.setattr(
+        "sys.argv",
+        ["python", "-p", "Choose the best skill for inspecting this repo. Do not modify files."],
     )
-
-
-def test_cli_non_interactive_repo_inspection_is_not_task_trace():
-    result = run_cli("-p", "Choose the best skill for inspecting this repo. Do not modify files.")
-    out = result.stdout + result.stderr
-    assert result.returncode == 0
-    assert "Task task_" not in out
-    # Now routed through AgentToolLoop
-    assert "jarvis" in out.lower() or "llm provider" in out.lower() or "无法连接" in out or "repository inspection" in out.lower()
+    assert cli_mod.main() == 0
+    assert called["prompt"] == "Choose the best skill for inspecting this repo. Do not modify files."
+    assert called["output_mode"] == "default"

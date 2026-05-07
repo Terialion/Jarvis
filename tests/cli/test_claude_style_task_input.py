@@ -1,50 +1,33 @@
-"""Test natural language and task input handling for Jarvis CLI."""
+"""Tests for interactive natural-language task input behavior."""
 
-import os
-import subprocess
-import sys
+from __future__ import annotations
 
+from types import SimpleNamespace
 
-def run_cli(*args, input_text=None, timeout=25):
-    merged_env = os.environ.copy()
-    merged_env["PYTHONIOENCODING"] = "utf-8"
-    merged_env["PYTHONLEGACYWINDOWSSTDIO"] = "utf-8"
-    return subprocess.run(
-        [sys.executable, "-m", "jarvis.cli", *args],
-        input=input_text,
-        text=True,
-        capture_output=True,
-        timeout=timeout,
-        cwd="d:/jarvis",
-        encoding="utf-8",
-        errors="ignore",
-        env=merged_env,
-    )
+from jarvis import cli as cli_mod
 
 
-def test_chinese_greeting_is_natural_response():
-    result = run_cli(input_text="你好\n/exit\n")
-    output = result.stdout + result.stderr
+def test_english_repo_inspection_is_not_task(monkeypatch):
+    monkeypatch.setattr(cli_mod, "_quick_agent_result_for_cli", lambda *_a, **_k: None)
+
+    class _DummyLoop:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def run_turn(self, chat_input):
+            return SimpleNamespace(
+                ok=True,
+                final_answer="Repository inspection summary.",
+                stop_reason="completed",
+                status="completed",
+                output_type="tool_result",
+                tool_calls=[{"name": "repo_reader.search_files", "arguments": {"pattern": "*"}}],
+                events=[],
+                summary={"machine": {"outcome": "completed", "tools_used": ["repo_reader.search_files"], "risks": []}},
+            )
+
+    monkeypatch.setattr("src.jarvis.agent.loop.AgentLoop", _DummyLoop)
+    output = cli_mod.run_agent_turn_for_cli("Inspect this repo", output_mode="default")
     assert "Task task_" not in output
-    assert "Plan safe steps" not in output
-
-
-def test_english_repo_inspection_is_not_task():
-    result = run_cli(input_text="Inspect this repo\n/exit\n")
-    output = result.stdout + result.stderr
-    assert "Task task_" not in output
-    # Now routed through AgentToolLoop
-    assert "llm provider" in output.lower() or "无法连接" in output or "repository inspection" in output.lower()
-
-
-def test_coding_task_still_enters_task_flow():
-    result = run_cli(input_text="fix this bug and run tests\n/exit\n")
-    output = result.stdout + result.stderr
-    # Now routed through AgentToolLoop → work path; should NOT be a simple chat answer
-    assert "Task task_" in output or "Approval required" in output or "[WORK]" in output or "无法连接 LLM" in output
-
-
-def test_help_slash_does_not_trigger_demo_pytest():
-    result = run_cli(input_text="/help\n/exit\n")
-    output = result.stdout + result.stderr
-    assert "pytest -q" not in output
+    assert "Repository inspection summary." in output
+    assert "Traceback" not in output

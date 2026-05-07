@@ -123,6 +123,30 @@ def test_json_output_has_model_fields(tmp_path: Path):
     assert "model_name" in parsed["result"]
 
 
+def test_json_output_has_skill_fields(tmp_path: Path):
+    loop = AgentLoop(
+        project_root=str(tmp_path),
+        model_client=FakeModelClient(
+            scripted=[ModelResponse(final_answer="hello", finish_reason="stop")]
+        ),
+        auto_approve=True,
+    )
+    result = loop.run_turn(ChatInput(text="hi", cwd=str(tmp_path), project_id="test"))
+
+    from src.jarvis.cli_agent_output import render_agent_result
+
+    rendered = render_agent_result(
+        result=result,
+        provider_line="LLM provider: fake model=fake-agent-v0",
+        output_mode="json",
+        mask_fn=lambda x: x,
+    )
+    parsed = json.loads(rendered)
+    assert "available_skills" in parsed["result"]
+    assert "loaded_skills" in parsed["result"]
+    assert "skill_loads_count" in parsed["result"]
+
+
 def test_json_output_pure_json(tmp_path: Path):
     """JSON mode output is valid JSON that can be json.loads()."""
     loop = AgentLoop(

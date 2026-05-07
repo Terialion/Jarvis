@@ -7,13 +7,20 @@ from typing import Any
 
 from ..core.react_readiness.replay_store import ReplayStore
 from .context import ContextBuilder, ContextCompactorAdapter
+from .context_store import ContextStore
+from .context_updater import ContextUpdater
 from .events import EVENT_TYPES, InMemoryEventSink, ReplayEventSink
 from .model import ModelClient, RuntimeModelClient
+from .prompt_builder import PromptBuilder
 from .retry import ErrorClassifier, ReplanPolicy, RetryPolicy
 from .store import ThreadStore
 from .summary import ResponseComposer
 from .tools import ToolCallExecutor, ToolRegistryAdapter
 from .types import AgentEvent, AgentOutputType, AgentRunResult, ChatInput, ToolCall, ToolResult
+from ..store.memory_store import MemoryStore
+from ..skills.executor import SkillExecutor
+from ..skills.runtime import SkillCall
+from ..web.research import SearchIntentClassifier, WebResearchPipeline
 
 
 class AgentLoop:
@@ -23,6 +30,7 @@ class AgentLoop:
         project_root: str = ".",
         store: ThreadStore | None = None,
         context_builder: ContextBuilder | None = None,
+        context_store: ContextStore | None = None,
         model_client: ModelClient | None = None,
         tool_registry: ToolRegistryAdapter | None = None,
         tool_executor: ToolCallExecutor | None = None,
@@ -46,11 +54,31 @@ class AgentLoop:
             permission_mode=permission_mode,
             auto_approve=auto_approve,
         )
+        self.model_client = model_client or RuntimeModelClient()
+        self.model_info = self.model_client.backend_info() if hasattr(self.model_client, "backend_info") else {
+            "model_backend": "fake",
+            "model_provider": "fake",
+            "model_name": "fake-agent-v0",
+        }
+        self.memory_store = MemoryStore(self.store.db_path)
+        self.context_store = context_store or ContextStore(thread_store=self.store, memory_store=self.memory_store)
         self.context_builder = context_builder or ContextBuilder(
             thread_store=self.store,
+            memory_store=self.memory_store,
             compactor=ContextCompactorAdapter(max_tokens=12000),
+            skill_registry=self.tool_registry.skill_registry,
+            context_store=self.context_store,
+            model_info=self.model_info,
+            permission_mode=permission_mode,
         )
-        self.model_client = model_client or RuntimeModelClient()
+        self.prompt_builder = PromptBuilder()
+        self.context_updater = ContextUpdater(context_store=self.context_store)
+        self.skill_executor = SkillExecutor(
+            skill_registry=self.tool_registry.skill_registry,
+            tool_executor=self.tool_executor,
+            project_root=project_root,
+        )
+        self.search_intent_classifier = SearchIntentClassifier()
         self.summary_composer = summary_composer or ResponseComposer()
         self.retry_policy = retry_policy or RetryPolicy(max_retries=1)
         self.replan_policy = replan_policy or ReplanPolicy(max_replans=2)
@@ -73,68 +101,269 @@ class AgentLoop:
         final_answer = ""
         output_type: AgentOutputType = "answer"
         clarification_payload: dict[str, Any] | None = None
-        # Deduplication: canonical tool_name -> list of (args_frozen, tool_result)
-        _seen_calls: dict[str, list[tuple[frozenset, dict[str, Any]]]] = {}
+        available_skills = list(self.tool_registry.skill_registry.available_names())
+        loaded_skills: list[str] = []
+        skill_results_log: list[dict[str, Any]] = []
+        skills_used: list[str] = []
+        turn_context = None
+        seen_calls: dict[str, list[tuple[frozenset[tuple[str, Any]], dict[str, Any]]]] = {}
 
         self.store.append_message(session_id, turn_id, "user", chat_input.text, metadata={"kind": "user_input"})
         self._emit(events, turn_id, "turn_started", {"session_id": session_id, "text": chat_input.text})
 
         if self._is_sensitive_request(chat_input.text):
-            output_type = "refusal"
-            stop_reason = "safety_refusal"
-            final_answer = "不能直接打印 .env 或 API key，因为其中可能包含敏感凭据。"
-            summary = self.summary_composer.compose(
-                final_answer=final_answer,
-                tool_results=[],
-                stop_reason=stop_reason,
-                output_type=output_type,
-            )
-            machine = summary.get("machine") if isinstance(summary, dict) else None
-            if isinstance(machine, dict):
-                risks = list(machine.get("risks") or [])
-                for risk in ("sensitive_env_requested", "secret_requested"):
-                    if risk not in risks:
-                        risks.append(risk)
-                machine["risks"] = risks
-            self.store.save_summary(session_id, turn_id, summary)
-            self.store.save_final_answer(session_id, turn_id, final_answer)
-            self._emit(events, turn_id, "final_answer_created", {"step": 0})
-            self._emit(events, turn_id, "turn_completed", {"status": "completed", "stop_reason": stop_reason})
-            self._emit(events, turn_id, "summary_created", {"status": "completed"})
-            return AgentRunResult(
-                ok=True,
+            return self._complete_early(
                 session_id=session_id,
                 turn_id=turn_id,
-                final_answer=final_answer,
                 events=events,
-                summary=summary,
-                stop_reason=stop_reason,
-                tool_calls=tool_calls_log,
-                tool_results=tool_results_log,
-                status="completed",
-                output_type=output_type,
+                final_answer="I can't print .env files or API keys because they may contain secrets.",
+                stop_reason="safety_refusal",
+                output_type="refusal",
+                available_skills=available_skills,
+                loaded_skills=loaded_skills,
             )
 
         clarification = self._build_clarification_if_needed(chat_input.text)
         if clarification is not None:
-            output_type = "clarification"
-            stop_reason = "needs_user_clarification"
-            clarification_payload = clarification
-            final_answer = str(clarification.get("question") or "").strip()
+            return self._complete_early(
+                session_id=session_id,
+                turn_id=turn_id,
+                events=events,
+                final_answer=str(clarification.get("question") or "").strip(),
+                stop_reason="needs_user_clarification",
+                output_type="clarification",
+                clarification=clarification,
+                available_skills=available_skills,
+                loaded_skills=loaded_skills,
+            )
+
+        tool_specs = self.tool_registry.list_tool_specs()
+        turn_context, messages = self.context_builder.build_messages(
+            session_id=session_id,
+            turn_id=turn_id,
+            chat_input=chat_input,
+            runtime_state={
+                "cwd": chat_input.cwd or self.project_root,
+                "permission_mode": self.tool_executor.permission_mode,
+                "model_backend": self.model_info.get("model_backend"),
+                "model_provider": self.model_info.get("model_provider"),
+                "model_name": self.model_info.get("model_name"),
+            },
+            prompt_builder=self.prompt_builder,
+        )
+        if turn_context.context_pack is not None:
+            available_skills = [
+                str(item.get("name") or "")
+                for item in list(turn_context.context_pack.skills.available_skills or [])
+                if str(item.get("name") or "")
+            ]
+        self._emit(events, turn_id, "skill_index_built", {"count": len(available_skills), "skills": available_skills[:12]})
+
+        research_reuse = self._maybe_reuse_research_observation(chat_input.text, session_id)
+        if research_reuse is not None:
+            self._emit(
+                events,
+                turn_id,
+                "context_observation_reused",
+                {
+                    "observation_type": "research",
+                    "query": research_reuse.get("query"),
+                    "source_count": len(list(research_reuse.get("sources") or [])),
+                },
+            )
+            final_answer = self._answer_from_reused_research(chat_input.text, research_reuse)
             summary = self.summary_composer.compose(
                 final_answer=final_answer,
                 tool_results=[],
+                stop_reason="completed",
+                output_type="answer",
+                available_skills=available_skills,
+                loaded_skills=loaded_skills,
+                skill_loads_count=len(loaded_skills),
+                skills_used=[],
+                skill_calls_count=0,
+                skill_results=[],
+                context_reuse=True,
+                research_observations=[research_reuse],
+                research_context_reused=True,
+            )
+            result = AgentRunResult(
+                ok=True,
+                session_id=session_id,
+                turn_id=turn_id,
+                final_answer=final_answer,
+                events=events,
+                summary=summary,
+                stop_reason="completed",
+                tool_calls=[],
+                tool_results=[],
+                status="completed",
+                output_type="answer",
+                available_skills=available_skills,
+                loaded_skills=loaded_skills,
+                skill_loads_count=len(loaded_skills),
+                skills_used=[],
+                skill_calls_count=0,
+                skill_results=[],
+                model_backend=str(self.model_info.get("model_backend") or ""),
+                model_provider=str(self.model_info.get("model_provider") or ""),
+                model_name=str(self.model_info.get("model_name") or ""),
+            )
+            self.context_updater.apply_result(turn_context, result)
+            self._emit(events, turn_id, "context_updated", {"context_reuse": True, "research_context_reused": True})
+            return result
+
+        reuse = self._maybe_reuse_context_observation(chat_input.text, session_id)
+        if reuse is not None:
+            self._emit(events, turn_id, "context_observation_reused", {"skill_name": reuse.get("skill_name"), "related_files": reuse.get("related_files")})
+            final_answer = self._answer_from_reused_observation(chat_input.text, reuse)
+            summary = self.summary_composer.compose(
+                final_answer=final_answer,
+                tool_results=[],
+                stop_reason="completed",
+                output_type="answer",
+                available_skills=available_skills,
+                loaded_skills=loaded_skills,
+                skill_loads_count=len(loaded_skills),
+                skills_used=[],
+                skill_calls_count=0,
+                skill_results=[],
+                context_reuse=True,
+                skill_observations=[reuse],
+            )
+            result = AgentRunResult(
+                ok=True,
+                session_id=session_id,
+                turn_id=turn_id,
+                final_answer=final_answer,
+                events=events,
+                summary=summary,
+                stop_reason="completed",
+                tool_calls=[],
+                tool_results=[],
+                status="completed",
+                output_type="answer",
+                available_skills=available_skills,
+                loaded_skills=loaded_skills,
+                skill_loads_count=len(loaded_skills),
+                skills_used=[],
+                skill_calls_count=0,
+                skill_results=[],
+                model_backend=str(self.model_info.get("model_backend") or ""),
+                model_provider=str(self.model_info.get("model_provider") or ""),
+                model_name=str(self.model_info.get("model_name") or ""),
+            )
+            self.context_updater.apply_result(turn_context, result)
+            self._emit(events, turn_id, "context_updated", {"context_reuse": True})
+            return result
+
+        research_intent = self.search_intent_classifier.classify(chat_input.text, turn_context.context_pack)
+        if research_intent.need_web:
+            pipeline = WebResearchPipeline(
+                tool_executor=self.tool_executor,
+                event_factory=lambda event_type, payload: AgentEvent.new(turn_id=turn_id, event_type=event_type, payload=payload),
+            )
+            research_result = pipeline.run(user_input=chat_input.text, turn_context=turn_context)
+            self._append_event_dicts(events, research_result.events)
+            tool_calls_log.extend(research_result.tool_calls)
+            tool_results_log.extend(research_result.tool_results)
+            final_answer = research_result.final_answer
+            output_type = research_result.output_type  # type: ignore[assignment]
+            stop_reason = research_result.stop_reason
+            tool_result_objs = [ToolResult(**item) for item in tool_results_log if isinstance(item, dict) and item.get("name")]
+            research_observations = [research_result.research_observation] if research_result.research_observation else []
+            summary = self.summary_composer.compose(
+                final_answer=final_answer,
+                tool_results=tool_result_objs,
                 stop_reason=stop_reason,
                 output_type=output_type,
-                clarification=clarification_payload,
+                available_skills=available_skills,
+                loaded_skills=loaded_skills,
+                skill_loads_count=len(loaded_skills),
+                skills_used=[],
+                skill_calls_count=0,
+                skill_results=[],
+                research_observations=research_observations,
+                web_search_runs_count=research_result.web_search_runs_count,
+                web_fetch_runs_count=research_result.web_fetch_runs_count,
+                web_fetch_blocked_count=research_result.web_fetch_blocked_count,
+                evidence_count=research_result.evidence_count,
+                official_sources_count=research_result.official_sources_count,
+                github_sources_count=research_result.github_sources_count,
+                web_provider_errors=research_result.web_provider_errors,
+                web_no_results_count=research_result.web_no_results_count,
+                search_results_count=research_result.search_results_count,
+                search_result_dedup_count=research_result.search_result_dedup_count,
+                release_note_sources_count=research_result.release_note_sources_count,
+                stale_sources_count=research_result.stale_sources_count,
+                citation_count=research_result.citation_count,
+                source_coverage_score=research_result.source_coverage_score,
+                prompt_injection_blocked=research_result.prompt_injection_blocked,
             )
             self.store.save_summary(session_id, turn_id, summary)
             self.store.save_final_answer(session_id, turn_id, final_answer)
-            self._emit(events, turn_id, "final_answer_created", {"step": 0})
+            self._emit(events, turn_id, "final_answer_created", {"step": 0, "research_intent": research_intent.intent_type})
             self._emit(events, turn_id, "turn_completed", {"status": "completed", "stop_reason": stop_reason})
             self._emit(events, turn_id, "summary_created", {"status": "completed"})
-            return AgentRunResult(
-                ok=True,
+            result = AgentRunResult(
+                ok=output_type != "error",
+                session_id=session_id,
+                turn_id=turn_id,
+                final_answer=final_answer,
+                events=events,
+                summary=summary,
+                stop_reason=stop_reason,
+                tool_calls=tool_calls_log,
+                tool_results=tool_results_log,
+                status="completed" if output_type != "error" else "failed",
+                output_type=output_type,
+                available_skills=available_skills,
+                loaded_skills=loaded_skills,
+                skill_loads_count=len(loaded_skills),
+                skills_used=[],
+                skill_calls_count=0,
+                skill_results=[],
+                model_backend=str(self.model_info.get("model_backend") or ""),
+                model_provider=str(self.model_info.get("model_provider") or ""),
+                model_name=str(self.model_info.get("model_name") or ""),
+            )
+            self.context_updater.apply_result(turn_context, result)
+            self._emit(events, turn_id, "context_updated", {"research_observations": len(research_observations), "context_reuse": False})
+            return result
+
+        skill_call = self._select_executable_skill(chat_input.text)
+        if skill_call is not None:
+            skill_result = self.skill_executor.run(skill_call, turn_context)
+            self._append_skill_events(events, skill_result.events)
+            tool_calls_log.extend(skill_result.tool_calls)
+            tool_results_log.extend(skill_result.tool_results)
+            skill_results_log.append(skill_result.to_dict())
+            if skill_result.skill_name not in skills_used:
+                skills_used.append(skill_result.skill_name)
+            final_answer = skill_result.final_answer
+            output_type = skill_result.output_type  # type: ignore[assignment]
+            stop_reason = "completed" if skill_result.ok and output_type != "partial" else "skill_partial"
+            tool_result_objs = [ToolResult(**item) for item in tool_results_log if isinstance(item, dict) and item.get("name")]
+            summary = self.summary_composer.compose(
+                final_answer=final_answer,
+                tool_results=tool_result_objs,
+                stop_reason=stop_reason,
+                output_type=output_type,
+                available_skills=available_skills,
+                loaded_skills=loaded_skills,
+                skill_loads_count=len(loaded_skills),
+                skills_used=skills_used,
+                skill_calls_count=1,
+                skill_results=skill_results_log,
+                context_reuse=False,
+            )
+            self.store.save_summary(session_id, turn_id, summary)
+            self.store.save_final_answer(session_id, turn_id, final_answer)
+            self._emit(events, turn_id, "final_answer_created", {"step": 0, "skill_name": skill_result.skill_name})
+            self._emit(events, turn_id, "turn_completed", {"status": "completed", "stop_reason": stop_reason})
+            self._emit(events, turn_id, "summary_created", {"status": "completed"})
+            result = AgentRunResult(
+                ok=skill_result.ok,
                 session_id=session_id,
                 turn_id=turn_id,
                 final_answer=final_answer,
@@ -145,14 +374,19 @@ class AgentLoop:
                 tool_results=tool_results_log,
                 status="completed",
                 output_type=output_type,
+                available_skills=available_skills,
+                loaded_skills=loaded_skills,
+                skill_loads_count=len(loaded_skills),
+                skills_used=skills_used,
+                skill_calls_count=1,
+                skill_results=skill_results_log,
+                model_backend=str(self.model_info.get("model_backend") or ""),
+                model_provider=str(self.model_info.get("model_provider") or ""),
+                model_name=str(self.model_info.get("model_name") or ""),
             )
-
-        tool_specs = self.tool_registry.list_tool_specs()
-        messages = self.context_builder.build_messages(
-            session_id=session_id,
-            chat_input=chat_input,
-            tool_specs=tool_specs,
-        )
+            self.context_updater.apply_result(turn_context, result)
+            self._emit(events, turn_id, "context_updated", {"skills_used": skills_used, "active_task": bool((result.summary.get("machine") or {}).get("active_task"))})
+            return result
 
         last_progress_marker = ""
         no_progress_count = 0
@@ -185,16 +419,6 @@ class AgentLoop:
                 if model_resp.reasoning_summary:
                     self._emit(events, turn_id, "reasoning_delta", {"step": step, "summary": model_resp.reasoning_summary})
 
-                if self._is_sensitive_request(chat_input.text):
-                    output_type = "refusal"
-                    if model_resp.tool_calls:
-                        model_resp.tool_calls = []
-                    if not model_resp.final_answer:
-                        refusal = "不能直接打印 .env 或 API key，因为其中可能包含敏感凭据。"
-                        model_resp.assistant_text = refusal
-                        model_resp.final_answer = refusal
-                        model_resp.finish_reason = "safety_refusal"
-
                 if (
                     not model_resp.tool_calls
                     and self._request_requires_tool(chat_input.text)
@@ -218,8 +442,7 @@ class AgentLoop:
                     final_answer = model_resp.assistant_text
 
                 if final_answer and not model_resp.tool_calls:
-                    if output_type != "refusal":
-                        output_type = "tool_result" if len(tool_calls_log) > 0 else "answer"
+                    output_type = "tool_result" if len(tool_calls_log) > 0 else "answer"
                     stop_reason = "completed"
                     self._emit(events, turn_id, "final_answer_created", {"step": step})
                     break
@@ -230,32 +453,66 @@ class AgentLoop:
 
                 for call in model_resp.tool_calls:
                     call = self._normalize_tool_call(chat_input.text, call)
-                    canonical_key = (call.name, self._tool_args_frozen(call))
-                    is_deduped = False
-                    # Check if we've already successfully executed this exact tool+args
-                    if call.name in _seen_calls:
-                        for args_frozen, prev_result_dict in _seen_calls[call.name]:
-                            if args_frozen == canonical_key[1]:
-                                # Same tool + same args — reuse previous result
-                                is_deduped = True
-                                self._emit(events, turn_id, "tool_call_deduped", {
-                                    "step": step, "tool_name": call.name,
-                                    "args": dict(canonical_key[1]),
-                                    "reused_result": prev_result_dict,
-                                })
-                                tool_calls_log.append(call.to_dict())
-                                self.store.append_tool_call(session_id, turn_id, call.to_dict())
-                                # Re-inject previous observation so model sees it
-                                prev_obs = self._observation_text(ToolResult(**prev_result_dict))
-                                messages.append({"role": "tool", "content": prev_obs})
-                                tool_results_log.append(prev_result_dict)
-                                self.store.append_tool_result(session_id, turn_id, prev_result_dict)
-                                self._emit(events, turn_id, "observation_reused", {"step": step, "tool_name": call.name})
-                                break
-                    if is_deduped:
+                    if call.name == "skill.run":
+                        tool_calls_log.append(call.to_dict())
+                        self.store.append_tool_call(session_id, turn_id, call.to_dict())
+                        self._emit(events, turn_id, "tool_call_started", {"step": step, "tool_call": call.to_dict()})
+                        raw_skill_args = call.arguments.get("arguments")
+                        skill_args = dict(raw_skill_args) if isinstance(raw_skill_args, dict) else {
+                            k: v for k, v in call.arguments.items() if k not in {"name", "skill_name"}
+                        }
+                        skill_name = str(call.arguments.get("name") or call.arguments.get("skill_name") or "").strip()
+                        skill_result = self.skill_executor.run(
+                            SkillCall.new(name=skill_name, arguments=skill_args, source="model"),
+                            turn_context,
+                        )
+                        self._append_skill_events(events, skill_result.events)
+                        tool_calls_log.extend(skill_result.tool_calls)
+                        tool_results_log.extend(skill_result.tool_results)
+                        skill_results_log.append(skill_result.to_dict())
+                        if skill_result.skill_name and skill_result.skill_name not in skills_used:
+                            skills_used.append(skill_result.skill_name)
+                        result = ToolResult(
+                            call_id=call.id,
+                            name="skill.run",
+                            ok=skill_result.output_type != "error",
+                            content=skill_result.final_answer,
+                            error=None if skill_result.output_type != "error" else skill_result.final_answer,
+                            metadata={
+                                "skill_name": skill_result.skill_name,
+                                "output_type": skill_result.output_type,
+                                "risks": list(skill_result.risks),
+                            },
+                        )
+                        result_dict = result.to_dict()
+                        tool_results_log.append(result_dict)
+                        self.store.append_tool_result(session_id, turn_id, result_dict)
+                        self._emit(events, turn_id, "tool_call_completed", {"step": step, "tool_result": result_dict})
+                        messages.append({"role": "tool", "content": self._observation_text(result)})
+                        self._emit(events, turn_id, "observation_added", {"step": step, "tool_name": result.name})
                         continue
+                    canonical_key = (call.name, self._tool_args_frozen(call))
+                    reused_result = self._find_seen_result(seen_calls, call)
+                    if reused_result is not None:
+                        tool_calls_log.append(call.to_dict())
+                        self.store.append_tool_call(session_id, turn_id, call.to_dict())
+                        tool_results_log.append(reused_result)
+                        self.store.append_tool_result(session_id, turn_id, reused_result)
+                        prev_obs = self._observation_text(ToolResult(**reused_result))
+                        messages.append({"role": "tool", "content": prev_obs})
+                        self._emit(events, turn_id, "tool_call_deduped", {"step": step, "tool_name": call.name})
+                        self._emit(events, turn_id, "observation_reused", {"step": step, "tool_name": call.name})
+                        if call.name == "skill.load":
+                            skill_name = str((reused_result.get("metadata") or {}).get("skill_name") or call.arguments.get("name") or "")
+                            if skill_name and skill_name not in loaded_skills:
+                                loaded_skills.append(skill_name)
+                            self._emit(events, turn_id, "skill_observation_reused", {"step": step, "skill_name": skill_name})
+                        continue
+
                     tool_calls_log.append(call.to_dict())
                     self.store.append_tool_call(session_id, turn_id, call.to_dict())
+                    if call.name == "skill.load":
+                        self._emit(events, turn_id, "skill_load_started", {"step": step, "skill_name": call.arguments.get("name")})
                     self._emit(events, turn_id, "tool_call_started", {"step": step, "tool_call": call.to_dict()})
 
                     result = self.tool_executor.execute(
@@ -268,9 +525,20 @@ class AgentLoop:
                             "mode": "agent_loop",
                         },
                     )
-                    tool_results_log.append(result.to_dict())
-                    self.store.append_tool_result(session_id, turn_id, result.to_dict())
-                    self._emit(events, turn_id, "tool_call_completed", {"step": step, "tool_result": result.to_dict()})
+                    self._append_tool_runtime_events(events, result)
+                    result_dict = result.to_dict()
+                    tool_results_log.append(result_dict)
+                    self.store.append_tool_result(session_id, turn_id, result_dict)
+                    self._emit(events, turn_id, "tool_call_completed", {"step": step, "tool_result": result_dict})
+
+                    if call.name == "skill.load":
+                        skill_name = str(result.metadata.get("skill_name") or call.arguments.get("name") or "")
+                        if result.ok:
+                            if skill_name and skill_name not in loaded_skills:
+                                loaded_skills.append(skill_name)
+                            self._emit(events, turn_id, "skill_loaded", {"step": step, "skill_name": skill_name})
+                        else:
+                            self._emit(events, turn_id, "skill_load_failed", {"step": step, "skill_name": skill_name, "error": result.error})
 
                     if result.error and "approval_required" in str(result.error):
                         stop_reason = "approval_required"
@@ -279,19 +547,18 @@ class AgentLoop:
                         break
 
                     if result.ok:
-                        # Record for deduplication
-                        _seen_calls.setdefault(call.name, []).append((canonical_key[1], result.to_dict()))
-                        # Inject summarization hint for query tools
+                        seen_calls.setdefault(call.name, []).append((canonical_key[1], result_dict))
                         if call.name in ("repo_reader.read_file", "repo_reader.search_files", "directory_list", "list_directory"):
-                            messages.append({
-                                "role": "system",
-                                "content": (
-                                    "Based on the above observation, generate a concise final answer now. "
-                                    "Do not call the same tool again unless the user explicitly asks for more content."
-                                ),
-                            })
-                        obs = self._observation_text(result)
-                        messages.append({"role": "tool", "content": obs})
+                            messages.append(
+                                {
+                                    "role": "system",
+                                    "content": (
+                                        "Based on the above observation, generate a concise final answer now. "
+                                        "Do not call the same tool again unless the user explicitly asks for more content."
+                                    ),
+                                }
+                            )
+                        messages.append({"role": "tool", "content": self._observation_text(result)})
                         self._emit(events, turn_id, "observation_added", {"step": step, "tool_name": result.name})
                         continue
 
@@ -308,9 +575,11 @@ class AgentLoop:
                                 "mode": "agent_loop_retry",
                             },
                         )
-                        tool_results_log.append(retry_result.to_dict())
-                        self.store.append_tool_result(session_id, turn_id, retry_result.to_dict())
-                        self._emit(events, turn_id, "tool_call_completed", {"step": step, "tool_result": retry_result.to_dict()})
+                        self._append_tool_runtime_events(events, retry_result)
+                        retry_dict = retry_result.to_dict()
+                        tool_results_log.append(retry_dict)
+                        self.store.append_tool_result(session_id, turn_id, retry_dict)
+                        self._emit(events, turn_id, "tool_call_completed", {"step": step, "tool_result": retry_dict})
                         if retry_result.ok:
                             messages.append({"role": "tool", "content": self._observation_text(retry_result)})
                             self._emit(events, turn_id, "observation_added", {"step": step, "tool_name": retry_result.name})
@@ -352,16 +621,13 @@ class AgentLoop:
                 stop_reason=stop_reason,
                 output_type=output_type,
                 clarification=clarification_payload,
+                available_skills=available_skills,
+                loaded_skills=loaded_skills,
+                skill_loads_count=len(loaded_skills),
+                skills_used=skills_used,
+                skill_calls_count=len(skill_results_log),
+                skill_results=skill_results_log,
             )
-            if self._is_sensitive_request(chat_input.text):
-                machine = summary.get("machine") if isinstance(summary, dict) else None
-                if isinstance(machine, dict):
-                    risks = list(machine.get("risks") or [])
-                    if "sensitive_env_requested" not in risks:
-                        risks.append("sensitive_env_requested")
-                    machine["risks"] = risks
-                    machine["output_type"] = "refusal"
-
             self.store.save_summary(session_id, turn_id, summary)
             if final_answer:
                 self.store.save_final_answer(session_id, turn_id, final_answer)
@@ -375,7 +641,7 @@ class AgentLoop:
             self._emit(events, turn_id, event_type, {"status": status, "stop_reason": stop_reason})
             self._emit(events, turn_id, "summary_created", {"status": status})
 
-            return AgentRunResult(
+            result = AgentRunResult(
                 ok=status != "failed",
                 session_id=session_id,
                 turn_id=turn_id,
@@ -387,7 +653,19 @@ class AgentLoop:
                 tool_results=tool_results_log,
                 status=status,
                 output_type=output_type,
+                available_skills=available_skills,
+                loaded_skills=loaded_skills,
+                skill_loads_count=len(loaded_skills),
+                skills_used=skills_used,
+                skill_calls_count=len(skill_results_log),
+                skill_results=skill_results_log,
+                model_backend=str(self.model_info.get("model_backend") or ""),
+                model_provider=str(self.model_info.get("model_provider") or ""),
+                model_name=str(self.model_info.get("model_name") or ""),
             )
+            if turn_context is not None:
+                self.context_updater.apply_result(turn_context, result)
+            return result
         except Exception as exc:
             self._emit(events, turn_id, "turn_failed", {"error": str(exc), "error_type": type(exc).__name__})
             stop_reason = self._map_provider_error_stop_reason(exc)
@@ -398,6 +676,9 @@ class AgentLoop:
                 tool_results=[],
                 stop_reason=stop_reason,
                 output_type=output_type,
+                available_skills=available_skills,
+                loaded_skills=loaded_skills,
+                skill_loads_count=len(loaded_skills),
             )
             self.store.save_summary(session_id, turn_id, summary)
             self.store.save_final_answer(session_id, turn_id, final_answer)
@@ -413,7 +694,64 @@ class AgentLoop:
                 tool_results=tool_results_log,
                 status="failed",
                 output_type=output_type,
+                available_skills=available_skills,
+                loaded_skills=loaded_skills,
+                skill_loads_count=len(loaded_skills),
+                skills_used=skills_used,
+                skill_calls_count=len(skill_results_log),
+                skill_results=skill_results_log,
+                model_backend=str(self.model_info.get("model_backend") or ""),
+                model_provider=str(self.model_info.get("model_provider") or ""),
+                model_name=str(self.model_info.get("model_name") or ""),
             )
+
+    def _complete_early(
+        self,
+        *,
+        session_id: str,
+        turn_id: str,
+        events: list[dict[str, Any]],
+        final_answer: str,
+        stop_reason: str,
+        output_type: AgentOutputType,
+        available_skills: list[str],
+        loaded_skills: list[str],
+        clarification: dict[str, Any] | None = None,
+    ) -> AgentRunResult:
+        summary = self.summary_composer.compose(
+            final_answer=final_answer,
+            tool_results=[],
+            stop_reason=stop_reason,
+            output_type=output_type,
+            clarification=clarification,
+            available_skills=available_skills,
+            loaded_skills=loaded_skills,
+            skill_loads_count=len(loaded_skills),
+        )
+        self.store.save_summary(session_id, turn_id, summary)
+        self.store.save_final_answer(session_id, turn_id, final_answer)
+        self._emit(events, turn_id, "final_answer_created", {"step": 0})
+        self._emit(events, turn_id, "turn_completed", {"status": "completed", "stop_reason": stop_reason})
+        self._emit(events, turn_id, "summary_created", {"status": "completed"})
+        return AgentRunResult(
+            ok=True,
+            session_id=session_id,
+            turn_id=turn_id,
+            final_answer=final_answer,
+            events=events,
+            summary=summary,
+            stop_reason=stop_reason,
+            tool_calls=[],
+            tool_results=[],
+            status="completed",
+            output_type=output_type,
+            available_skills=available_skills,
+            loaded_skills=loaded_skills,
+            skill_loads_count=len(loaded_skills),
+            model_backend=str(self.model_info.get("model_backend") or ""),
+            model_provider=str(self.model_info.get("model_provider") or ""),
+            model_name=str(self.model_info.get("model_name") or ""),
+        )
 
     def _emit(self, collector: list[dict[str, Any]], turn_id: str, event_type: str, payload: dict[str, Any]) -> None:
         if event_type not in EVENT_TYPES:
@@ -424,6 +762,87 @@ class AgentLoop:
         self._event_sink.emit(event)
         collector.append(event.to_dict())
 
+    def _append_skill_events(self, collector: list[dict[str, Any]], skill_events: list[AgentEvent]) -> None:
+        for event in skill_events:
+            self._event_sink.emit(event)
+            collector.append(event.to_dict())
+
+    @staticmethod
+    def _append_tool_runtime_events(collector: list[dict[str, Any]], result: ToolResult) -> None:
+        for event in list((result.metadata or {}).get("agent_events") or []):
+            if isinstance(event, dict):
+                collector.append(dict(event))
+
+    @staticmethod
+    def _append_event_dicts(collector: list[dict[str, Any]], event_dicts: list[dict[str, Any]]) -> None:
+        for event in event_dicts:
+            if isinstance(event, dict):
+                collector.append(dict(event))
+
+    def _maybe_reuse_context_observation(self, text: str, session_id: str) -> dict[str, Any] | None:
+        lowered = str(text or "").lower()
+        markers = ("刚才", "that file", "previous result", "刚才那个文件", "刚才的结果", "based on the previous")
+        if not any(marker in lowered for marker in markers):
+            return None
+        observation = self.context_store.retrieve_skill_observation(session_id)
+        return observation.to_dict() if observation is not None else None
+
+    @staticmethod
+    def _answer_from_reused_observation(text: str, observation: dict[str, Any]) -> str:
+        files = ", ".join(str(x) for x in list(observation.get("related_files") or [])) or "the previous file/result"
+        summary = str(observation.get("summary") or "").strip()
+        return f"Using the previous context for {files}: {summary}"
+
+    def _maybe_reuse_context_observation(self, text: str, session_id: str) -> dict[str, Any] | None:
+        lowered = str(text or "").lower()
+        markers = ("刚才", "that file", "previous result", "刚才那个文件", "刚才的结果", "based on the previous")
+        if not any(marker in lowered for marker in markers):
+            return None
+        observation = self.context_store.retrieve_skill_observation(session_id)
+        return observation.to_dict() if observation is not None else None
+
+    def _maybe_reuse_research_observation(self, text: str, session_id: str) -> dict[str, Any] | None:
+        lowered = str(text or "").lower()
+        markers = (
+            "刚才查到",
+            "官方资料",
+            "official source",
+            "official docs",
+            "previous research",
+            "based on the previous research",
+        )
+        if not any(marker in lowered for marker in markers):
+            return None
+        observation = self.context_store.retrieve_research_observation(session_id)
+        return observation.to_dict() if observation is not None else None
+
+    @staticmethod
+    def _answer_from_reused_research(text: str, observation: dict[str, Any]) -> str:
+        _ = text
+        summary = str(observation.get("answer_summary") or "").strip() or "No stored research summary."
+        sources = ", ".join(
+            str(item.get("url") or "")
+            for item in list(observation.get("sources") or [])[:3]
+            if isinstance(item, dict) and str(item.get("url") or "")
+        ) or "none"
+        return f"Using the previous web research: {summary}\nSources: {sources}"
+
+    @staticmethod
+    def _select_executable_skill(text: str) -> SkillCall | None:
+        raw = str(text or "").strip()
+        lowered = raw.lower()
+        if not raw:
+            return None
+        if any(marker in lowered for marker in ("fix test", "修复测试失败", "repair failing test", "诊断测试失败")):
+            return SkillCall.new(name="fix_test_failure", arguments={}, source="deterministic")
+        if any(marker in lowered for marker in ("run agent test", "run agent tests", "运行 agent 测试", "运行agent测试")):
+            return SkillCall.new(name="run_tests", arguments={"scope": "agent"}, source="deterministic")
+        if any(marker in lowered for marker in ("what does this repo", "project overview", "repo overview", "项目是做什么", "项目结构", "分析项目结构", "看一下这个项目")):
+            return SkillCall.new(name="repo_overview", arguments={"root": "."}, source="deterministic")
+        if any(marker in lowered for marker in ("summarize", "总结", "概括", "explain")) and ("readme" in lowered or "." in lowered):
+            return SkillCall.new(name="summarize_file", arguments={"path": SkillExecutor._guess_file_path(raw) or "README.md"}, source="deterministic")
+        return None
+
     @staticmethod
     def _observation_text(result: ToolResult) -> str:
         return f"Tool `{result.name}` returned ok={result.ok}. content={result.content}"
@@ -432,31 +851,27 @@ class AgentLoop:
     def _request_requires_tool(text: str) -> bool:
         lowered = str(text or "").lower()
         markers = (
-            "读取",
             "readme",
             "read file",
-            "列一下当前目录",
+            "list current directory",
             "current directory",
             "run pytest",
-            "运行 pytest",
+            "run tests",
+            "fix ",
+            "bug",
             "modify file",
-            "修改文件",
             "run command",
+            "总结 readme",
+            "读取",
+            "列一下当前目录",
+            "运行测试",
         )
         return any(marker in lowered for marker in markers)
 
     @staticmethod
     def _is_sensitive_request(text: str) -> bool:
         lowered = str(text or "").lower()
-        markers = (
-            ".env",
-            "api key",
-            "token",
-            "password",
-            "id_rsa",
-            "secret",
-            "jarvis_llm_api_key",
-        )
+        markers = (".env", "api key", "token", "password", "id_rsa", "secret", "jarvis_llm_api_key")
         return any(marker in lowered for marker in markers)
 
     @staticmethod
@@ -518,8 +933,20 @@ class AgentLoop:
 
     @staticmethod
     def _tool_args_frozen(call: ToolCall) -> frozenset[tuple[str, Any]]:
-        """Return a hashable representation of tool call arguments for deduplication."""
         return frozenset((str(k), str(v)) for k, v in sorted((call.arguments or {}).items()))
+
+    @staticmethod
+    def _find_seen_result(
+        seen_calls: dict[str, list[tuple[frozenset[tuple[str, Any]], dict[str, Any]]]],
+        call: ToolCall,
+    ) -> dict[str, Any] | None:
+        if call.name not in seen_calls:
+            return None
+        frozen = AgentLoop._tool_args_frozen(call)
+        for args_frozen, previous in seen_calls[call.name]:
+            if args_frozen == frozen:
+                return previous
+        return None
 
     @staticmethod
     def _fallback_final_answer(tool_results: list[ToolResult], stop_reason: str) -> str:
@@ -527,16 +954,16 @@ class AgentLoop:
             return ""
         last = tool_results[-1]
         if last.ok:
-            return f"已完成工具执行：{last.name}。模型未返回完整总结，已记录结果。"
-        return f"工具执行未完成（{last.name}）：{last.error or 'unknown error'}。stop_reason={stop_reason}。"
+            return f"Completed tool execution with `{last.name}`. The model did not provide a fuller summary before stop_reason={stop_reason}."
+        return f"Tool execution did not complete (`{last.name}`): {last.error or 'unknown error'}. stop_reason={stop_reason}."
 
     @staticmethod
     def _build_clarification_if_needed(text: str) -> dict[str, Any] | None:
         raw = str(text or "").strip()
         lowered = raw.lower()
-        normalized = raw.replace("。", "").replace("？", "").replace("?", "").strip()
-        if normalized in {"帮我弄一下", "处理一下", "修一下", "优化它", "这个有问题", "处理这个"}:
-            return {"missing_fields": ["target"], "question": "你希望我处理哪个文件、命令或问题？"}
+        normalized = raw.replace("。", "").replace("，", "").replace("?", "").strip()
+        if normalized in {"帮我弄一下", "处理一个", "修一个", "优化它", "这个有问题", "处理这个"}:
+            return {"missing_fields": ["target"], "question": "你希望我处理哪个文件、命令或具体问题？"}
         if "读取那个文件" in raw or "read that file" in lowered:
             return {"missing_fields": ["file_path"], "question": "你希望我读取哪个文件？"}
         return None
@@ -548,9 +975,7 @@ class AgentLoop:
             return "provider_network_error"
         if "401" in lowered or "unauthorized" in lowered or "auth" in lowered:
             return "provider_auth_error"
-        if "403" in lowered or "forbidden" in lowered:
-            return "provider_http_error"
-        if "404" in lowered or "not found" in lowered:
+        if "403" in lowered or "forbidden" in lowered or "404" in lowered or "not found" in lowered:
             return "provider_http_error"
         if "provider unavailable" in lowered or "service unavailable" in lowered:
             return "provider_unavailable"
@@ -560,11 +985,11 @@ class AgentLoop:
     def _friendly_error_message(exc: Exception) -> str:
         stop_reason = AgentLoop._map_provider_error_stop_reason(exc)
         if stop_reason == "provider_network_error":
-            return "真实 LLM 调用失败，网络连接被系统拒绝。可以运行 python scripts/check_llm_api.py 检查 API、代理或防火墙配置。"
+            return "Real LLM call failed because the network connection was blocked. You can run `python scripts/check_llm_api.py` to verify API, proxy, or firewall settings."
         if stop_reason == "provider_auth_error":
-            return "LLM API 认证失败（401/Unauthorized）。请检查 API key 是否正确，或是否已过期。"
+            return "LLM API authentication failed (401/Unauthorized). Please check whether the API key is valid and still active."
         if stop_reason == "provider_http_error":
-            return "LLM provider 返回了错误响应（403/404）。请检查 base_url 配置是否正确。"
+            return "The LLM provider returned an HTTP error (such as 403 or 404). Please check whether the base URL and provider config are correct."
         if stop_reason == "provider_unavailable":
-            return "当前 LLM provider 不可用，请检查 .env 配置或稍后重试。"
-        return f"模型调用失败：{type(exc).__name__}"
+            return "The current LLM provider is unavailable. Please check the .env configuration or try again later."
+        return f"Model call failed: {type(exc).__name__}"

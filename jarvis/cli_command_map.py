@@ -41,6 +41,7 @@ def _slash_specs() -> List[CliCommandSpec]:
         CliCommandSpec("/allowed-tools", [], "permissions", "/permissions", "Show allowed tools and skills", "implemented", "safe", "shell_allowed_tools", ["/allowed-tools"]),
         CliCommandSpec("/approvals", [], "approval", "/permissions", "List pending approvals", "implemented", "safe", "shell_approvals", ["/approvals"]),
         CliCommandSpec("/approve", [], "approval", "/permissions", "Approve pending action", "implemented", "approval_required", "shell_approve", ["/approve approval_0001"]),
+        CliCommandSpec("/deny", [], "approval", "/permissions", "Deny pending action", "implemented", "approval_required", "shell_reject", ["/deny approval_0001"]),
         CliCommandSpec("/reject", [], "approval", "/permissions", "Reject pending action", "implemented", "approval_required", "shell_reject", ["/reject approval_0001"]),
         CliCommandSpec("/mode", [], "permissions", "/permissions", "Set permission mode", "implemented", "ask", "shell_mode", ["/mode safe"]),
         CliCommandSpec("/plan", [], "workflow", "/plan", "Generate plan only", "implemented", "safe", "shell_plan", ["/plan Inspect this repo"]),
@@ -57,6 +58,7 @@ def _slash_specs() -> List[CliCommandSpec]:
         CliCommandSpec("/tasks", [], "workflow", "/tasks", "List shell tasks", "implemented", "safe", "shell_tasks", ["/tasks"]),
         CliCommandSpec("/state", [], "workflow", "/state", "Show local CLI coding state summary", "implemented", "safe", "shell_state", ["/state"]),
         CliCommandSpec("/trace", [], "diagnostics", "/trace", "Toggle task trace visibility", "implemented", "safe", "shell_trace", ["/trace", "/trace on", "/trace off"]),
+        CliCommandSpec("/threads", [], "memory", "/threads", "List or inspect persisted threads", "implemented", "safe", "shell_threads", ["/threads list", "/threads open thread_123"]),
         CliCommandSpec("/memory", [], "memory", "/memory", "Memory summary", "implemented", "safe", "shell_memory", ["/memory"]),
         CliCommandSpec("/agents", [], "agents", "/agents", "List agent modes", "implemented", "safe", "shell_agents", ["/agents"]),
     ]

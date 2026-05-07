@@ -95,7 +95,7 @@ def test_swe_style_chat_direct_answer_boundaries(case: SweStyleCase):
 
     elif case.expected_path == "work":
         assert response == "tool loop result"
-        assert "agent_tool_loop" in desc
+        assert "work_runner" in desc
         assert is_dangerous is False
         llm_runner.assert_not_called()
         runners["run_agent_tool_loop"].assert_called_once_with(case.user_input)

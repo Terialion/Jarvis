@@ -96,6 +96,7 @@ data/facts.md
 data/memory.md
 data/reminders.md
 data/scripts/generated/
+data/
 
 # 日志
 *.log
@@ -123,3 +124,9 @@ hermes-agent/
 openclaw/
 codex/
 claude-code/
+learn-claude-code/
+runs/
+suites/
+reference_agents/
+reference_code/
+reference_context_skill/

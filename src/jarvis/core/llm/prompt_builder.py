@@ -316,7 +316,7 @@ def build_intent_classification_prompt(
 
 
 # ---------------------------------------------------------------------------
-# Work Execution Prompt — Tool Context for AgentToolLoop
+# Work Execution Prompt — legacy tool-context prompt
 # ---------------------------------------------------------------------------
 
 def build_work_execution_prompt(
@@ -562,7 +562,7 @@ def _llm_unavailable_fallback_direct() -> str:
 
 
 # ---------------------------------------------------------------------------
-# Chat Prompt — for AgentToolLoop chat path (no tools)
+# Chat Prompt — legacy chat path (no tools)
 # ---------------------------------------------------------------------------
 
 _CHAT_SYSTEM_PROMPT = """\

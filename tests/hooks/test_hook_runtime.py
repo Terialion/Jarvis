@@ -1,6 +1,6 @@
 """Integration tests for hooks running in the tool loop context.
 
-Tests pre/post hooks interacting with ToolRuntime and AgentToolLoop.
+Tests pre/post hooks interacting with ToolRuntime and the unified agent path.
 """
 
 from __future__ import annotations

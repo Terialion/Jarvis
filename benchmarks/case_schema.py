@@ -25,6 +25,8 @@ class BenchmarkCase:
     suite: str
     category: str
     input: str
+    turns: list[dict[str, Any]] = field(default_factory=list)
+    setup: dict[str, Any] = field(default_factory=dict)
     workspace: str | None = None
     allowed_tools: list[str] = field(default_factory=list)
     forbidden_tools: list[str] = field(default_factory=list)
@@ -33,15 +35,24 @@ class BenchmarkCase:
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "BenchmarkCase":
+        raw_turns = data.get("turns")
+        turns: list[dict[str, Any]] = []
+        if isinstance(raw_turns, list):
+            turns = [dict(item) for item in raw_turns if isinstance(item, dict)]
+        input_text = str(data.get("input") or "")
+        if not turns and input_text:
+            turns = [{"input": input_text}]
         return cls(
-            id=str(data.get("id") or ""),
+            id=str(data.get("id") or data.get("case_id") or ""),
             suite=str(data.get("suite") or ""),
             category=str(data.get("category") or ""),
-            input=str(data.get("input") or ""),
+            input=input_text or str((turns[0] or {}).get("input") or ""),
+            turns=turns,
+            setup=dict(data.get("setup") or {}),
             workspace=data.get("workspace"),
             allowed_tools=_normalize_str_list(data.get("allowed_tools")),
             forbidden_tools=_normalize_str_list(data.get("forbidden_tools")),
-            expected_behavior=dict(data.get("expected_behavior") or {}),
+            expected_behavior=dict(data.get("expected_behavior") or data.get("expected") or {}),
             grading=dict(data.get("grading") or {}),
         )
 

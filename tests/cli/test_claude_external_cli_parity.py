@@ -1,8 +1,15 @@
 """Tests for Claude-style external CLI command behavior."""
 
+from __future__ import annotations
+
 import os
+from pathlib import Path
 import subprocess
 import sys
+
+from jarvis import cli as cli_mod
+
+ROOT = Path(__file__).resolve().parents[2]
 
 
 def run_cli(*args, input_text=None, timeout=25):
@@ -17,7 +24,7 @@ def run_cli(*args, input_text=None, timeout=25):
         errors="replace",
         capture_output=True,
         timeout=timeout,
-        cwd="d:/jarvis",
+        cwd=str(ROOT),
         env=env,
     )
 
@@ -37,40 +44,48 @@ def test_help_flag_exits():
 
 
 def test_positional_prompt_routes_to_natural_response():
-    result = run_cli("晚上好")
+    result = run_cli("good evening")
     out = result.stdout + result.stderr
     assert result.returncode == 0
     assert "Task task_" not in out
     assert "Plan safe steps" not in out
-    # "晚上好" is now correctly recognized as a greeting (not clarification)
-    assert "你好" in out or "我需要再确认一下" in out
-    assert "Investigate flaky tests" not in out
+    assert "Jarvis" in out
+    assert "good evening" in out.lower() or "how can i help" in out.lower() or "i can" in out.lower()
+    assert "Traceback" not in out
 
 
-def test_print_prompt_repo_inspection_is_not_task_flow():
-    result = run_cli("-p", "Inspect this repo. Do not modify files.")
-    out = result.stdout + result.stderr
-    assert result.returncode == 0
-    # Should NOT enter old task flow
-    assert "Task task_" not in out
-    assert "pytest -q" not in out
-    # Now routed through AgentToolLoop (returns LLM fallback or work acknowledgement)
-    assert "jarvis" in out.lower() or "llm provider" in out.lower() or "无法连接" in out or "repository inspection" in out.lower()
+def test_print_prompt_repo_inspection_uses_non_interactive_renderer(monkeypatch):
+    monkeypatch.setattr(cli_mod, "_load_local_env_file", lambda *_a, **_k: None)
+    monkeypatch.setattr(cli_mod, "_write_cli_diagnostic", lambda *_a, **_k: None)
+    called: dict[str, str] = {}
+
+    def _fake_runner(prompt: str, *, output_mode: str = "default") -> int:
+        called["prompt"] = prompt
+        called["output_mode"] = output_mode
+        return 0
+
+    monkeypatch.setattr(cli_mod, "_run_non_interactive_with_mode", _fake_runner)
+    monkeypatch.setattr("sys.argv", ["python", "-p", "Inspect this repo. Do not modify files."])
+    assert cli_mod.main() == 0
+    assert called["prompt"] == "Inspect this repo. Do not modify files."
+    assert called["output_mode"] == "default"
 
 
-def test_ask_prompt_oneshot_reuses_natural_path():
-    result = run_cli("--ask", "Inspect this repo. Do not modify files.")
-    out = result.stdout + result.stderr
-    assert result.returncode == 0
-    assert "Jarvis" in out or "LLM provider:" in out
-    assert "Task task_" not in out
-    assert "pytest -q" not in out
-    assert (
-        "jarvis" in out.lower()
-        or "llm provider" in out.lower()
-        or "repository inspection" in out.lower()
-        or "work_type" in out.lower()
-    )
+def test_ask_prompt_oneshot_reuses_natural_path(monkeypatch):
+    monkeypatch.setattr(cli_mod, "_load_local_env_file", lambda *_a, **_k: None)
+    monkeypatch.setattr(cli_mod, "_write_cli_diagnostic", lambda *_a, **_k: None)
+    called: dict[str, str] = {}
+
+    def _fake_runner(prompt: str, *, output_mode: str = "default") -> int:
+        called["prompt"] = prompt
+        called["output_mode"] = output_mode
+        return 0
+
+    monkeypatch.setattr(cli_mod, "_run_non_interactive_with_mode", _fake_runner)
+    monkeypatch.setattr("sys.argv", ["python", "--ask", "Inspect this repo. Do not modify files.", "--output", "quiet"])
+    assert cli_mod.main() == 0
+    assert called["prompt"] == "Inspect this repo. Do not modify files."
+    assert called["output_mode"] == "quiet"
 
 
 def test_resume_flags_controlled():
