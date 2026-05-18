@@ -137,7 +137,7 @@ export const App: React.FC<AppProps> = ({
             setLatency(`${elapsed.toFixed(0)}s`);
           }
         }
-      }, 250);
+      }, 1000);
     }
     return () => {
       if (timerRef.current) {
@@ -380,7 +380,7 @@ export const App: React.FC<AppProps> = ({
 
   // ── Render ──────────────────────────────────────────────────────
 
-  const hasContent = messages.length > 0 || currentAnswer || currentThinking || currentTools.length > 0;
+  const hasContent = messages.length > 0 || !!(currentAnswer || currentThinking || currentTools.length > 0);
 
   return (
     <Box flexDirection="column" height={hasContent ? Math.max(10, (process.stdout.rows ?? 50) - 1) : undefined}>

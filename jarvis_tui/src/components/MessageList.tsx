@@ -55,12 +55,12 @@ export const MessageList: React.FC<MessageListProps> = ({
   scrollOffset,
   setScrollOffset,
 }) => {
-  const hasStreaming = currentAnswer || currentThinking || currentTools.length > 0;
+  const hasStreaming = !!(currentAnswer || currentThinking || currentTools.length > 0);
 
-  // Auto-scroll to bottom (offset=0) when new messages arrive or streaming starts
+  // Auto-scroll to bottom when new messages arrive
   useEffect(() => {
     setScrollOffset(0);
-  }, [messages.length, hasStreaming]);
+  }, [messages.length]);
 
   // Calculate total content height
   let totalRows = 0;
