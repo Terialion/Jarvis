@@ -30,23 +30,6 @@ function estimateMsgRows(msg: Message): number {
   return rows + 1; // +1 for margin
 }
 
-function renderMessage(msg: Message): React.ReactNode {
-  return (
-    <Box key={msg.id} flexDirection="column" marginBottom={1}>
-      {msg.role === "user" ? (
-        <Text dimColor>❯ {msg.content}</Text>
-      ) : (
-        <MarkdownRenderer content={msg.content} />
-      )}
-      {msg.thinking && (
-        <Text dimColor color="gray">
-          {"  ".repeat(2)}{msg.thinking}
-        </Text>
-      )}
-    </Box>
-  );
-}
-
 export const MessageList: React.FC<MessageListProps> = ({
   messages,
   currentAnswer,
@@ -64,16 +47,12 @@ export const MessageList: React.FC<MessageListProps> = ({
     setScrollOffset(0);
   }, [messages.length, hasStreaming]);
 
-  // Manage scroll via global keyboard — handled in App via props
-  // (PgUp/PgDn are dispatched by App.useInput and passed as custom events)
-
   // Calculate visible message window
   const availableRows = Math.max(8, (process.stdout.rows ?? 50) - 10);
   let totalRows = 0;
   for (const msg of messages) totalRows += estimateMsgRows(msg);
-  if (hasStreaming) totalRows += 3; // streaming content estimate
+  if (hasStreaming) totalRows += 3;
 
-  // scrollOffset = how many rows scrolled above the bottom
   const maxOffset = Math.max(0, totalRows - availableRows);
   const clampedOffset = Math.min(scrollOffset, maxOffset);
 
@@ -91,15 +70,36 @@ export const MessageList: React.FC<MessageListProps> = ({
 
   return (
     <Box flexDirection="column" flexGrow={1} paddingX={1} overflow="hidden" justifyContent="flex-end">
-      {/* Scroll-to-top indicator */}
       {hiddenAbove > 0 && (
         <Text dimColor>
           ↑ {hiddenAbove} earlier messages (PgUp/PgDn to scroll)
         </Text>
       )}
 
-      {/* Completed messages — rendered in Yoga flow, aligned to bottom */}
-      {visible.map(renderMessage)}
+      {/* Completed messages */}
+      {visible.map((msg) => (
+        <Box key={msg.id} flexDirection="column" marginBottom={1}>
+          {msg.role === "user" ? (
+            <Text dimColor>❯ {msg.content}</Text>
+          ) : (
+            <MarkdownRenderer content={msg.content} />
+          )}
+          {msg.thinking && thinkingExpanded && (
+            <Text dimColor color="gray">
+              {"  ".repeat(2)}💭 {msg.thinking}
+            </Text>
+          )}
+          {msg.tools && toolsExpanded && (
+            <Box flexDirection="column">
+              {msg.tools.map((t, i) => (
+                <Text key={i} dimColor>
+                  {"  ".repeat(2)}● {t.display} {t.args}
+                </Text>
+              ))}
+            </Box>
+          )}
+        </Box>
+      ))}
 
       {/* Currently-streaming message */}
       {hasStreaming && (
