@@ -2,25 +2,61 @@
 
 from __future__ import annotations
 
-import importlib.util
+import importlib
+import importlib.machinery
+import os
 import sys
-from pathlib import Path
+
+# Ensure ``src`` is reachable as a namespace package so ``import src.jarvis``
+# works in production (conftest.py does the same for tests).
+_src_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+_parent_of_src = os.path.dirname(_src_dir)
+for _p in (_src_dir, _parent_of_src):
+    if _p not in sys.path:
+        sys.path.insert(0, _p)
 
 
-def _load_legacy_runtime_symbol(name: str):
-    root = Path(__file__).resolve().parents[2]
-    runtime_path = root / "jarvis" / "runtime_bootstrap.py"
-    spec = importlib.util.spec_from_file_location("jarvis_runtime_bootstrap_legacy", runtime_path)
-    if spec is None or spec.loader is None:  # pragma: no cover
-        raise ImportError(f"Unable to load legacy runtime module: {runtime_path}")
-    module = importlib.util.module_from_spec(spec)
-    sys.modules[spec.name] = module
-    spec.loader.exec_module(module)
-    return getattr(module, name)
+class _AliasLoader:
+    """Loader that returns the already-loaded ``jarvis.*`` module so
+    ``src.jarvis.*`` imports don't re-execute package init code."""
+
+    def __init__(self, real_mod):
+        self._real_mod = real_mod
+
+    def create_module(self, spec):
+        return self._real_mod
+
+    def exec_module(self, module):
+        pass  # already initialised
 
 
-bootstrap = _load_legacy_runtime_symbol("bootstrap")
-Jarvis = _load_legacy_runtime_symbol("Jarvis")
+class _AliasFinder:
+    """Meta-path finder that redirects ``src.jarvis.*`` → ``jarvis.*``.
+
+    Without this, ``src.jarvis.agent.loop`` and ``jarvis.agent.loop`` are
+    *different* module objects loaded from the same files, which breaks
+    monkeypatching, isinstance checks, and anything else that relies on
+    module identity."""
+
+    @staticmethod
+    def find_spec(fullname, path=None, target=None):
+        if not fullname.startswith("src.jarvis"):
+            return None
+        real_name = "jarvis" + fullname[len("src.jarvis"):]
+        real_mod = importlib.import_module(real_name)
+        is_pkg = hasattr(real_mod, "__path__")
+        spec = importlib.machinery.ModuleSpec(
+            fullname, _AliasLoader(real_mod), is_package=is_pkg,
+        )
+        if is_pkg:
+            spec.submodule_search_locations = list(real_mod.__path__)
+        return spec
+
+
+if not any(isinstance(f, _AliasFinder) for f in sys.meta_path):
+    sys.meta_path.insert(0, _AliasFinder)
+
+from .runtime_bootstrap import Jarvis, bootstrap
 
 __all__ = ["Jarvis", "bootstrap"]
 

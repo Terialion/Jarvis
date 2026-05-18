@@ -5,7 +5,7 @@ from pathlib import Path
 from src.jarvis.api.server import JarvisApiState, route_request
 from src.jarvis.agent.types import AgentRunResult
 from src.jarvis.api.timeline import timeline_from_agent_result
-from src.jarvis.store.thread_store import ThreadStore
+from src.jarvis.store import ThreadStore
 from src.jarvis.web.research_context import ResearchObservation
 
 
@@ -43,12 +43,12 @@ def test_timeline_builds_from_agent_events():
 
 def test_thread_timeline_api_builds_from_store(tmp_path: Path, monkeypatch):
     db_path = tmp_path / "jarvis.db"
-    store = ThreadStore(db_path=db_path)
+    store = ThreadStore(sessions_dir=db_path)
     thread = store.create_thread(title="timeline")
-    store.append_message(thread.thread_id, "user", "hello")
-    store.append_tool_call(thread.thread_id, "turn_1", {"id": "call_1", "name": "web.fetch", "arguments": {"url": "https://example.com"}})
+    store.append_message(thread["thread_id"], "user", "hello")
+    store.append_tool_call(thread["thread_id"], "turn_1", {"id": "call_1", "name": "web.fetch", "arguments": {"url": "https://example.com"}})
     store.append_research_observation(
-        thread.thread_id,
+        thread["thread_id"],
         ResearchObservation(
             query="jarvis timeline",
             search_tasks=[],
@@ -60,8 +60,8 @@ def test_thread_timeline_api_builds_from_store(tmp_path: Path, monkeypatch):
         ),
         turn_id="turn_1",
     )
-    monkeypatch.setattr("src.jarvis.api.server.ThreadStore", lambda: ThreadStore(db_path=db_path))
-    status, payload = route_request(JarvisApiState(), "GET", f"/api/threads/{thread.thread_id}/timeline")
+    monkeypatch.setattr("src.jarvis.api.server.ThreadStore", lambda: ThreadStore(sessions_dir=db_path))
+    status, payload = route_request(JarvisApiState(), "GET", f"/api/threads/{thread['thread_id']}/timeline")
     assert status == 200
     items = payload["data"]["items"]
     assert any(item["type"] == "tool_call" for item in items)

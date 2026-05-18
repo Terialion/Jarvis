@@ -15,7 +15,7 @@ def _turn_context(tmp_path: Path, text: str):
     session = store.create_or_resume_session(ChatInput(text=text, cwd=str(tmp_path), project_id="p", session_id="s"))
     turn = store.create_turn(session["session_id"])
     registry = ToolRegistryAdapter(project_root=str(tmp_path))
-    return ContextBuilder(thread_store=store, skill_registry=registry.skill_registry).build(
+    return ContextBuilder(session_store=store, skill_registry=registry.skill_registry).build(
         session_id=session["session_id"],
         turn_id=turn.turn_id,
         chat_input=ChatInput(text=text, cwd=str(tmp_path), project_id="p", session_id=session["session_id"]),

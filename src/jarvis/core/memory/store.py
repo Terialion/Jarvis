@@ -1,3 +1,10 @@
+"""
+DEPRECATED — Use MemoryStore from jarvis.store.memory_store instead.
+
+This legacy file-based JSON store is kept only for backward compatibility.
+New code should use the SQLite-backed MemoryStore with FTS5 full-text search.
+"""
+
 from __future__ import annotations
 
 import json

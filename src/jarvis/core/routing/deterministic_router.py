@@ -289,7 +289,7 @@ def route_deterministically(envelope: InputEnvelope, *, input_kind: str = "unkno
         return _replace(
             route,
             intent=Intent.CODING_TASK.value,
-            response_mode=ResponseMode.CODING_LOOP.value,
+            response_mode=ResponseMode.AGENT_TOOL_LOOP.value,
             confidence=0.94,
             summary="code creation request",
             requires_tools=["file_editor"],
@@ -309,7 +309,7 @@ def route_deterministically(envelope: InputEnvelope, *, input_kind: str = "unkno
         return _replace(
             route,
             intent=Intent.CODING_TASK.value,
-            response_mode=ResponseMode.CODING_LOOP.value,
+            response_mode=ResponseMode.AGENT_TOOL_LOOP.value,
             confidence=0.9,
             summary="code modification request",
             requires_tools=["file_editor"],
@@ -488,7 +488,7 @@ def _is_skill_query_but_not_coding(text: str, low: str) -> bool:
     2. Input does NOT contain coding action verbs
 
     This prevents "修复'查看skill'被误判的问题" from being routed to
-    skill_management instead of coding_loop.
+    skill_management instead of agent_tool_loop.
     """
     has_skill_token = any(token in text or token in low for token in _SKILL_MANAGEMENT_TOKENS)
     if not has_skill_token:

@@ -10,7 +10,7 @@ Expected routing:
   列一下当前目录      -> agent_tool_loop (file_listing)
   运行 pytest        -> agent_tool_loop (executor_action), requires_approval
   读取 .env 看看      -> refusal_or_safety_message
-  修复 bug           -> agent_tool_loop (coding_loop), requires_approval
+  修复 bug           -> agent_tool_loop, requires_approval
 """
 
 import sys

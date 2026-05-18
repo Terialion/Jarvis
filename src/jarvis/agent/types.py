@@ -206,12 +206,13 @@ class ToolCall:
         *,
         name: str,
         arguments: dict[str, Any] | None = None,
+        id: str | None = None,
         risk_level: str = "low",
         requires_approval: bool = False,
         reason: str | None = None,
     ) -> "ToolCall":
         return cls(
-            id=f"call_{uuid4().hex[:12]}",
+            id=id or f"call_{uuid4().hex[:12]}",
             name=name,
             arguments=dict(arguments or {}),
             risk_level=risk_level,
@@ -231,6 +232,7 @@ class ToolResult:
     content: Any = None
     error: str | None = None
     metadata: dict[str, Any] = field(default_factory=dict)
+    duration_s: float | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return _redact_value(asdict(self))
@@ -253,6 +255,24 @@ class AgentEvent:
             type=event_type,
             payload=dict(payload or {}),
         )
+
+    def to_dict(self) -> dict[str, Any]:
+        return _redact_value(asdict(self))
+
+
+@dataclass
+class ModelChunk:
+    """A single chunk from a streaming model response."""
+
+    kind: str = ""  # "text_delta" | "tool_call_delta" | "done" | "reasoning_delta" | "progress_delta"
+    text_delta: str = ""
+    progress_delta: str = ""
+    tool_call_id: str = ""
+    tool_name: str = ""
+    tool_arguments_delta: str = ""
+    finish_reason: str = ""
+    reasoning_delta: str = ""
+    usage: dict | None = None  # Provider token usage info when available
 
     def to_dict(self) -> dict[str, Any]:
         return _redact_value(asdict(self))
@@ -282,12 +302,12 @@ class ModelResponse:
 @dataclass
 class AgentRunResult:
     ok: bool
-    session_id: str
-    turn_id: str
-    final_answer: str
-    events: list[dict[str, Any]]
-    summary: dict[str, Any]
-    stop_reason: str
+    session_id: str = ""
+    turn_id: str = ""
+    final_answer: str = ""
+    events: list[dict[str, Any]] = field(default_factory=list)
+    summary: dict[str, Any] = field(default_factory=dict)
+    stop_reason: str = "completed"
     tool_calls: list[dict[str, Any]] = field(default_factory=list)
     tool_results: list[dict[str, Any]] = field(default_factory=list)
     status: str = "completed"

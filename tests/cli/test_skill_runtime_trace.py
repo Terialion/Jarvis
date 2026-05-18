@@ -39,9 +39,11 @@ def test_cli_trace_renders_skill_runtime_events():
         mask_fn=lambda value: value,
     )
 
-    assert "skills_used" in rendered
-    assert "skill_calls_count" in rendered
+    # Event types appear as text in the trace panel
     assert "skill_call_started" in rendered
     assert "skill_step_started" in rendered
     assert "skill_call_completed" in rendered
     assert "context_updated" in rendered
+    # Runtime Info shows "Skills used" label (with space, not underscore)
+    assert "Skills used" in rendered or "skills_used" in rendered
+    assert "summarize_file" in rendered

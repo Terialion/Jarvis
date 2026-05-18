@@ -6,7 +6,7 @@ import tkinter as tk
 from tkinter import ttk
 from typing import Dict, List
 
-from src.jarvis.ui.app.mock_adapter import AppDataAdapter
+from jarvis.ui.app.mock_adapter import AppDataAdapter
 
 TOKENS = {
     "bg": "#0f1117",

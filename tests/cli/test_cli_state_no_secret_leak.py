@@ -26,7 +26,7 @@ def test_state_does_not_leak_secret(monkeypatch):
     assert "sk-test-1234567890" not in output
 
 
-def test_core_coding_loop_still_has_approval_flow():
+def test_agent_tool_loop_still_has_approval_flow():
     result = run_cli(
         input_text="/fix Fix the add bug in examples/coding_fixture. Apply the smallest patch only.\n/approvals\n/exit\n"
     )

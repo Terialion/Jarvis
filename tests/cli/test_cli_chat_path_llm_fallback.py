@@ -35,8 +35,6 @@ def run_cli(*args, input_text=None, timeout=20, env=None):
 
 
 def _stub_loop(monkeypatch, *, final_answer: str, output_type: str = "tool_result") -> None:
-    monkeypatch.setattr(cli_mod, "_quick_agent_result_for_cli", lambda *_a, **_k: None)
-
     class _DummyLoop:
         def __init__(self, *args, **kwargs):
             pass
@@ -53,15 +51,36 @@ def _stub_loop(monkeypatch, *, final_answer: str, output_type: str = "tool_resul
                 summary={"machine": {"outcome": "completed", "tools_used": ["workspace.status"], "risks": []}},
             )
 
-    monkeypatch.setattr("src.jarvis.agent.loop.AgentLoop", _DummyLoop)
+    monkeypatch.setattr("jarvis.agent.loop.AgentLoop", _DummyLoop)
+
+    from jarvis.agent.types import ChatInput
+
+    def _mock_run_agent_turn(prompt, state=None, output_mode="default", auto_approve=False):
+        if state is None:
+            from jarvis.cli import ShellState, DEFAULT_API_BASE
+            state = ShellState(DEFAULT_API_BASE)
+        loop = _DummyLoop()
+        result_obj = loop.run_turn(
+            ChatInput(text=prompt, cwd=".", session_id="test",
+                      metadata={"source": "jarvis.cli", "mode": "default"})
+        )
+        return cli_mod._render_agent_result_text(
+            result=result_obj,
+            provider_line=state.provider_status_line,
+            output_mode=output_mode,
+        )
+
+    monkeypatch.setattr(cli_mod, "run_agent_turn_for_cli", _mock_run_agent_turn)
 
 
 class TestCliChatPathGreeting:
-    def test_cli_chat_greeting_no_error(self):
+    def test_cli_chat_greeting_no_error(self, monkeypatch):
+        _stub_loop(monkeypatch, final_answer="Hello! I'm Jarvis, your local AI coding assistant.")
         output = cli_mod.run_agent_turn_for_cli("hello", output_mode="default")
         assert len(output) > 10
 
-    def test_cli_chat_greeting_no_approval(self):
+    def test_cli_chat_greeting_no_approval(self, monkeypatch):
+        _stub_loop(monkeypatch, final_answer="Hello! I'm Jarvis, your local AI coding assistant.")
         output = cli_mod.run_agent_turn_for_cli("hello", output_mode="default")
         assert "approval_required" not in output.lower()
 
@@ -121,11 +140,13 @@ class TestCliSlashCommands:
 
 
 class TestCliChatPathNoShell:
-    def test_chat_path_explanation_no_shell(self):
+    def test_chat_path_explanation_no_shell(self, monkeypatch):
+        _stub_loop(monkeypatch, final_answer="I can help with code, files, and tasks.")
         output = cli_mod.run_agent_turn_for_cli("what can you do", output_mode="default")
         assert "shell" not in output.lower() or "approval" not in output.lower()
 
-    def test_chat_path_plan_no_approval(self):
+    def test_chat_path_plan_no_approval(self, monkeypatch):
+        _stub_loop(monkeypatch, final_answer="Here is the plan: inspect routing, add tests.")
         output = cli_mod.run_agent_turn_for_cli(
             "help me plan how to refactor the input routing, but do not change code yet",
             output_mode="default",

@@ -9,7 +9,7 @@ def test_intent_gateway_routes_coding_creation_deterministically():
     envelope = build_input_envelope("在这个工作空间写一个python程序，打印helloworld。")
     route = route_intent(envelope, examples=ROUTING_EXAMPLES)
     assert route.intent == "coding_task"
-    assert route.response_mode == "coding_loop"
+    assert route.response_mode == "agent_tool_loop"
     assert route.requires_write is True
     assert route.requires_approval is True
     assert route.routing_trace["llm_fallback_called"] is False
@@ -27,7 +27,7 @@ def test_intent_gateway_uses_llm_fallback_when_deterministic_uncertain():
     envelope = build_input_envelope("请在仓库里放一个能打印 hello world 的 Python 文件")
     provider = FakeLLMProvider(
         response=(
-            '{"intent":"coding_task","response_mode":"coding_loop","confidence":0.87,'
+            '{"intent":"coding_task","response_mode":"agent_tool_loop","confidence":0.87,'
             '"summary":"Create a Python file in the repo.","requires_write":false,'
             '"requires_shell":false,"requires_approval":false,'
             '"why_not_clarify":"The user explicitly asked for code creation."}'
@@ -49,7 +49,7 @@ def test_intent_gateway_uses_llm_fallback_when_deterministic_uncertain():
 def test_intent_gateway_low_confidence_llm_clarifies():
     envelope = build_input_envelope("请在仓库里放一个能打印 hello world 的 Python 文件")
     provider = FakeLLMProvider(
-        response='{"intent":"coding_task","response_mode":"coding_loop","confidence":0.41,"summary":"maybe coding"}'
+        response='{"intent":"coding_task","response_mode":"agent_tool_loop","confidence":0.41,"summary":"maybe coding"}'
     )
     route = route_intent(
         envelope,

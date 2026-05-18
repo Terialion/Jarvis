@@ -5,7 +5,7 @@ from typing import Any, Literal
 
 from ..agent.types import AgentRunResult
 from ..store.redaction import redact_for_persistence
-from ..store.thread_store import ThreadStore
+from ..store import ThreadStore
 
 TimelineItemType = Literal[
     "user_message",
@@ -154,124 +154,138 @@ def timeline_from_agent_result(result: AgentRunResult) -> Timeline:
 
 def timeline_from_thread_store(thread_id: str, store: ThreadStore) -> Timeline:
     items: list[TimelineItem] = []
-    for message in store.get_recent_messages(thread_id, limit=40):
-        item_type: TimelineItemType = "assistant_message" if message.role == "assistant" else "user_message"
+    for msg in store.get_recent_messages(thread_id, limit=40):
+        role = msg.get("role", "")
+        item_type: TimelineItemType = "assistant_message" if role == "assistant" else "user_message"
+        tid = msg.get("turn_id")
         items.append(
             TimelineItem(
-                id=message.message_id,
+                id=msg.get("message_id", ""),
                 type=item_type,
                 title="Assistant Message" if item_type == "assistant_message" else "User Message",
                 status="persisted",
-                timestamp=message.created_at,
-                summary=message.content_redacted[:280],
-                payload_redacted=message.to_dict(),
-                related_ids=[str(message.turn_id or "")] if message.turn_id else [],
+                timestamp=msg.get("created_at") or msg.get("timestamp", ""),
+                summary=(msg.get("content") or "")[:280],
+                payload_redacted=dict(msg),
+                related_ids=[str(tid)] if tid else [],
             )
         )
-    for tool_call in store.get_tool_calls(thread_id, limit=40):
+    for tc in store.get_tool_calls(thread_id, limit=40):
+        tool_name = tc.get("tool_name", "")
+        call_id = tc.get("call_id", "")
+        status = tc.get("status", "")
+        created_at = tc.get("created_at", "")
+        turn_id = tc.get("turn_id", "")
         items.append(
             TimelineItem(
-                id=tool_call.call_id,
+                id=call_id,
                 type="tool_call",
-                title=f"Tool: {tool_call.tool_name}",
-                status=tool_call.status,
-                timestamp=tool_call.created_at,
-                summary=tool_call.tool_name,
-                payload_redacted=tool_call.to_dict(),
-                related_ids=[tool_call.turn_id],
+                title=f"Tool: {tool_name}",
+                status=status,
+                timestamp=created_at,
+                summary=tool_name,
+                payload_redacted=dict(tc),
+                related_ids=[turn_id],
             )
         )
-        if tool_call.tool_name == "web.fetch":
+        args = tc.get("args_redacted", {})
+        if tool_name == "web.fetch":
             items.append(
                 TimelineItem(
-                    id=f"{tool_call.call_id}_web_fetch",
+                    id=f"{call_id}_web_fetch",
                     type="web_fetch",
                     title="Web Fetch",
-                    status=tool_call.status,
-                    timestamp=tool_call.created_at,
-                    summary=str(tool_call.args_redacted.get("url") or tool_call.tool_name) if isinstance(tool_call.args_redacted, dict) else tool_call.tool_name,
-                    payload_redacted=tool_call.to_dict(),
-                    related_ids=[tool_call.turn_id],
+                    status=status,
+                    timestamp=created_at,
+                    summary=str(args.get("url") or tool_name) if isinstance(args, dict) else tool_name,
+                    payload_redacted=dict(tc),
+                    related_ids=[turn_id],
                 )
             )
-        if tool_call.tool_name == "web.search":
+        if tool_name == "web.search":
             items.append(
                 TimelineItem(
-                    id=f"{tool_call.call_id}_web_search",
+                    id=f"{call_id}_web_search",
                     type="web_search",
                     title="Web Search",
-                    status=tool_call.status,
-                    timestamp=tool_call.created_at,
-                    summary=str(tool_call.args_redacted.get("query") or tool_call.tool_name) if isinstance(tool_call.args_redacted, dict) else tool_call.tool_name,
-                    payload_redacted=tool_call.to_dict(),
-                    related_ids=[tool_call.turn_id],
+                    status=status,
+                    timestamp=created_at,
+                    summary=str(args.get("query") or tool_name) if isinstance(args, dict) else tool_name,
+                    payload_redacted=dict(tc),
+                    related_ids=[turn_id],
                 )
             )
-    for observation in store.get_skill_observations(thread_id, limit=20):
+    for obs in store.get_skill_observations(thread_id, limit=20):
+        oid = obs.get("observation_id", "")
+        otid = obs.get("turn_id")
         items.append(
             TimelineItem(
-                id=observation.observation_id,
+                id=oid,
                 type="skill_call",
-                title=f"Skill Observation: {observation.skill_name}",
+                title=f"Skill Observation: {obs.get('skill_name', '')}",
                 status="persisted",
-                timestamp=observation.created_at,
-                summary=observation.summary_redacted[:280],
-                payload_redacted=observation.to_dict(),
-                related_ids=[str(observation.turn_id or "")] if observation.turn_id else [],
+                timestamp=obs.get("created_at", ""),
+                summary=(obs.get("summary_redacted") or obs.get("summary") or "")[:280],
+                payload_redacted=dict(obs),
+                related_ids=[str(otid)] if otid else [],
             )
         )
-    for observation in store.get_research_observations(thread_id, limit=20):
+    for obs in store.get_research_observations(thread_id, limit=20):
+        oid = obs.get("observation_id", "")
+        otid = obs.get("turn_id")
+        created_at = obs.get("created_at", "")
         items.append(
             TimelineItem(
-                id=observation.observation_id,
+                id=oid,
                 type="web_search",
                 title="Research Observation",
                 status="persisted",
-                timestamp=observation.created_at,
-                summary=observation.answer_summary_redacted[:280],
-                payload_redacted=observation.to_dict(),
-                source_refs=list(observation.sources_redacted),
-                related_ids=[str(observation.turn_id or "")] if observation.turn_id else [],
+                timestamp=created_at,
+                summary=(obs.get("answer_summary_redacted") or obs.get("answer_summary") or "")[:280],
+                payload_redacted=dict(obs),
+                source_refs=list(obs.get("sources_redacted", [])),
+                related_ids=[str(otid)] if otid else [],
             )
         )
-        for source_index, source in enumerate(observation.sources_redacted, start=1):
+        for source_index, source in enumerate(obs.get("sources_redacted", []), start=1):
             items.append(
                 TimelineItem(
-                    id=f"{observation.observation_id}_source_{source_index}",
+                    id=f"{oid}_source_{source_index}",
                     type="source",
                     title="Source",
                     status="persisted",
-                    timestamp=observation.created_at,
+                    timestamp=created_at,
                     summary=str(source.get("title") or source.get("url") or "source") if isinstance(source, dict) else str(source),
                     payload_redacted=dict(redact_for_persistence(source)) if isinstance(source, dict) else {"value": str(source)},
                     source_refs=[dict(redact_for_persistence(source))] if isinstance(source, dict) else [],
-                    related_ids=[observation.observation_id],
+                    related_ids=[oid],
                 )
             )
-        for evidence_index, evidence in enumerate(observation.evidence_redacted, start=1):
+        for evidence_index, evidence in enumerate(obs.get("evidence_redacted", []), start=1):
             items.append(
                 TimelineItem(
-                    id=f"{observation.observation_id}_evidence_{evidence_index}",
+                    id=f"{oid}_evidence_{evidence_index}",
                     type="evidence",
                     title="Evidence",
                     status="persisted",
-                    timestamp=observation.created_at,
+                    timestamp=created_at,
                     summary=str(evidence.get("summary") or evidence.get("quote") or "evidence") if isinstance(evidence, dict) else str(evidence),
                     payload_redacted=dict(redact_for_persistence(evidence)) if isinstance(evidence, dict) else {"value": str(evidence)},
-                    related_ids=[observation.observation_id],
+                    related_ids=[oid],
                 )
             )
     for audit in store.get_approval_audits(thread_id, limit=20):
+        atid = audit.get("turn_id")
         items.append(
             TimelineItem(
-                id=audit.approval_id,
+                id=audit.get("approval_id", ""),
                 type="approval",
-                title=f"Approval: {audit.tool_name}",
-                status=audit.status,
-                timestamp=audit.created_at,
-                summary=str(audit.reason_redacted or audit.decision or audit.status),
-                payload_redacted=audit.to_dict(),
-                related_ids=[str(audit.turn_id or "")] if audit.turn_id else [],
+                title=f"Approval: {audit.get('tool_name', '')}",
+                status=audit.get("status", ""),
+                timestamp=audit.get("created_at", ""),
+                summary=str(audit.get("reason_redacted") or audit.get("decision") or audit.get("status")),
+                payload_redacted=dict(audit),
+                related_ids=[str(atid)] if atid else [],
             )
         )
     active_task = store.get_active_task(thread_id)
@@ -282,9 +296,9 @@ def timeline_from_thread_store(thread_id: str, store: ThreadStore) -> Timeline:
                 type="memory",
                 title="Active Task",
                 status="persisted",
-                timestamp=active_task.updated_at,
-                summary=active_task.summary_redacted[:280],
-                payload_redacted=active_task.to_dict(),
+                timestamp=active_task.get("updated_at", ""),
+                summary=(active_task.get("summary") or "")[:280],
+                payload_redacted=dict(active_task),
                 related_ids=[thread_id],
             )
         )
@@ -296,9 +310,9 @@ def timeline_from_thread_store(thread_id: str, store: ThreadStore) -> Timeline:
                 type="memory",
                 title="Handoff Summary",
                 status="persisted",
-                timestamp=handoff.updated_at,
-                summary=handoff.summary_redacted[:280],
-                payload_redacted=handoff.to_dict(),
+                timestamp=handoff.get("updated_at", ""),
+                summary=(handoff.get("summary") or "")[:280],
+                payload_redacted=dict(handoff),
                 related_ids=[thread_id],
             )
         )

@@ -11,7 +11,7 @@ from src.jarvis.skills.registry import SkillRegistry
 def test_context_builder_basic(tmp_path: Path):
     store = ThreadStore(root=tmp_path / "threads")
     builder = ContextBuilder(
-        thread_store=store,
+        session_store=store,
         skill_registry=SkillRegistry(),
         model_info={"model_provider": "fake", "model_name": "fake-agent-v0", "model_backend": "fake"},
     )
@@ -34,7 +34,7 @@ def test_context_builder_project_context_reads_instructions(tmp_path: Path):
     (tmp_path / "README.md").write_text("# Demo\nhello", encoding="utf-8")
     (tmp_path / "AGENTS.md").write_text("Be careful.", encoding="utf-8")
     store = ThreadStore(root=tmp_path / "threads")
-    builder = ContextBuilder(thread_store=store, skill_registry=SkillRegistry())
+    builder = ContextBuilder(session_store=store, skill_registry=SkillRegistry())
     session = store.create_or_resume_session(ChatInput(text="hi", cwd=str(tmp_path), project_id="p"))
     turn = store.create_turn(session["session_id"])
 

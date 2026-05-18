@@ -61,6 +61,7 @@ def test_agent_run_refusal_does_not_leak_secret_markers():
 
 
 def test_agent_run_clarification_contract():
+    """LLM-first: vague requests get a clarifying question as text answer."""
     state = JarvisApiState()
     status, payload = route_request(
         state,
@@ -71,8 +72,9 @@ def test_agent_run_clarification_contract():
     assert status == 200
     assert payload["ok"] is True
     result = payload["result"]
-    assert result["output_type"] == "clarification"
-    assert result["stop_reason"] == "needs_user_clarification"
+    # LLM-first: clarification is a text answer, not a special output_type
+    assert result["output_type"] == "answer"
+    assert result["stop_reason"] == "completed"
     assert result["final_answer"]
 
 

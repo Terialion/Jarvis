@@ -43,7 +43,7 @@ _VALID_RESPONSE_MODES = {
     ResponseMode.CHAT_ANSWER.value,
     ResponseMode.HELP_ANSWER.value,
     ResponseMode.REPO_INSPECTION.value,
-    ResponseMode.CODING_LOOP.value,
+    ResponseMode.AGENT_TOOL_LOOP.value,
     ResponseMode.SEARCH_PIPELINE.value,
     ResponseMode.URL_SUMMARY.value,
     ResponseMode.EXECUTOR_ACTION.value,
@@ -203,7 +203,7 @@ def _safe_mode_fallback(intent: str) -> str:
         Intent.CAPABILITY_QA.value: ResponseMode.HELP_ANSWER.value,
         Intent.USAGE_HELP.value: ResponseMode.HELP_ANSWER.value,
         Intent.REPO_INSPECTION.value: ResponseMode.REPO_INSPECTION.value,
-        Intent.CODING_TASK.value: ResponseMode.CODING_LOOP.value,
+        Intent.CODING_TASK.value: ResponseMode.AGENT_TOOL_LOOP.value,
         Intent.SHELL_TASK.value: ResponseMode.EXECUTOR_ACTION.value,
         Intent.WEB_SEARCH.value: ResponseMode.SEARCH_PIPELINE.value,
         Intent.URL_SUMMARY.value: ResponseMode.URL_SUMMARY.value,
@@ -255,7 +255,7 @@ def _enforce_llm_safety(route: IntentRoute) -> IntentRoute:
         if not raw["requires_approval"]:
             raw["requires_approval"] = True
             changed = True
-        raw["response_mode"] = ResponseMode.CODING_LOOP.value
+        raw["response_mode"] = ResponseMode.AGENT_TOOL_LOOP.value
         raw["risk_level"] = max(raw.get("risk_level") or RiskLevel.LOW.value, RiskLevel.MEDIUM.value)
         if raw["risk_level"] == RiskLevel.LOW.value:
             changed = True

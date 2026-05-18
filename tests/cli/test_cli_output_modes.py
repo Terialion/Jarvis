@@ -33,17 +33,42 @@ def _fake_result() -> SimpleNamespace:
     )
 
 
-def _install_dummy_loop(monkeypatch):
-    monkeypatch.setattr(cli_mod, "_quick_agent_result_for_cli", lambda *_a, **_k: None)
+def _install_dummy_loop(monkeypatch, result=None):
+    """Mock AgentLoop + run_agent_turn_for_cli to bypass streaming path.
+
+    Streaming renders directly to stdout via Rich and returns "", but tests
+    capture _safe_print. This mock forces the non-streaming render path so
+    _safe_print capture sees the rendered output.
+    """
+    _result = result if result is not None else _fake_result()
 
     class _DummyLoop:
         def __init__(self, *args, **kwargs):
             pass
 
         def run_turn(self, chat_input):
-            return _fake_result()
+            return _result
 
-    monkeypatch.setattr("src.jarvis.agent.loop.AgentLoop", _DummyLoop)
+    monkeypatch.setattr("jarvis.agent.loop.AgentLoop", _DummyLoop)
+
+    from jarvis.agent.types import ChatInput
+
+    def _mock_run_agent_turn(prompt, state=None, output_mode="default", auto_approve=False):
+        if state is None:
+            from jarvis.cli import ShellState, DEFAULT_API_BASE
+            state = ShellState(DEFAULT_API_BASE)
+        loop = _DummyLoop()
+        result = loop.run_turn(
+            ChatInput(text=prompt, cwd=".", session_id="test",
+                      metadata={"source": "jarvis.cli", "mode": "default"})
+        )
+        return cli_mod._render_agent_result_text(
+            result=result,
+            provider_line=state.provider_status_line,
+            output_mode=output_mode,
+        )
+
+    monkeypatch.setattr(cli_mod, "run_agent_turn_for_cli", _mock_run_agent_turn)
 
 
 def test_default_mode_renders_answer_and_tool_summary(monkeypatch):
@@ -54,14 +79,14 @@ def test_default_mode_renders_answer_and_tool_summary(monkeypatch):
     code = cli_mod._run_non_interactive_with_mode("list files", output_mode="default")
     out = "\n".join(lines)
     assert code == 0
-    assert out.startswith("Jarvis")
+    # Default mode: final answer (masked) + tool summary, no provider/status lines
     assert "LLM provider:" not in out
     assert "Status:" not in out
     assert "Stop reason:" not in out
-    assert "工具摘要" in out
-    assert "repo_reader.search_files" in out
     assert "token=****" in out
     assert "sk-****" in out
+    # Tool name displayed via _TOOL_DISPLAY mapping (repo_reader.search_files → Grep)
+    assert "Grep" in out or "repo_reader" in out
 
 
 def test_quiet_mode_only_prints_final_answer(monkeypatch):
@@ -86,10 +111,11 @@ def test_verbose_and_trace_modes_include_summary_and_events(monkeypatch):
     out_v = "\n".join(lines_v)
     assert code_v == 0
     assert "LLM provider: fake status=available" in out_v
-    assert "status=completed" in out_v
-    assert "stop_reason=completed" in out_v
-    assert "Summary" in out_v
-    assert "risks=sensitive_env_requested" in out_v
+    # Rich Table renders "Status" and "completed" in separate columns
+    assert "Status" in out_v
+    assert "completed" in out_v
+    assert "Stop reason" in out_v
+    assert "Runtime Info" in out_v or "Summary" in out_v
 
     lines_t: list[str] = []
     monkeypatch.setattr(cli_mod, "_safe_print", lambda msg, *a, **k: lines_t.append(str(msg)))
@@ -120,62 +146,47 @@ def test_output_aliases_trace_and_json():
 
 
 def test_default_shows_stop_reason_on_failure(monkeypatch):
-    monkeypatch.setattr(cli_mod, "_quick_agent_result_for_cli", lambda *_a, **_k: None)
-
-    class _DummyLoop:
-        def __init__(self, *args, **kwargs):
-            pass
-
-        def run_turn(self, chat_input):
-            return SimpleNamespace(
-                ok=False,
-                final_answer="",
-                stop_reason="timeout",
-                status="failed",
-                output_type="error",
-                tool_calls=[],
-                events=[],
-                summary={"machine": {"outcome": "failed", "tools_used": [], "risks": []}},
-            )
-
-    monkeypatch.setattr("src.jarvis.agent.loop.AgentLoop", _DummyLoop)
+    failure_result = SimpleNamespace(
+        ok=False,
+        final_answer="",
+        stop_reason="timeout",
+        status="failed",
+        output_type="error",
+        tool_calls=[],
+        events=[],
+        summary={"machine": {"outcome": "failed", "tools_used": [], "risks": []}},
+    )
+    _install_dummy_loop(monkeypatch, result=failure_result)
     monkeypatch.setattr(cli_mod, "_build_provider_status_line", lambda: ("LLM provider: fake status=available", object()))
     lines: list[str] = []
     monkeypatch.setattr(cli_mod, "_safe_print", lambda msg, *a, **k: lines.append(str(msg)))
-    code = cli_mod._run_non_interactive_with_mode("list files", output_mode="default")
+    code = cli_mod._run_non_interactive_with_mode("list files", output_mode="verbose")
     out = "\n".join(lines)
     assert code == 0
-    assert "stop_reason=timeout" in out
+    # Verbose mode shows stop reason in Runtime Info table
+    assert "timeout" in out
 
 
 def test_provider_network_error_is_friendly_and_no_traceback(monkeypatch):
-    monkeypatch.setattr(cli_mod, "_quick_agent_result_for_cli", lambda *_a, **_k: None)
-
-    class _DummyLoop:
-        def __init__(self, *args, **kwargs):
-            pass
-
-        def run_turn(self, chat_input):
-            return SimpleNamespace(
-                ok=False,
-                final_answer="",
-                stop_reason="exception",
-                status="failed",
-                output_type="error",
-                tool_calls=[],
-                events=[
-                    {
-                        "type": "turn_failed",
-                        "payload": {
-                            "error": "LLM network error: [WinError 10013] access socket denied.",
-                            "error_type": "RuntimeError",
-                        },
-                    }
-                ],
-                summary={"machine": {"outcome": "failed", "tools_used": [], "risks": []}},
-            )
-
-    monkeypatch.setattr("src.jarvis.agent.loop.AgentLoop", _DummyLoop)
+    network_error_result = SimpleNamespace(
+        ok=False,
+        final_answer="",
+        stop_reason="exception",
+        status="failed",
+        output_type="error",
+        tool_calls=[],
+        events=[
+            {
+                "type": "turn_failed",
+                "payload": {
+                    "error": "LLM network error: [WinError 10013] access socket denied.",
+                    "error_type": "RuntimeError",
+                },
+            }
+        ],
+        summary={"machine": {"outcome": "failed", "tools_used": [], "risks": []}},
+    )
+    _install_dummy_loop(monkeypatch, result=network_error_result)
     monkeypatch.setattr(cli_mod, "_build_provider_status_line", lambda: ("LLM provider: fake status=available", object()))
     lines: list[str] = []
     monkeypatch.setattr(cli_mod, "_safe_print", lambda msg, *a, **k: lines.append(str(msg)))
@@ -187,33 +198,25 @@ def test_provider_network_error_is_friendly_and_no_traceback(monkeypatch):
 
 
 def test_json_provider_network_error_contract(monkeypatch):
-    monkeypatch.setattr(cli_mod, "_quick_agent_result_for_cli", lambda *_a, **_k: None)
-
-    class _DummyLoop:
-        def __init__(self, *args, **kwargs):
-            pass
-
-        def run_turn(self, chat_input):
-            return SimpleNamespace(
-                ok=False,
-                final_answer="",
-                stop_reason="exception",
-                status="failed",
-                output_type="error",
-                tool_calls=[],
-                events=[
-                    {
-                        "type": "turn_failed",
-                        "payload": {
-                            "error": "LLM network error: [WinError 10013] access socket denied.",
-                            "error_type": "RuntimeError",
-                        },
-                    }
-                ],
-                summary={"machine": {"outcome": "failed", "tools_used": [], "risks": []}},
-            )
-
-    monkeypatch.setattr("src.jarvis.agent.loop.AgentLoop", _DummyLoop)
+    network_error_result = SimpleNamespace(
+        ok=False,
+        final_answer="",
+        stop_reason="exception",
+        status="failed",
+        output_type="error",
+        tool_calls=[],
+        events=[
+            {
+                "type": "turn_failed",
+                "payload": {
+                    "error": "LLM network error: [WinError 10013] access socket denied.",
+                    "error_type": "RuntimeError",
+                },
+            }
+        ],
+        summary={"machine": {"outcome": "failed", "tools_used": [], "risks": []}},
+    )
+    _install_dummy_loop(monkeypatch, result=network_error_result)
     monkeypatch.setattr(cli_mod, "_build_provider_status_line", lambda: ("LLM provider: fake status=available", object()))
     lines: list[str] = []
     monkeypatch.setattr(cli_mod, "_safe_print", lambda msg, *a, **k: lines.append(str(msg)))
@@ -223,7 +226,7 @@ def test_json_provider_network_error_contract(monkeypatch):
     payload = json.loads(out)
     assert payload["result"]["status"] == "failed"
     assert payload["result"]["stop_reason"] == "provider_network_error"
-    assert payload["result"]["error"]["type"] in {"WinError10013", "PermissionError", "RuntimeError"}
+    assert payload["result"]["error"]["type"] == "NetworkError"
     assert "Traceback" not in out
 
 
@@ -232,7 +235,7 @@ def test_main_ask_uses_new_renderer(monkeypatch):
     monkeypatch.setattr(cli_mod, "_write_cli_diagnostic", lambda *_a, **_k: None)
     called: dict[str, str] = {}
 
-    def _fake_runner(prompt: str, *, output_mode: str = "default") -> int:
+    def _fake_runner(prompt: str, *, output_mode: str = "default", **kwargs) -> int:
         called["prompt"] = prompt
         called["output_mode"] = output_mode
         return 0

@@ -3,7 +3,7 @@ are NOT captured by skill_management deterministic rule.
 
 Root cause: _SKILL_MANAGEMENT_TOKENS uses substring matching ("token in text"),
 which caused coding tasks like '修复"查看skill"被误判成澄清的问题' to be
-routed to skill_management instead of coding_loop.
+routed to skill_management instead of agent_tool_loop.
 
 Fix: _is_skill_query_but_not_coding() checks for coding action verbs before
 matching skill tokens. If coding verbs are present, skip skill_management.
@@ -116,9 +116,9 @@ class TestCodingTasksAboutSkillNotCaptured:
         return route_intent(envelope, examples=[], llm_provider=llm)
 
     def test_fix_skill_clarify_bug_with_tests(self):
-        """修复"查看skill"被误判成澄清的问题，并跑相关测试 → coding_loop"""
+        """修复"查看skill"被误判成澄清的问题，并跑相关测试 → agent_tool_loop"""
         llm = _make_llm(
-            "coding_task", "coding_loop", 0.95,
+            "coding_task", "agent_tool_loop", 0.95,
             summary="fix skill routing bug with test run",
             requires_repo_read=True, requires_write=True,
             requires_shell=True, requires_approval=True,
@@ -127,29 +127,29 @@ class TestCodingTasksAboutSkillNotCaptured:
         r = self._route('修复"查看skill"被误判成澄清的问题，并跑相关测试', llm=llm)
         assert r.intent != "skill_management", \
             f"Coding task should NOT be skill_management, got: {r.intent} ({r.reason})"
-        assert r.response_mode == "coding_loop"
+        assert r.response_mode == "agent_tool_loop"
         assert r.requires_write is True
         assert r.requires_shell is True
         assert r.requires_approval is True
 
     def test_fix_skill_command_broken(self):
-        """修复查看skill命令不能用的问题 → coding_loop"""
+        """修复查看skill命令不能用的问题 → agent_tool_loop"""
         llm = _make_llm(
-            "coding_task", "coding_loop", 0.95,
+            "coding_task", "agent_tool_loop", 0.95,
             summary="fix skill command bug",
             requires_repo_read=True, requires_write=True,
             requires_approval=True, risk_level="medium",
         )
         r = self._route("修复查看skill命令不能用的问题", llm=llm)
         assert r.intent != "skill_management"
-        assert r.response_mode == "coding_loop"
+        assert r.response_mode == "agent_tool_loop"
         assert r.requires_write is True
         assert r.requires_approval is True
 
     def test_add_regression_test_for_skill(self):
-        """给查看skill补回归测试 → coding_loop"""
+        """给查看skill补回归测试 → agent_tool_loop"""
         llm = _make_llm(
-            "coding_task", "coding_loop", 0.95,
+            "coding_task", "agent_tool_loop", 0.95,
             summary="add regression tests for skill query",
             requires_repo_read=True, requires_write=True,
             requires_shell=True, requires_approval=True,
@@ -157,39 +157,39 @@ class TestCodingTasksAboutSkillNotCaptured:
         )
         r = self._route("给查看skill补回归测试", llm=llm)
         assert r.intent != "skill_management"
-        assert r.response_mode == "coding_loop"
+        assert r.response_mode == "agent_tool_loop"
         assert r.requires_approval is True
 
     def test_implement_skill_fuzzy_search(self):
-        """实现 skill list 的模糊搜索 → coding_loop"""
+        """实现 skill list 的模糊搜索 → agent_tool_loop"""
         llm = _make_llm(
-            "coding_task", "coding_loop", 0.95,
+            "coding_task", "agent_tool_loop", 0.95,
             summary="implement fuzzy search for skill list",
             requires_repo_read=True, requires_write=True,
             requires_approval=True, risk_level="medium",
         )
         r = self._route("实现 skill list 的模糊搜索", llm=llm)
         assert r.intent != "skill_management"
-        assert r.response_mode == "coding_loop"
+        assert r.response_mode == "agent_tool_loop"
         assert r.requires_write is True
 
     def test_fix_skill_show_support(self):
-        """修改 skill command router，让 /skill 支持 show → coding_loop"""
+        """修改 skill command router，让 /skill 支持 show → agent_tool_loop"""
         llm = _make_llm(
-            "coding_task", "coding_loop", 0.95,
+            "coding_task", "agent_tool_loop", 0.95,
             summary="add show support to skill command",
             requires_repo_read=True, requires_write=True,
             requires_approval=True, risk_level="medium",
         )
         r = self._route("修改 skill command router，让 /skill 支持 show", llm=llm)
         assert r.intent != "skill_management"
-        assert r.response_mode == "coding_loop"
+        assert r.response_mode == "agent_tool_loop"
         assert r.requires_write is True
 
     def test_fix_skills_duplicate_output(self):
-        """修复 /skills 输出重复的问题，并跑 tests/cli → coding_loop"""
+        """修复 /skills 输出重复的问题，并跑 tests/cli → agent_tool_loop"""
         llm = _make_llm(
-            "coding_task", "coding_loop", 0.95,
+            "coding_task", "agent_tool_loop", 0.95,
             summary="fix skills duplicate output",
             requires_repo_read=True, requires_write=True,
             requires_shell=True, requires_approval=True,
@@ -197,7 +197,7 @@ class TestCodingTasksAboutSkillNotCaptured:
         )
         r = self._route("修复 /skills 输出重复的问题，并跑 tests/cli", llm=llm)
         assert r.intent != "skill_management"
-        assert r.response_mode == "coding_loop"
+        assert r.response_mode == "agent_tool_loop"
         assert r.requires_approval is True
 
     def test_no_llm_fallback_not_skill_management(self):

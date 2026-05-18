@@ -14,16 +14,16 @@ from src.jarvis.core.routing.hybrid_router import route_user_input
         ("写一个 python 程序打印 helloworld，并运行一下", True),
     ],
 )
-def test_coding_creation_routes_to_coding_loop(text: str, requires_shell: bool) -> None:
+def test_coding_creation_routes_to_agent_tool_loop(text: str, requires_shell: bool) -> None:
     route = route_user_input(text, source_surface="cli", input_kind="unknown_task")
     assert route.intent == "coding_task"
-    assert route.response_mode == "coding_loop"
+    assert route.response_mode == "agent_tool_loop"
     assert route.requires_write is True
     assert route.requires_approval is True
     assert route.requires_shell is requires_shell
 
 
-def test_non_code_writing_does_not_enter_coding_loop() -> None:
+def test_non_code_writing_does_not_enter_agent_tool_loop() -> None:
     route = route_user_input("写一段说明", source_surface="cli", input_kind="unknown_task")
     assert route.intent == "clarify"
     assert route.response_mode == "clarify_question"

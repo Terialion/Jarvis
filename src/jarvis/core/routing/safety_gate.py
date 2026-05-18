@@ -11,8 +11,8 @@ _SENSITIVE_HINTS = [
     "id_rsa",
     "id_ed25519",
     "credential",
-    "token",
-    "secret",
+    "api token", "access token", "bearer token", "auth token",
+    "client secret", "api secret", "secret key",
     "private key",
     "api key",
     "password",
@@ -20,7 +20,7 @@ _SENSITIVE_HINTS = [
 _DESTRUCTIVE_HINTS = ["删除整个项目", "delete entire project", "delete the project", "rm -rf", "del /s"]
 
 
-def apply_route_safety(route: IntentRoute, user_input: str, *, mode: str = "safe") -> IntentRoute:
+def apply_route_safety(route: IntentRoute, user_input: str) -> IntentRoute:
     low = str(user_input or "").lower()
     updated = route.to_dict()
     reasons: list[str] = []
@@ -54,9 +54,9 @@ def apply_route_safety(route: IntentRoute, user_input: str, *, mode: str = "safe
 
     if updated.get("requires_write") or updated.get("requires_shell"):
         updated["requires_approval"] = True
-    if updated.get("requires_network") and mode == "safe":
+    if updated.get("requires_network"):
         updated["requires_approval"] = True
-        reasons.append("network_in_safe_mode")
+        reasons.append("network_requires_approval")
 
     updated["safety_decision"] = SafetyDecision(
         requires_approval=bool(updated.get("requires_approval")),

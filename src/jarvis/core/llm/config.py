@@ -19,6 +19,7 @@ class LLMConfig:
     temperature: float
     timeout_seconds: float
     max_tokens: int
+    supports_native_tool_calling: bool = True
     deprecated_env_used: tuple[str, ...] = ()
 
     @property
@@ -44,7 +45,7 @@ class LLMConfig:
 
 PROVIDER_DEFAULTS: Dict[str, Dict[str, str]] = {
     "deepseek": {
-        "model": "deepseek-chat",
+        "model": "deepseek-v4-pro",
         "base_url": "https://api.deepseek.com",
         "api_key_env": "DEEPSEEK_API_KEY",
         "base_url_env": "DEEPSEEK_API_BASE",
@@ -84,6 +85,13 @@ PROVIDER_DEFAULTS: Dict[str, Dict[str, str]] = {
         "base_url": "https://ollama.com",
         "api_key_env": "OLLAMA_API_KEY",
         "base_url_env": "OLLAMA_BASE_URL",
+    },
+    "qwen": {
+        "model": "qwen3.6-reasoner",
+        "base_url": "https://api.llm.ustc.edu.cn",
+        "api_key_env": "JARVIS_LLM_API_KEY",
+        "base_url_env": "JARVIS_LLM_BASE_URL",
+        "supports_native_tool_calling": "false",
     },
     "custom": {
         "model": "",
@@ -231,9 +239,35 @@ def load_llm_config(*, dotenv_path: str | Path = ".env") -> LLMConfig:
     except ValueError:
         timeout_seconds = 60.0
     try:
-        max_tokens = int((os.environ.get("JARVIS_LLM_MAX_TOKENS", "4096") or "4096").strip())
+        max_tokens = int((os.environ.get("JARVIS_LLM_MAX_TOKENS", "16384") or "16384").strip())
     except ValueError:
-        max_tokens = 4096
+        max_tokens = 16384
+
+    supports_native_tool_calling = defaults.get("supports_native_tool_calling", "true").strip().lower() not in {"false", "0", "no", "off"}
+
+    # Merge from ConfigManager — config file values fill in gaps env vars left empty.
+    # Env vars remain highest priority; config file only supplies defaults.
+    try:
+        from ...config.manager import get_config  # type: ignore[import-not-found]
+
+        cfg = get_config()
+        if not model or model_source.startswith("default"):
+            cfg_model = cfg.get("llm.model")
+            if cfg_model and cfg_model != "deepseek-v4-pro":  # not the schema default
+                model = str(cfg_model)
+                model_source = "config_file"
+        if not base_url or base_url_source.startswith("default"):
+            cfg_base = cfg.get("llm.base_url")
+            if cfg_base:
+                base_url = normalize_base_url(str(cfg_base))
+                base_url_source = "config_file"
+        if not api_key or api_key_source.startswith("missing"):
+            cfg_key = cfg.get("llm.api_key")
+            if cfg_key:
+                api_key = str(cfg_key)
+                api_key_source = "config_file"
+    except Exception:
+        pass  # ConfigManager not initialized in non-CLI contexts
 
     return LLMConfig(
         provider=provider,
@@ -246,5 +280,6 @@ def load_llm_config(*, dotenv_path: str | Path = ".env") -> LLMConfig:
         temperature=temperature,
         timeout_seconds=timeout_seconds,
         max_tokens=max_tokens,
+        supports_native_tool_calling=supports_native_tool_calling,
         deprecated_env_used=tuple(sorted(set(deprecated_env_used))),
     )

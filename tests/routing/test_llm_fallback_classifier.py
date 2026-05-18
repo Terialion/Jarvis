@@ -8,7 +8,7 @@ from src.jarvis.core.routing.llm_classifier import classify_intent_with_llm
 def test_llm_classifier_parses_json_and_enforces_approval():
     provider = FakeLLMProvider(
         response=(
-            '{"intent":"coding_task","response_mode":"coding_loop","confidence":0.88,'
+            '{"intent":"coding_task","response_mode":"agent_tool_loop","confidence":0.88,'
             '"summary":"Create code.","requires_write":false,"requires_approval":false}'
         )
     )

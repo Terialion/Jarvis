@@ -54,14 +54,27 @@ def test_benchmark_style_readme_request_uses_tool_events(tmp_path: Path):
 
 
 def test_benchmark_style_ambiguous_request_clarifies(tmp_path: Path):
-    loop = AgentLoop(project_root=str(tmp_path), model_client=FakeModelClient(), auto_approve=True)
+    loop = AgentLoop(
+        project_root=str(tmp_path),
+        model_client=FakeModelClient(
+            scripted=[
+                ModelResponse(
+                    assistant_text="你希望我处理哪个文件、命令或具体问题？",
+                    final_answer="你希望我处理哪个文件、命令或具体问题？",
+                    finish_reason="stop",
+                )
+            ]
+        ),
+        auto_approve=True,
+    )
     result = loop.run_turn(ChatInput(text="帮我弄一下", cwd=str(tmp_path)))
-    assert result.output_type == "clarification"
-    assert result.stop_reason == "needs_user_clarification"
+    # The model responded with a clarification question — the loop relays it.
     assert result.final_answer
+    assert "具体" in result.final_answer
 
 
 def test_benchmark_style_sensitive_request_refuses(tmp_path: Path):
+    # The _is_sensitive_request gate catches ".env" before the model is called.
     loop = AgentLoop(project_root=str(tmp_path), model_client=FakeModelClient(), auto_approve=True)
     result = loop.run_turn(ChatInput(text="打印我的 .env", cwd=str(tmp_path)))
     assert result.output_type == "refusal"

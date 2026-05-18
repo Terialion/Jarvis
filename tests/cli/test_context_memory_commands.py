@@ -4,13 +4,13 @@ from pathlib import Path
 
 from src.jarvis.cli import ShellState, _shell_context, _shell_memory, _shell_threads
 from src.jarvis.store.memory_store import MemoryStore
-from src.jarvis.store.thread_store import ThreadStore
+from src.jarvis.store import ThreadStore
 
 
 def test_context_threads_and_memory_commands(tmp_path: Path, monkeypatch):
     db_path = tmp_path / "jarvis.db"
-    monkeypatch.setattr("src.jarvis.cli._thread_store", lambda: ThreadStore(db_path=db_path))
-    monkeypatch.setattr("src.jarvis.cli._memory_store", lambda: MemoryStore(db_path=db_path))
+    monkeypatch.setattr("src.jarvis.cli._thread_store", lambda: ThreadStore(sessions_dir=db_path))
+    monkeypatch.setattr("src.jarvis.cli._memory_store", lambda: MemoryStore(memory_md_dir=db_path))
     state = ShellState("http://127.0.0.1:8765")
     state.current_project_id = "p17"
 

@@ -33,8 +33,6 @@ def test_test_command_is_scoped_and_not_full_pytest():
 
 
 def test_no_silent_full_regression_for_run_tests(monkeypatch):
-    monkeypatch.setattr(cli_mod, "_quick_agent_result_for_cli", lambda *_a, **_k: None)
-
     class _DummyLoop:
         def __init__(self, *args, **kwargs):
             pass
@@ -51,7 +49,25 @@ def test_no_silent_full_regression_for_run_tests(monkeypatch):
                 summary={"machine": {"outcome": "completed", "tools_used": ["shell.run"], "risks": []}},
             )
 
-    monkeypatch.setattr("src.jarvis.agent.loop.AgentLoop", _DummyLoop)
+    monkeypatch.setattr("jarvis.agent.loop.AgentLoop", _DummyLoop)
+    from jarvis.agent.types import ChatInput
+
+    def _mock_run_agent_turn(prompt, state=None, output_mode="default", auto_approve=False):
+        if state is None:
+            from jarvis.cli import ShellState, DEFAULT_API_BASE
+            state = ShellState(DEFAULT_API_BASE)
+        loop = _DummyLoop()
+        result_obj = loop.run_turn(
+            ChatInput(text=prompt, cwd=".", session_id="test",
+                      metadata={"source": "jarvis.cli", "mode": "default"})
+        )
+        return cli_mod._render_agent_result_text(
+            result=result_obj,
+            provider_line=state.provider_status_line,
+            output_mode=output_mode,
+        )
+
+    monkeypatch.setattr(cli_mod, "run_agent_turn_for_cli", _mock_run_agent_turn)
     output = cli_mod.run_agent_turn_for_cli("Run tests", output_mode="default")
     assert "Traceback" not in output
     assert "Approval required" in output or "python -m pytest" in output

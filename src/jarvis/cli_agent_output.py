@@ -1,13 +1,11 @@
-"""CLI renderer for AgentRunResult.
-
-Renderer-only module: consumes AgentRunResult-like objects and returns text/JSON.
-No routing or execution decisions should be made here.
-"""
+"""CLI renderer for AgentRunResult — Rich-enhanced output."""
 
 from __future__ import annotations
 
 import json
 from typing import Any
+
+from .cli_ui.render import render_markdown, render_panel
 
 
 def safe_text(mask_fn: Any, value: Any) -> str:
@@ -34,13 +32,9 @@ def provider_error_info(events: list[dict[str, Any]]) -> tuple[bool, str, str]:
         raw_type = str(payload.get("error_type") or "")
         lowered = (raw_error + " " + raw_type).lower()
         if "winerror 10013" in lowered or "access socket" in lowered or "permission" in lowered:
-            return (
-                True,
-                "真实 LLM 调用失败，网络连接被系统拒绝。无法连接 LLM。",
-                "WinError10013" if "winerror 10013" in lowered else (raw_type or "PermissionError"),
-            )
+            return (True, "LLM network error: connection refused by system", "NetworkError")
         if "llm network error" in lowered or "timed out" in lowered or "connection reset" in lowered:
-            return (True, "真实 LLM 调用失败，网络连接异常。无法连接 LLM。", raw_type or "RuntimeError")
+            return (True, "LLM network error: connection failed", raw_type or "RuntimeError")
     return (False, "", "")
 
 
@@ -56,16 +50,12 @@ def render_agent_result(
     status = safe_text(mask_fn, getattr(result, "status", "") or "")
     output_type = safe_text(mask_fn, getattr(result, "output_type", "") or "answer")
     tool_calls = list(getattr(result, "tool_calls", []) or [])
-    available_skills = list(getattr(result, "available_skills", []) or [])
-    loaded_skills = list(getattr(result, "loaded_skills", []) or [])
-    skill_loads_count = int(getattr(result, "skill_loads_count", 0) or 0)
-    skills_used = list(getattr(result, "skills_used", []) or [])
-    skill_calls_count = int(getattr(result, "skill_calls_count", 0) or 0)
-    skill_results = list(getattr(result, "skill_results", []) or [])
     events = list(getattr(result, "events", []) or [])
     summary = dict(getattr(result, "summary", {}) or {})
     summary_machine = dict(summary.get("machine") or {})
-    risks = list(summary_machine.get("risks") or [])
+    skills_used = list(getattr(result, "skills_used", []) or [])
+    available_skills = list(getattr(result, "available_skills", []) or [])
+    loaded_skills = list(getattr(result, "loaded_skills", []) or [])
 
     has_provider_error, provider_error_message, provider_error_type = provider_error_info(events)
 
@@ -79,12 +69,15 @@ def render_agent_result(
         error_payload: dict[str, Any] | None = None
         if has_provider_error:
             normalized_stop_reason = "provider_network_error"
-            error_payload = {
-                "type": provider_error_type or "RuntimeError",
-                "message": provider_error_message,
-            }
+            error_payload = {"type": provider_error_type or "RuntimeError", "message": provider_error_message}
         tools_used = list(summary_machine.get("tools_used") or [])
-        model_backend = str(getattr(result, "model_backend", "") or summary_machine.get("model_backend") or provider_line.split("model=")[-1].split()[0] if "model=" in provider_line else "unknown")
+        model_backend = str(
+            getattr(result, "model_backend", "")
+            or summary_machine.get("model_backend")
+            or provider_line.split("model=")[-1].split()[0]
+            if "model=" in provider_line
+            else "unknown"
+        )
         model_provider = str(summary_machine.get("model_provider") or "unknown")
         model_name = str(summary_machine.get("model_name") or "unknown")
         payload = {
@@ -99,10 +92,7 @@ def render_agent_result(
                 "tool_calls": tool_calls,
                 "available_skills": available_skills,
                 "loaded_skills": loaded_skills,
-                "skill_loads_count": skill_loads_count,
                 "skills_used": skills_used,
-                "skill_calls_count": skill_calls_count,
-                "skill_results": skill_results,
                 "summary": summary,
                 "events": events,
                 "model_backend": model_backend,
@@ -114,82 +104,81 @@ def render_agent_result(
             payload["result"]["error"] = error_payload
         return json.dumps(payload, ensure_ascii=False, indent=2)
 
-    lines: list[str] = []
-    lines.append("Jarvis")
-    lines.append(final_answer or (provider_error_message if has_provider_error else "(empty)"))
+    # Rich rendering for default/verbose/trace modes
+    from .cli_ui.console import THEME
 
+    # Capture rich output as string
+    from io import StringIO
+    from rich.console import Console as RichConsole
+
+    string_out = StringIO()
+    rich_console = RichConsole(file=string_out, force_terminal=False, theme=THEME)
+
+    # Answer — plain markdown, no panel (matching Claude Code)
+    if final_answer:
+        md = render_markdown(final_answer)
+        rich_console.print(md)
+    elif has_provider_error:
+        rich_console.print(render_panel(provider_error_message, title="Error", border_style="error"))
+    else:
+        rich_console.print(render_panel("(empty response)", title="Agent", border_style="muted"))
+
+    # Tool call summary — compact inline (matching Claude Code)
     if tool_calls:
-        lines.append("")
-        lines.append("工具摘要")
+        from rich.text import Text
+        from .cli_ui.streaming import _TOOL_DISPLAY, _format_tool_args
+        tool_text = Text()
         for idx, call in enumerate(tool_calls, start=1):
-            name = safe_text(mask_fn, call.get("name", "unknown"))
-            args = compact_tool_args(mask_fn, call.get("arguments"))
-            lines.append(f"{idx}. {name}" + (f" ({args})" if args else ""))
+            raw_name = safe_text(mask_fn, call.get("name", "unknown"))
+            display_name = _TOOL_DISPLAY.get(raw_name, raw_name)
+            raw_args_str = json.dumps(call.get("arguments", {}), ensure_ascii=False) if isinstance(call.get("arguments"), dict) else str(call.get("arguments", ""))
+            formatted_args = _format_tool_args(raw_name, raw_args_str)
+            tool_text.append(f"  {display_name}", style="tool")
+            if formatted_args:
+                tool_text.append(f"({formatted_args})", style="muted")
+            if idx < len(tool_calls):
+                tool_text.append("\n")
+        rich_console.print(tool_text)
 
-    if output_mode == "default":
-        if (stop_reason or "").lower() not in {"completed", "success"}:
-            lines.append("")
-            lines.append(f"stop_reason={stop_reason or 'unknown'}")
-        if has_provider_error:
-            lines.extend(
-                [
-                    "",
-                    "可能原因：",
-                    "- Windows 防火墙或安全软件阻止 Python 访问网络",
-                    "- 代理未配置",
-                    "- 当前网络限制外部 API",
-                    "- base_url 不可达",
-                    "",
-                    "你可以先运行：",
-                    "python scripts/check_llm_api.py",
-                ]
-            )
-        return "\n".join(lines).strip()
-
-    lines.append("")
-    lines.append("Runtime")
-    lines.append(provider_line)
-    lines.append(f"status={status or 'unknown'}")
-    lines.append(f"output_type={output_type or 'answer'}")
-    lines.append(f"stop_reason={stop_reason or 'unknown'}")
-
-    if output_mode in {"verbose", "trace"}:
-        lines.append("")
-        lines.append("Summary")
-        outcome = safe_text(mask_fn, summary_machine.get("outcome", ""))
-        tools_used = ", ".join(safe_text(mask_fn, x) for x in list(summary_machine.get("tools_used") or [])[:8])
-        commands_run = ", ".join(safe_text(mask_fn, x) for x in list(summary_machine.get("commands_run") or [])[:5])
-        tests_run = ", ".join(safe_text(mask_fn, x) for x in list(summary_machine.get("tests_run") or [])[:5])
-        lines.append(f"outcome={outcome or 'unknown'}")
-        lines.append(f"tools_used={tools_used or '(none)'}")
-        if commands_run:
-            lines.append(f"commands_run={commands_run}")
-        if tests_run:
-            lines.append(f"tests_run={tests_run}")
-        if risks:
-            lines.append(f"risks={'; '.join(safe_text(mask_fn, x) for x in risks[:5])}")
-        if available_skills:
-            lines.append(f"available_skills={', '.join(safe_text(mask_fn, x) for x in available_skills[:8])}")
-        if loaded_skills:
-            lines.append(f"loaded_skills={', '.join(safe_text(mask_fn, x) for x in loaded_skills[:8])}")
-        lines.append(f"skill_loads_count={skill_loads_count}")
+    # Status footer — only in verbose/trace
+    if output_mode in ("verbose", "trace"):
+        from rich.table import Table
+        info = Table(show_header=False, border_style="divider", padding=(0, 1))
+        info.add_column(style="muted", width=15)
+        info.add_column()
+        info.add_row("Status", status or "unknown")
+        info.add_row("Stop reason", stop_reason or "unknown")
+        info.add_row("Output type", output_type or "answer")
         if skills_used:
-            lines.append(f"skills_used={', '.join(safe_text(mask_fn, x) for x in skills_used[:8])}")
-        lines.append(f"skill_calls_count={skill_calls_count}")
-        active_task = summary_machine.get("active_task") if isinstance(summary_machine.get("active_task"), dict) else {}
-        if active_task:
-            lines.append(f"active_task_phase={safe_text(mask_fn, active_task.get('current_phase', ''))}")
-        handoff = summary_machine.get("handoff_summary") if isinstance(summary_machine.get("handoff_summary"), dict) else {}
-        if handoff:
-            lines.append(f"handoff_state={safe_text(mask_fn, handoff.get('current_state', ''))}")
+            info.add_row("Skills used", ", ".join(str(s) for s in skills_used[:8]))
+        if available_skills:
+            info.add_row("Available", ", ".join(str(s) for s in available_skills[:8]))
+        rich_console.print(render_panel(info, title="Runtime Info", border_style="divider"))
+        rich_console.print(provider_line)
 
     if output_mode == "trace":
-        lines.append("")
-        lines.append("Trace")
+        from rich.text import Text
+        trace_text = Text()
         for idx, event in enumerate(events, start=1):
             evt_type = safe_text(mask_fn, event.get("type", "unknown"))
             payload = event.get("payload") if isinstance(event, dict) else {}
             payload_text = safe_text(mask_fn, json.dumps(payload, ensure_ascii=False))
-            lines.append(f"{idx}. {evt_type} {payload_text[:180]}")
+            trace_text.append(f"{idx}. {evt_type} ", style="number")
+            trace_text.append(f"{payload_text[:180]}\n", style="muted")
+        rich_console.print(render_panel(trace_text, title="Trace", border_style="divider"))
 
-    return "\n".join(lines).strip()
+    if has_provider_error:
+        rich_console.print(
+            render_panel(
+                "Possible causes:\n"
+                "- Firewall or security software blocking network\n"
+                "- Proxy not configured\n"
+                "- Network limits external API access\n"
+                "- base_url unreachable\n\n"
+                "Run: python scripts/check_llm_api.py",
+                title="Troubleshooting",
+                border_style="warning",
+            )
+        )
+
+    return string_out.getvalue().strip()

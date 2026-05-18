@@ -1,26 +1,39 @@
-"""Chat-first AgentLoop implementation."""
+"""LLM-first AgentLoop — LLM decides WHAT to do; framework enforces HOW."""
 
 from __future__ import annotations
 
+import json
 import time
-from typing import Any
+from typing import Any, Iterator
 
+from ..core.checkpoint_manager import CheckpointManager
+from ..core.checkpoint_snapshot import CheckpointSnapshotter
 from ..core.react_readiness.replay_store import ReplayStore
+from ..core.task_runtime import TaskRuntime
+from ..core.tokens import TokenEstimator, get_context_window
 from .context import ContextBuilder, ContextCompactorAdapter
+from .context_compactor import compact as compact_messages
 from .context_store import ContextStore
 from .context_updater import ContextUpdater
 from .events import EVENT_TYPES, InMemoryEventSink, ReplayEventSink
 from .model import ModelClient, RuntimeModelClient
 from .prompt_builder import PromptBuilder
-from .retry import ErrorClassifier, ReplanPolicy, RetryPolicy
+from .retry import ErrorClassifier, FailureTracker, ReplanPolicy, RetryPolicy
 from .store import ThreadStore
 from .summary import ResponseComposer
 from .tools import ToolCallExecutor, ToolRegistryAdapter
-from .types import AgentEvent, AgentOutputType, AgentRunResult, ChatInput, ToolCall, ToolResult
+from .types import (
+    AgentEvent,
+    AgentOutputType,
+    AgentRunResult,
+    ChatInput,
+    ModelChunk,
+    ToolCall,
+    ToolResult,
+)
 from ..store.memory_store import MemoryStore
 from ..skills.executor import SkillExecutor
 from ..skills.runtime import SkillCall
-from ..web.research import SearchIntentClassifier, WebResearchPipeline
 
 
 class AgentLoop:
@@ -38,21 +51,37 @@ class AgentLoop:
         retry_policy: RetryPolicy | None = None,
         replan_policy: ReplanPolicy | None = None,
         error_classifier: ErrorClassifier | None = None,
-        max_steps: int = 8,
+        max_steps: int = 20,
         timeout_s: int = 90,
+        tool_timeout_s: int = 30,
         permission_mode: str = "workspace_write",
         auto_approve: bool = False,
+        user_prompt: Any = None,
+        event_bus: Any = None,
     ) -> None:
+        self.event_bus = event_bus  # LifecycleEventBus | None
         self.project_root = project_root
         self.store = store or ThreadStore()
+        self.memory_store = MemoryStore()
+        task_runtime = TaskRuntime()
+        self.checkpoint_manager = CheckpointManager(
+            task_runtime=task_runtime,
+            snapshotter=CheckpointSnapshotter(),
+            workspace_root=project_root,
+        )
         self.tool_registry = tool_registry or ToolRegistryAdapter(
             project_root=project_root,
             permission_mode=permission_mode,
+            memory_store=self.memory_store,
+            checkpoint_manager=self.checkpoint_manager,
+            thread_store=self.store,
+            user_prompt=user_prompt,
         )
         self.tool_executor = tool_executor or ToolCallExecutor(
             registry_adapter=self.tool_registry,
             permission_mode=permission_mode,
             auto_approve=auto_approve,
+            tool_timeout_s=tool_timeout_s,
         )
         self.model_client = model_client or RuntimeModelClient()
         self.model_info = self.model_client.backend_info() if hasattr(self.model_client, "backend_info") else {
@@ -60,25 +89,26 @@ class AgentLoop:
             "model_provider": "fake",
             "model_name": "fake-agent-v0",
         }
-        self.memory_store = MemoryStore(self.store.db_path)
-        self.context_store = context_store or ContextStore(thread_store=self.store, memory_store=self.memory_store)
+        self.context_store = context_store or ContextStore(session_store=self.store, memory_store=self.memory_store)
+        model_name = str(self.model_info.get("model_name") or "")
+        self._context_window = get_context_window(model_name)
+        self._model_name = model_name
         self.context_builder = context_builder or ContextBuilder(
-            thread_store=self.store,
+            session_store=self.store,
             memory_store=self.memory_store,
-            compactor=ContextCompactorAdapter(max_tokens=12000),
+            compactor=ContextCompactorAdapter(max_tokens=12000, model_name=model_name),
             skill_registry=self.tool_registry.skill_registry,
             context_store=self.context_store,
             model_info=self.model_info,
             permission_mode=permission_mode,
         )
-        self.prompt_builder = PromptBuilder()
+        self.prompt_builder = PromptBuilder(skill_registry=self.tool_registry.skill_registry)
         self.context_updater = ContextUpdater(context_store=self.context_store)
         self.skill_executor = SkillExecutor(
             skill_registry=self.tool_registry.skill_registry,
             tool_executor=self.tool_executor,
             project_root=project_root,
         )
-        self.search_intent_classifier = SearchIntentClassifier()
         self.summary_composer = summary_composer or ResponseComposer()
         self.retry_policy = retry_policy or RetryPolicy(max_retries=1)
         self.replan_policy = replan_policy or ReplanPolicy(max_replans=2)
@@ -100,13 +130,38 @@ class AgentLoop:
         stop_reason = "max_steps"
         final_answer = ""
         output_type: AgentOutputType = "answer"
-        clarification_payload: dict[str, Any] | None = None
         available_skills = list(self.tool_registry.skill_registry.available_names())
         loaded_skills: list[str] = []
         skill_results_log: list[dict[str, Any]] = []
         skills_used: list[str] = []
         turn_context = None
         seen_calls: dict[str, list[tuple[frozenset[tuple[str, Any]], dict[str, Any]]]] = {}
+        read_file_paths: set[str] = set()
+
+        # s16: Fire lifecycle hooks — session_start / turn_start
+        if self.event_bus is not None:
+            from ..core.hooks.schema import HookStage
+            self.event_bus.fire_audit(HookStage.SESSION_START, {
+                "session_id": session_id,
+                "project_id": chat_input.project_id,
+                "cwd": chat_input.cwd,
+            })
+            result = self.event_bus.fire(HookStage.TURN_START, {
+                "session_id": session_id,
+                "turn_id": turn_id,
+                "text": chat_input.text,
+            })
+            if not result.allowed:
+                return self._complete_early(
+                    session_id=session_id,
+                    turn_id=turn_id,
+                    events=events,
+                    final_answer=result.reason or "Turn blocked by lifecycle hook",
+                    stop_reason="hook_denied",
+                    output_type="refusal",
+                    available_skills=available_skills,
+                    loaded_skills=loaded_skills,
+                )
 
         self.store.append_message(session_id, turn_id, "user", chat_input.text, metadata={"kind": "user_input"})
         self._emit(events, turn_id, "turn_started", {"session_id": session_id, "text": chat_input.text})
@@ -123,20 +178,15 @@ class AgentLoop:
                 loaded_skills=loaded_skills,
             )
 
-        clarification = self._build_clarification_if_needed(chat_input.text)
-        if clarification is not None:
-            return self._complete_early(
-                session_id=session_id,
-                turn_id=turn_id,
-                events=events,
-                final_answer=str(clarification.get("question") or "").strip(),
-                stop_reason="needs_user_clarification",
-                output_type="clarification",
-                clarification=clarification,
-                available_skills=available_skills,
-                loaded_skills=loaded_skills,
-            )
+        # s16: Fire compact_pre hook before context building (may trigger compaction)
+        if self.event_bus is not None:
+            from ..core.hooks.schema import HookStage
+            self.event_bus.fire_audit(HookStage.COMPACT_PRE, {
+                "session_id": session_id,
+                "turn_id": turn_id,
+            })
 
+        # — LLM-first: build context, then let the LLM decide via tool calls —
         tool_specs = self.tool_registry.list_tool_specs()
         turn_context, messages = self.context_builder.build_messages(
             session_id=session_id,
@@ -159,243 +209,75 @@ class AgentLoop:
             ]
         self._emit(events, turn_id, "skill_index_built", {"count": len(available_skills), "skills": available_skills[:12]})
 
-        research_reuse = self._maybe_reuse_research_observation(chat_input.text, session_id)
-        if research_reuse is not None:
-            self._emit(
-                events,
-                turn_id,
-                "context_observation_reused",
-                {
-                    "observation_type": "research",
-                    "query": research_reuse.get("query"),
-                    "source_count": len(list(research_reuse.get("sources") or [])),
-                },
-            )
-            final_answer = self._answer_from_reused_research(chat_input.text, research_reuse)
-            summary = self.summary_composer.compose(
-                final_answer=final_answer,
-                tool_results=[],
-                stop_reason="completed",
-                output_type="answer",
-                available_skills=available_skills,
-                loaded_skills=loaded_skills,
-                skill_loads_count=len(loaded_skills),
-                skills_used=[],
-                skill_calls_count=0,
-                skill_results=[],
-                context_reuse=True,
-                research_observations=[research_reuse],
-                research_context_reused=True,
-            )
-            result = AgentRunResult(
-                ok=True,
-                session_id=session_id,
-                turn_id=turn_id,
-                final_answer=final_answer,
-                events=events,
-                summary=summary,
-                stop_reason="completed",
-                tool_calls=[],
-                tool_results=[],
-                status="completed",
-                output_type="answer",
-                available_skills=available_skills,
-                loaded_skills=loaded_skills,
-                skill_loads_count=len(loaded_skills),
-                skills_used=[],
-                skill_calls_count=0,
-                skill_results=[],
-                model_backend=str(self.model_info.get("model_backend") or ""),
-                model_provider=str(self.model_info.get("model_provider") or ""),
-                model_name=str(self.model_info.get("model_name") or ""),
-            )
-            self.context_updater.apply_result(turn_context, result)
-            self._emit(events, turn_id, "context_updated", {"context_reuse": True, "research_context_reused": True})
-            return result
+        # Inject prior context reuse signals so the LLM can reference previous turns
+        context_reuse_signals = self._detect_context_reuse_signals(chat_input.text, session_id)
+        context_reuse_detected = context_reuse_signals is not None
+        if context_reuse_signals:
+            self._emit(events, turn_id, "context_observation_reused", context_reuse_signals)
+            # Inject previous research/skill context as a system hint for the LLM
+            hint_parts: list[str] = []
+            if "skill_observation" in context_reuse_signals:
+                obs = context_reuse_signals["skill_observation"]
+                hint_parts.append(
+                    f"Previous skill result for '{obs.get('skill_name')}': {obs.get('summary')} "
+                    f"(files: {', '.join(obs.get('related_files') or []) or 'none'})"
+                )
+            if "research_observation" in context_reuse_signals:
+                obs = context_reuse_signals["research_observation"]
+                hint_parts.append(
+                    f"Previous research for '{obs.get('query')}': {obs.get('answer_summary')} "
+                    f"(sources: {len(obs.get('sources') or [])})"
+                )
+            if hint_parts:
+                messages.append({"role": "user", "content": "Prior context reuse:\n" + "\n".join(hint_parts)})
 
-        reuse = self._maybe_reuse_context_observation(chat_input.text, session_id)
-        if reuse is not None:
-            self._emit(events, turn_id, "context_observation_reused", {"skill_name": reuse.get("skill_name"), "related_files": reuse.get("related_files")})
-            final_answer = self._answer_from_reused_observation(chat_input.text, reuse)
-            summary = self.summary_composer.compose(
-                final_answer=final_answer,
-                tool_results=[],
-                stop_reason="completed",
-                output_type="answer",
-                available_skills=available_skills,
-                loaded_skills=loaded_skills,
-                skill_loads_count=len(loaded_skills),
-                skills_used=[],
-                skill_calls_count=0,
-                skill_results=[],
-                context_reuse=True,
-                skill_observations=[reuse],
-            )
-            result = AgentRunResult(
-                ok=True,
-                session_id=session_id,
-                turn_id=turn_id,
-                final_answer=final_answer,
-                events=events,
-                summary=summary,
-                stop_reason="completed",
-                tool_calls=[],
-                tool_results=[],
-                status="completed",
-                output_type="answer",
-                available_skills=available_skills,
-                loaded_skills=loaded_skills,
-                skill_loads_count=len(loaded_skills),
-                skills_used=[],
-                skill_calls_count=0,
-                skill_results=[],
-                model_backend=str(self.model_info.get("model_backend") or ""),
-                model_provider=str(self.model_info.get("model_provider") or ""),
-                model_name=str(self.model_info.get("model_name") or ""),
-            )
-            self.context_updater.apply_result(turn_context, result)
-            self._emit(events, turn_id, "context_updated", {"context_reuse": True})
-            return result
-
-        research_intent = self.search_intent_classifier.classify(chat_input.text, turn_context.context_pack)
-        if research_intent.need_web:
-            pipeline = WebResearchPipeline(
-                tool_executor=self.tool_executor,
-                event_factory=lambda event_type, payload: AgentEvent.new(turn_id=turn_id, event_type=event_type, payload=payload),
-            )
-            research_result = pipeline.run(user_input=chat_input.text, turn_context=turn_context)
-            self._append_event_dicts(events, research_result.events)
-            tool_calls_log.extend(research_result.tool_calls)
-            tool_results_log.extend(research_result.tool_results)
-            final_answer = research_result.final_answer
-            output_type = research_result.output_type  # type: ignore[assignment]
-            stop_reason = research_result.stop_reason
-            tool_result_objs = [ToolResult(**item) for item in tool_results_log if isinstance(item, dict) and item.get("name")]
-            research_observations = [research_result.research_observation] if research_result.research_observation else []
-            summary = self.summary_composer.compose(
-                final_answer=final_answer,
-                tool_results=tool_result_objs,
-                stop_reason=stop_reason,
-                output_type=output_type,
-                available_skills=available_skills,
-                loaded_skills=loaded_skills,
-                skill_loads_count=len(loaded_skills),
-                skills_used=[],
-                skill_calls_count=0,
-                skill_results=[],
-                research_observations=research_observations,
-                web_search_runs_count=research_result.web_search_runs_count,
-                web_fetch_runs_count=research_result.web_fetch_runs_count,
-                web_fetch_blocked_count=research_result.web_fetch_blocked_count,
-                evidence_count=research_result.evidence_count,
-                official_sources_count=research_result.official_sources_count,
-                github_sources_count=research_result.github_sources_count,
-                web_provider_errors=research_result.web_provider_errors,
-                web_no_results_count=research_result.web_no_results_count,
-                search_results_count=research_result.search_results_count,
-                search_result_dedup_count=research_result.search_result_dedup_count,
-                release_note_sources_count=research_result.release_note_sources_count,
-                stale_sources_count=research_result.stale_sources_count,
-                citation_count=research_result.citation_count,
-                source_coverage_score=research_result.source_coverage_score,
-                prompt_injection_blocked=research_result.prompt_injection_blocked,
-            )
-            self.store.save_summary(session_id, turn_id, summary)
-            self.store.save_final_answer(session_id, turn_id, final_answer)
-            self._emit(events, turn_id, "final_answer_created", {"step": 0, "research_intent": research_intent.intent_type})
-            self._emit(events, turn_id, "turn_completed", {"status": "completed", "stop_reason": stop_reason})
-            self._emit(events, turn_id, "summary_created", {"status": "completed"})
-            result = AgentRunResult(
-                ok=output_type != "error",
-                session_id=session_id,
-                turn_id=turn_id,
-                final_answer=final_answer,
-                events=events,
-                summary=summary,
-                stop_reason=stop_reason,
-                tool_calls=tool_calls_log,
-                tool_results=tool_results_log,
-                status="completed" if output_type != "error" else "failed",
-                output_type=output_type,
-                available_skills=available_skills,
-                loaded_skills=loaded_skills,
-                skill_loads_count=len(loaded_skills),
-                skills_used=[],
-                skill_calls_count=0,
-                skill_results=[],
-                model_backend=str(self.model_info.get("model_backend") or ""),
-                model_provider=str(self.model_info.get("model_provider") or ""),
-                model_name=str(self.model_info.get("model_name") or ""),
-            )
-            self.context_updater.apply_result(turn_context, result)
-            self._emit(events, turn_id, "context_updated", {"research_observations": len(research_observations), "context_reuse": False})
-            return result
-
-        skill_call = self._select_executable_skill(chat_input.text)
-        if skill_call is not None:
-            skill_result = self.skill_executor.run(skill_call, turn_context)
-            self._append_skill_events(events, skill_result.events)
-            tool_calls_log.extend(skill_result.tool_calls)
-            tool_results_log.extend(skill_result.tool_results)
-            skill_results_log.append(skill_result.to_dict())
-            if skill_result.skill_name not in skills_used:
-                skills_used.append(skill_result.skill_name)
-            final_answer = skill_result.final_answer
-            output_type = skill_result.output_type  # type: ignore[assignment]
-            stop_reason = "completed" if skill_result.ok and output_type != "partial" else "skill_partial"
-            tool_result_objs = [ToolResult(**item) for item in tool_results_log if isinstance(item, dict) and item.get("name")]
-            summary = self.summary_composer.compose(
-                final_answer=final_answer,
-                tool_results=tool_result_objs,
-                stop_reason=stop_reason,
-                output_type=output_type,
-                available_skills=available_skills,
-                loaded_skills=loaded_skills,
-                skill_loads_count=len(loaded_skills),
-                skills_used=skills_used,
-                skill_calls_count=1,
-                skill_results=skill_results_log,
-                context_reuse=False,
-            )
-            self.store.save_summary(session_id, turn_id, summary)
-            self.store.save_final_answer(session_id, turn_id, final_answer)
-            self._emit(events, turn_id, "final_answer_created", {"step": 0, "skill_name": skill_result.skill_name})
-            self._emit(events, turn_id, "turn_completed", {"status": "completed", "stop_reason": stop_reason})
-            self._emit(events, turn_id, "summary_created", {"status": "completed"})
-            result = AgentRunResult(
-                ok=skill_result.ok,
-                session_id=session_id,
-                turn_id=turn_id,
-                final_answer=final_answer,
-                events=events,
-                summary=summary,
-                stop_reason=stop_reason,
-                tool_calls=tool_calls_log,
-                tool_results=tool_results_log,
-                status="completed",
-                output_type=output_type,
-                available_skills=available_skills,
-                loaded_skills=loaded_skills,
-                skill_loads_count=len(loaded_skills),
-                skills_used=skills_used,
-                skill_calls_count=1,
-                skill_results=skill_results_log,
-                model_backend=str(self.model_info.get("model_backend") or ""),
-                model_provider=str(self.model_info.get("model_provider") or ""),
-                model_name=str(self.model_info.get("model_name") or ""),
-            )
-            self.context_updater.apply_result(turn_context, result)
-            self._emit(events, turn_id, "context_updated", {"skills_used": skills_used, "active_task": bool((result.summary.get("machine") or {}).get("active_task"))})
-            return result
+        # Track context window usage
+        estimator = TokenEstimator(self._model_name)
+        context_used = estimator.count_messages(messages)
+        context_pct = context_used / self._context_window if self._context_window > 0 else 0.0
+        self._emit(events, turn_id, "context_window_usage", {
+            "used_tokens": context_used,
+            "context_window": self._context_window,
+            "usage_pct": round(context_pct, 3),
+            "message_count": len(messages),
+        })
 
         last_progress_marker = ""
         no_progress_count = 0
+        failure_tracker = FailureTracker(max_same_tool=3, max_repeat=3)
+        retry_with_tool_instruction_count = 0
+        retry_with_length_count = 0
 
         try:
             for step in range(1, self.max_steps + 1):
+                final_answer = ""  # Reset per-step — stale value from previous step is not valid
                 if (time.perf_counter() - started) > self.timeout_s:
                     stop_reason = "timeout"
                     break
+
+                # Inject completed background task results before the LLM call
+                if self.tool_registry is not None:
+                    notifs = self.tool_registry.bg_task_manager.drain_notifications()
+                    if notifs:
+                        notif_lines = "\n".join(
+                            f"[bg:{n['task_id']}] {n['status']}: "
+                            f"{n.get('result') or n.get('error') or ''}"
+                            for n in notifs
+                        )
+                        messages.append({
+                            "role": "user",
+                            "content": f"<background-results>\n{notif_lines}\n</background-results>",
+                        })
+                        self._emit(events, turn_id, "bg_notifications_injected", {"count": len(notifs)})
+
+                    # Inject team inbox messages
+                    team_inbox = self.tool_registry.message_bus.read_inbox("lead")
+                    if team_inbox:
+                        messages.append({
+                            "role": "user",
+                            "content": f"<team-inbox>{json.dumps(team_inbox, ensure_ascii=False)}</team-inbox>",
+                        })
+                        self._emit(events, turn_id, "team_inbox_injected", {"count": len(team_inbox)})
 
                 self._emit(events, turn_id, "model_call_started", {"step": step})
                 model_resp = self._call_model_with_retry(
@@ -419,21 +301,20 @@ class AgentLoop:
                 if model_resp.reasoning_summary:
                     self._emit(events, turn_id, "reasoning_delta", {"step": step, "summary": model_resp.reasoning_summary})
 
-                if (
-                    not model_resp.tool_calls
-                    and self._request_requires_tool(chat_input.text)
-                    and len(tool_calls_log) == 0
-                    and model_resp.finish_reason in {"stop", "retry_with_tool_instruction"}
-                ):
-                    messages.append(
-                        {
-                            "role": "system",
-                            "content": (
-                                "Retry: user request requires tool use. "
-                                "Call one or more tools now instead of plain text."
-                            ),
-                        }
+                # Handle truncated response — compact and retry once
+                if model_resp.finish_reason == "length" and retry_with_length_count < 1:
+                    retry_with_length_count += 1
+                    self._emit(events, turn_id, "length_retry_started", {"step": step})
+                    compacted, report = compact_messages(
+                        messages, session_id=session_id, model_name=self._model_name,
                     )
+                    messages = list(compacted)
+                    self._emit(events, turn_id, "length_retry_compacted", {
+                        "step": step,
+                        "stage": report.stage,
+                        "tokens_before": report.tokens_before,
+                        "tokens_after": report.tokens_after,
+                    })
                     continue
 
                 if model_resp.final_answer:
@@ -448,11 +329,123 @@ class AgentLoop:
                     break
 
                 if not model_resp.tool_calls and not final_answer:
-                    stop_reason = model_resp.finish_reason or "no_progress"
+                    finish = model_resp.finish_reason or ""
+                    # Only process tool-intent retry on the first step — once tools have
+                    # been called, model text describing results ("让我查看结果") is legitimate.
+                    if finish == "retry_with_tool_instruction":
+                        if len(tool_calls_log) == 0:
+                            retry_with_tool_instruction_count += 1
+                            if retry_with_tool_instruction_count >= 2:
+                                stop_reason = "retry_with_tool_instruction"
+                                self._emit(events, turn_id, "retry_with_tool_instruction_exhausted", {
+                                    "step": step, "count": retry_with_tool_instruction_count,
+                                })
+                                break
+                            self._emit(events, turn_id, "retry_with_tool_instruction", {
+                                "step": step, "count": retry_with_tool_instruction_count,
+                                "retry_reason": (model_resp.raw or {}).get("retry_reason", "natural_language_tool_intent"),
+                            })
+                            # Tell the LLM WHY its response was rejected so it can fix it
+                            messages.append({
+                                "role": "user",
+                                "content": (
+                                    "Your last response described what you intend to do "
+                                    "but did NOT actually call any tool. You MUST call the "
+                                    "appropriate tool function directly — do NOT just say "
+                                    "what you will do. Use the tool now."
+                                ),
+                            })
+                            continue
+                        # Tools were already called — model's text is a synthesis of results.
+                        # Accept it as the final answer instead of breaking.
+                        final_answer = model_resp.final_answer or model_resp.assistant_text or model_resp.reasoning_summary or ""
+                        if not final_answer:
+                            stop_reason = finish or "no_progress"
+                            break
+                        output_type = "answer"
+                        stop_reason = "completed"
+                        self._emit(events, turn_id, "final_answer_synthesized", {
+                            "step": step, "text_length": len(final_answer),
+                        })
+                        break
+                    stop_reason = finish or "no_progress"
                     break
+
+                # Build assistant message for conversation history (OpenAI protocol)
+                assistant_msg: dict[str, Any] = {
+                    "role": "assistant",
+                    "content": model_resp.reasoning_summary or model_resp.assistant_text or None,
+                }
+                if model_resp.tool_calls:
+                    assistant_msg["tool_calls"] = [
+                        {
+                            "id": tc.id,
+                            "type": "function",
+                            "function": {
+                                "name": tc.name,
+                                "arguments": json.dumps(tc.arguments, ensure_ascii=False),
+                            },
+                        }
+                        for tc in model_resp.tool_calls
+                    ]
+                messages.append(assistant_msg)
 
                 for call in model_resp.tool_calls:
                     call = self._normalize_tool_call(chat_input.text, call)
+
+                    # Check if this tool has already failed or been called too many times
+                    reject, reject_reason, reject_kind = failure_tracker.should_reject_tool(call.name)
+                    if reject:
+                        self._emit(events, turn_id, "tool_rejected", {
+                            "step": step, "tool_name": call.name,
+                            "reason": reject_reason, "kind": reject_kind,
+                        })
+                        if reject_kind == "repeat":
+                            if failure_tracker.is_repeat_hard_stop(call.name):
+                                # Model already got a synthesis nudge — hard stop
+                                stop_reason = "consecutive_rejections"
+                                self._emit(events, turn_id, "consecutive_failures_detected", {
+                                    "step": step, "message": reject_reason,
+                                })
+                                break
+                            # First repeat rejection — inject synthesis nudge, skip tool
+                            messages.append({
+                                "role": "user",
+                                "content": (
+                                    f"<rejected>You have called `{call.name}` "
+                                    f"too many times. Do NOT call it again. "
+                                    "Synthesize your final answer NOW from the "
+                                    "results you already have. Write the answer "
+                                    "directly — no more tool calls.</rejected>"
+                                ),
+                            })
+                            continue
+                        # Failure kind — tool has failed too many times
+                        messages.append({
+                            "role": "user",
+                            "content": f"Tool `{call.name}` rejected: {reject_reason}",
+                        })
+                        continue
+
+                    # Prevent duplicate skill.load — once loaded, the instructions
+                    # are already in context. Reloading wastes turns and creates loops.
+                    if call.name == "skill.load":
+                        skill_name = str(call.arguments.get("name") or "").strip()
+                        if skill_name and skill_name in loaded_skills:
+                            self._emit(events, turn_id, "skill_already_loaded", {
+                                "step": step, "skill_name": skill_name,
+                            })
+                            messages.append({
+                                "role": "user",
+                                "content": (
+                                    f"Skill `{skill_name}` is already loaded. Its instructions "
+                                    "are in the context above. Do NOT call skill.load again — "
+                                    "follow the skill instructions to complete the task."
+                                ),
+                            })
+                            failure_tracker.record_success(call.name)
+                            continue
+
                     if call.name == "skill.run":
                         tool_calls_log.append(call.to_dict())
                         self.store.append_tool_call(session_id, turn_id, call.to_dict())
@@ -488,7 +481,27 @@ class AgentLoop:
                         tool_results_log.append(result_dict)
                         self.store.append_tool_result(session_id, turn_id, result_dict)
                         self._emit(events, turn_id, "tool_call_completed", {"step": step, "tool_result": result_dict})
-                        messages.append({"role": "tool", "content": self._observation_text(result)})
+
+                        if result.ok:
+                            failure_tracker.record_success(result.name)
+                        else:
+                            failure_tracker.record_failure(
+                                tool_name=result.name,
+                                error_category="skill_error",
+                                error_message=str(result.error or "")[:200],
+                                step=step,
+                            )
+                            should_stop, stop_msg = failure_tracker.should_stop()
+                            if should_stop:
+                                stop_reason = "consecutive_failures"
+                                output_type = "error"
+                                final_answer = stop_msg
+                                self._emit(events, turn_id, "consecutive_failures_detected", {
+                                    "step": step, "message": stop_msg,
+                                })
+                                break
+
+                        messages.append({"role": "tool", "tool_call_id": call.id, "content": self._observation_text(result)})
                         self._emit(events, turn_id, "observation_added", {"step": step, "tool_name": result.name})
                         continue
                     canonical_key = (call.name, self._tool_args_frozen(call))
@@ -499,9 +512,10 @@ class AgentLoop:
                         tool_results_log.append(reused_result)
                         self.store.append_tool_result(session_id, turn_id, reused_result)
                         prev_obs = self._observation_text(ToolResult(**reused_result))
-                        messages.append({"role": "tool", "content": prev_obs})
+                        messages.append({"role": "tool", "tool_call_id": call.id, "content": prev_obs})
                         self._emit(events, turn_id, "tool_call_deduped", {"step": step, "tool_name": call.name})
                         self._emit(events, turn_id, "observation_reused", {"step": step, "tool_name": call.name})
+                        failure_tracker.record_success(call.name)
                         if call.name == "skill.load":
                             skill_name = str((reused_result.get("metadata") or {}).get("skill_name") or call.arguments.get("name") or "")
                             if skill_name and skill_name not in loaded_skills:
@@ -547,22 +561,60 @@ class AgentLoop:
                         break
 
                     if result.ok:
+                        failure_tracker.record_success(call.name)
                         seen_calls.setdefault(call.name, []).append((canonical_key[1], result_dict))
-                        if call.name in ("repo_reader.read_file", "repo_reader.search_files", "directory_list", "list_directory"):
-                            messages.append(
-                                {
-                                    "role": "system",
-                                    "content": (
-                                        "Based on the above observation, generate a concise final answer now. "
-                                        "Do not call the same tool again unless the user explicitly asks for more content."
-                                    ),
-                                }
+                        if call.name == "repo_reader.read_file":
+                            path = str(call.arguments.get("path") or call.arguments.get("file_path") or "")
+                            if path:
+                                read_file_paths.add(path)
+                        if call.name == "skill.load":
+                            skill_body = self._observation_text(result)
+                            skill_name = str(result.metadata.get("skill_name") or call.arguments.get("name") or "").strip()
+                            # Aligned with Claude Code: skill body goes directly into the
+                            # tool result so the model can act on it. The model called
+                            # skill.load — it gets the instructions as the response.
+                            # No separate user message that breaks the ReAct loop.
+                            skill_tool_msg = (
+                                f"<skill-context name=\"{skill_name}\">\n"
+                                f"{skill_body}\n"
+                                "</skill-context>\n\n"
+                                f"These are the complete instructions for the `{skill_name}` skill. "
+                                "Call the tools described above NOW to complete the user's task. "
+                                "Do NOT describe what you plan to do — use the tool functions directly."
                             )
-                        messages.append({"role": "tool", "content": self._observation_text(result)})
+                            messages.append({
+                                "role": "tool",
+                                "tool_call_id": call.id,
+                                "content": skill_tool_msg,
+                            })
+                        else:
+                            messages.append({"role": "tool", "tool_call_id": call.id, "content": self._observation_text(result)})
                         self._emit(events, turn_id, "observation_added", {"step": step, "tool_name": result.name})
                         continue
 
+                    # ── Tool failed ──
+                    # Always show the model what went wrong so it can adapt.
+                    # Without this, DeepSeek keeps retrying the same failing call
+                    # because it never sees the actual error.
+                    obs_text = self._observation_text(result)
                     classification = self.error_classifier.classify(result)
+                    failure_tracker.record_failure(
+                        tool_name=result.name,
+                        error_category=classification.category,
+                        error_message=str(result.error or ""),
+                        step=step,
+                    )
+                    should_stop, stop_msg = failure_tracker.should_stop()
+                    if should_stop:
+                        messages.append({"role": "tool", "tool_call_id": call.id, "content": obs_text})
+                        stop_reason = "consecutive_failures"
+                        output_type = "error"
+                        final_answer = stop_msg
+                        self._emit(events, turn_id, "consecutive_failures_detected", {
+                            "step": step, "message": stop_msg,
+                        })
+                        break
+
                     if self.retry_policy.should_retry(call, classification):
                         self._emit(events, turn_id, "retry_started", {"step": step, "tool_name": result.name, "reason": classification.reason})
                         retry_result = self.tool_executor.execute(
@@ -581,22 +633,52 @@ class AgentLoop:
                         self.store.append_tool_result(session_id, turn_id, retry_dict)
                         self._emit(events, turn_id, "tool_call_completed", {"step": step, "tool_result": retry_dict})
                         if retry_result.ok:
-                            messages.append({"role": "tool", "content": self._observation_text(retry_result)})
+                            failure_tracker.record_success(retry_result.name)
+                            messages.append({"role": "tool", "tool_call_id": call.id, "content": self._observation_text(retry_result)})
                             self._emit(events, turn_id, "observation_added", {"step": step, "tool_name": retry_result.name})
                             continue
+                        # Retry also failed — show both results + stop guidance
+                        retry_classification = self.error_classifier.classify(retry_result)
+                        failure_tracker.record_failure(
+                            tool_name=retry_result.name,
+                            error_category=retry_classification.category,
+                            error_message=str(retry_result.error or ""),
+                            step=step,
+                        )
+                        should_stop2, stop_msg2 = failure_tracker.should_stop()
+                        if should_stop2:
+                            messages.append({"role": "tool", "tool_call_id": call.id, "content": f"{obs_text}\n\n[Retry also failed]\n{self._observation_text(retry_result)}"})
+                            stop_reason = "consecutive_failures"
+                            output_type = "error"
+                            final_answer = stop_msg2
+                            self._emit(events, turn_id, "consecutive_failures_detected", {
+                                "step": step, "message": stop_msg2,
+                            })
+                            break
 
-                    if self.replan_policy.should_replan(classification):
-                        hint = self.replan_policy.build_replan_observation(result, classification)
-                        messages.append({"role": "system", "content": f"Tool failed; replan with this hint: {hint}"})
-                        self._emit(events, turn_id, "observation_added", {"step": step, "tool_name": result.name, "replan_hint": hint})
-                        continue
+                    # Feed the failure to the model so it can adapt
+                    messages.append({"role": "tool", "tool_call_id": call.id, "content": obs_text})
+                    self._emit(events, turn_id, "observation_added", {"step": step, "tool_name": result.name})
+                    continue
 
-                    stop_reason = classification.reason or "tool_failed"
-                    output_type = "partial"
+                if stop_reason in {"approval_required", "timeout", "consecutive_failures", "consecutive_rejections"}:
                     break
 
-                if stop_reason in {"approval_required", "timeout"}:
-                    break
+
+                # Mid-turn auto-compaction: prevent context overflow during long turns
+                usage_pct = estimator.count_messages(messages) / self._context_window if self._context_window > 0 else 0.0
+                if usage_pct > 0.70:
+                    compacted, report = compact_messages(
+                        messages, session_id=session_id, model_name=self._model_name,
+                    )
+                    if report.stage != "none":
+                        messages = list(compacted)
+                        self._emit(events, turn_id, "mid_turn_compaction", {
+                            "step": step, "stage": report.stage,
+                            "usage_pct": round(usage_pct, 3),
+                            "tokens_before": report.tokens_before,
+                            "tokens_after": report.tokens_after,
+                        })
 
                 marker = f"{len(tool_calls_log)}:{len(tool_results_log)}:{final_answer[:60]}"
                 if marker == last_progress_marker:
@@ -604,7 +686,7 @@ class AgentLoop:
                 else:
                     no_progress_count = 0
                     last_progress_marker = marker
-                if no_progress_count >= 2:
+                if no_progress_count >= 4:
                     stop_reason = "no_progress"
                     output_type = "partial"
                     break
@@ -614,13 +696,19 @@ class AgentLoop:
                 final_answer = self._fallback_final_answer(tool_result_objs, stop_reason)
             if output_type == "answer" and stop_reason in {"timeout", "approval_required", "max_steps", "no_progress"}:
                 output_type = "partial"
+            # Propagate skill partial output_type to overall result
+            if output_type in {"answer", "tool_result"} and skill_results_log:
+                for sr in skill_results_log:
+                    if isinstance(sr, dict) and sr.get("output_type") == "partial":
+                        output_type = "partial"
+                        break
 
             summary = self.summary_composer.compose(
                 final_answer=final_answer,
                 tool_results=tool_result_objs,
                 stop_reason=stop_reason,
                 output_type=output_type,
-                clarification=clarification_payload,
+                context_reuse=context_reuse_detected,
                 available_skills=available_skills,
                 loaded_skills=loaded_skills,
                 skill_loads_count=len(loaded_skills),
@@ -629,7 +717,9 @@ class AgentLoop:
                 skill_results=skill_results_log,
             )
             self.store.save_summary(session_id, turn_id, summary)
-            if final_answer:
+            _UNCLEAN_STOP_REASONS = {"max_steps", "timeout", "no_progress", "consecutive_failures",
+                                     "retry_with_tool_instruction", "provider_network_error", "length"}
+            if final_answer and stop_reason not in _UNCLEAN_STOP_REASONS:
                 self.store.save_final_answer(session_id, turn_id, final_answer)
 
             status = "completed" if final_answer and stop_reason == "completed" else "partial"
@@ -665,6 +755,20 @@ class AgentLoop:
             )
             if turn_context is not None:
                 self.context_updater.apply_result(turn_context, result)
+
+            # s16: Fire lifecycle hooks — turn_end / session_end
+            if self.event_bus is not None:
+                from ..core.hooks.schema import HookStage
+                self.event_bus.fire_audit(HookStage.TURN_END, {
+                    "session_id": session_id,
+                    "turn_id": turn_id,
+                    "status": status,
+                    "stop_reason": stop_reason,
+                })
+                self.event_bus.fire_audit(HookStage.SESSION_END, {
+                    "session_id": session_id,
+                    "turn_id": turn_id,
+                })
             return result
         except Exception as exc:
             self._emit(events, turn_id, "turn_failed", {"error": str(exc), "error_type": type(exc).__name__})
@@ -682,6 +786,21 @@ class AgentLoop:
             )
             self.store.save_summary(session_id, turn_id, summary)
             self.store.save_final_answer(session_id, turn_id, final_answer)
+
+            # s16: Fire lifecycle hooks on failure too
+            if self.event_bus is not None:
+                from ..core.hooks.schema import HookStage
+                self.event_bus.fire_audit(HookStage.TURN_END, {
+                    "session_id": session_id,
+                    "turn_id": turn_id,
+                    "status": "failed",
+                    "stop_reason": stop_reason,
+                })
+                self.event_bus.fire_audit(HookStage.SESSION_END, {
+                    "session_id": session_id,
+                    "turn_id": turn_id,
+                })
+
             return AgentRunResult(
                 ok=False,
                 session_id=session_id,
@@ -716,14 +835,12 @@ class AgentLoop:
         output_type: AgentOutputType,
         available_skills: list[str],
         loaded_skills: list[str],
-        clarification: dict[str, Any] | None = None,
     ) -> AgentRunResult:
         summary = self.summary_composer.compose(
             final_answer=final_answer,
             tool_results=[],
             stop_reason=stop_reason,
             output_type=output_type,
-            clarification=clarification,
             available_skills=available_skills,
             loaded_skills=loaded_skills,
             skill_loads_count=len(loaded_skills),
@@ -779,99 +896,584 @@ class AgentLoop:
             if isinstance(event, dict):
                 collector.append(dict(event))
 
-    def _maybe_reuse_context_observation(self, text: str, session_id: str) -> dict[str, Any] | None:
-        lowered = str(text or "").lower()
-        markers = ("刚才", "that file", "previous result", "刚才那个文件", "刚才的结果", "based on the previous")
-        if not any(marker in lowered for marker in markers):
-            return None
-        observation = self.context_store.retrieve_skill_observation(session_id)
-        return observation.to_dict() if observation is not None else None
+    # Minimum Jaccard similarity (0.0-1.0) to consider two texts related
+    _CONTEXT_REUSE_SIMILARITY_THRESHOLD: float = 0.15
 
     @staticmethod
-    def _answer_from_reused_observation(text: str, observation: dict[str, Any]) -> str:
-        files = ", ".join(str(x) for x in list(observation.get("related_files") or [])) or "the previous file/result"
-        summary = str(observation.get("summary") or "").strip()
-        return f"Using the previous context for {files}: {summary}"
+    def _jaccard_similarity(text_a: str, text_b: str) -> float:
+        """Jaccard similarity on word sets (3+ char words, case-insensitive)."""
+        def _words(s: str) -> set[str]:
+            return {w for w in str(s or "").lower().split() if len(w) >= 3}
+        wa = _words(text_a)
+        wb = _words(text_b)
+        if not wa or not wb:
+            return 0.0
+        return len(wa & wb) / len(wa | wb)
 
-    def _maybe_reuse_context_observation(self, text: str, session_id: str) -> dict[str, Any] | None:
-        lowered = str(text or "").lower()
-        markers = ("刚才", "that file", "previous result", "刚才那个文件", "刚才的结果", "based on the previous")
-        if not any(marker in lowered for marker in markers):
-            return None
-        observation = self.context_store.retrieve_skill_observation(session_id)
-        return observation.to_dict() if observation is not None else None
+    def _detect_context_reuse_signals(self, text: str, session_id: str) -> dict[str, Any] | None:
+        """Detect prior context that may be relevant; LLM decides whether to use it.
 
-    def _maybe_reuse_research_observation(self, text: str, session_id: str) -> dict[str, Any] | None:
+        Uses explicit keyword markers as fast path, then falls back to Jaccard
+        word-overlap similarity against recent observations for implicit reuse.
+        """
         lowered = str(text or "").lower()
         markers = (
-            "刚才查到",
-            "官方资料",
-            "official source",
-            "official docs",
-            "previous research",
-            "based on the previous research",
+            "刚才", "that file", "previous result", "刚才那个文件", "刚才的结果",
+            "based on the previous", "刚才查到", "official source", "official docs",
+            "previous research", "based on the previous research",
         )
-        if not any(marker in lowered for marker in markers):
-            return None
-        observation = self.context_store.retrieve_research_observation(session_id)
-        return observation.to_dict() if observation is not None else None
+        if any(marker in lowered for marker in markers):
+            signals: dict[str, Any] = {}
+            skill_obs = self.context_store.retrieve_skill_observation(session_id)
+            if skill_obs is not None:
+                signals["skill_observation"] = skill_obs.to_dict()
+            research_obs = self.context_store.retrieve_research_observation(session_id)
+            if research_obs is not None:
+                signals["research_observation"] = research_obs.to_dict()
+            return signals if signals else None
 
-    @staticmethod
-    def _answer_from_reused_research(text: str, observation: dict[str, Any]) -> str:
-        _ = text
-        summary = str(observation.get("answer_summary") or "").strip() or "No stored research summary."
-        sources = ", ".join(
-            str(item.get("url") or "")
-            for item in list(observation.get("sources") or [])[:3]
-            if isinstance(item, dict) and str(item.get("url") or "")
-        ) or "none"
-        return f"Using the previous web research: {summary}\nSources: {sources}"
+        # Semantic fallback: Jaccard word overlap with recent observations
+        recent = self.context_store.retrieve_recent_context(session_id, limit=6)
+        signals: dict[str, Any] = {}
+        for obs_dict in recent.get("skill_observations", []):
+            obs_text = f"{obs_dict.get('skill_name', '')} {obs_dict.get('summary', '')}"
+            if self._jaccard_similarity(text, obs_text) >= self._CONTEXT_REUSE_SIMILARITY_THRESHOLD:
+                signals["skill_observation"] = obs_dict
+                break
+        for obs_dict in recent.get("research_observations", []):
+            obs_text = f"{obs_dict.get('query', '')} {obs_dict.get('answer_summary', '')}"
+            if self._jaccard_similarity(text, obs_text) >= self._CONTEXT_REUSE_SIMILARITY_THRESHOLD:
+                signals["research_observation"] = obs_dict
+                break
+        return signals if signals else None
 
-    @staticmethod
-    def _select_executable_skill(text: str) -> SkillCall | None:
-        raw = str(text or "").strip()
-        lowered = raw.lower()
-        if not raw:
-            return None
-        if any(marker in lowered for marker in ("fix test", "修复测试失败", "repair failing test", "诊断测试失败")):
-            return SkillCall.new(name="fix_test_failure", arguments={}, source="deterministic")
-        if any(marker in lowered for marker in ("run agent test", "run agent tests", "运行 agent 测试", "运行agent测试")):
-            return SkillCall.new(name="run_tests", arguments={"scope": "agent"}, source="deterministic")
-        if any(marker in lowered for marker in ("what does this repo", "project overview", "repo overview", "项目是做什么", "项目结构", "分析项目结构", "看一下这个项目")):
-            return SkillCall.new(name="repo_overview", arguments={"root": "."}, source="deterministic")
-        if any(marker in lowered for marker in ("summarize", "总结", "概括", "explain")) and ("readme" in lowered or "." in lowered):
-            return SkillCall.new(name="summarize_file", arguments={"path": SkillExecutor._guess_file_path(raw) or "README.md"}, source="deterministic")
-        return None
+    def run_turn_stream(self, chat_input: ChatInput) -> Iterator[ModelChunk]:
+        """Streaming variant of run_turn — yields ModelChunk events as the LLM responds.
 
-    @staticmethod
-    def _observation_text(result: ToolResult) -> str:
-        return f"Tool `{result.name}` returned ok={result.ok}. content={result.content}"
+        Multi-turn: after tool execution, tool results are fed back to the LLM so it
+        can produce a final answer informed by actual observations.
+        """
+        started = time.perf_counter()
+        session = self.store.create_or_resume_session(chat_input)
+        session_id = str(session["session_id"])
+        turn = self.store.create_turn(session_id, status="running", metadata={"project_id": chat_input.project_id})
+        turn_id = turn.turn_id
 
-    @staticmethod
-    def _request_requires_tool(text: str) -> bool:
-        lowered = str(text or "").lower()
-        markers = (
-            "readme",
-            "read file",
-            "list current directory",
-            "current directory",
-            "run pytest",
-            "run tests",
-            "fix ",
-            "bug",
-            "modify file",
-            "run command",
-            "总结 readme",
-            "读取",
-            "列一下当前目录",
-            "运行测试",
+        self.store.append_message(session_id, turn_id, "user", chat_input.text, metadata={"kind": "user_input"})
+        yield ModelChunk(kind="event", text_delta="", tool_name="turn_started",
+                         tool_arguments_delta=chat_input.text)
+
+        from ..core.debug_log import debug_log as _dbg2, is_debug_enabled as _dbg_on2
+        _dbg2_on = _dbg_on2()
+        if _dbg2_on:
+            _dbg2("loop", "post-event: starting sensitive check + tool specs + build_messages")
+
+        if self._is_sensitive_request(chat_input.text):
+            yield ModelChunk(kind="text_delta", text_delta="I can't print .env files or API keys because they may contain secrets.")
+            yield ModelChunk(kind="done", finish_reason="safety_refusal")
+            return
+
+        if _dbg2_on:
+            _t1 = time.perf_counter()
+        tool_specs = self.tool_registry.list_tool_specs()
+        if _dbg2_on:
+            _dbg2("loop", f"list_tool_specs done in {time.perf_counter()-_t1:.1f}s, {len(tool_specs)} tools")
+
+        if _dbg2_on:
+            _t2 = time.perf_counter()
+        turn_context, messages = self.context_builder.build_messages(
+            session_id=session_id,
+            turn_id=turn_id,
+            chat_input=chat_input,
+            runtime_state={
+                "cwd": chat_input.cwd or self.project_root,
+                "permission_mode": self.tool_executor.permission_mode,
+                "model_backend": self.model_info.get("model_backend"),
+                "model_provider": self.model_info.get("model_provider"),
+                "model_name": self.model_info.get("model_name"),
+            },
+            prompt_builder=self.prompt_builder,
         )
-        return any(marker in lowered for marker in markers)
+        if _dbg2_on:
+            _dbg2("loop", f"build_messages done in {time.perf_counter()-_t2:.1f}s, {len(messages)} messages")
+
+        if _dbg2_on:
+            _dbg2("loop", "entering step loop")
+
+        try:
+            stream_failures = FailureTracker(max_repeat=3)
+            stream_no_progress = 0
+            stream_last_tool_count = 0
+            stream_last_tool_names: frozenset[str] = frozenset()
+            stream_retry_with_length_count = 0
+            stream_retry_tool_intent_count = 0
+            stream_any_tool_called = False
+            stream_seen_calls: dict[str, list[tuple[frozenset[tuple[str, Any]], dict[str, Any]]]] = {}
+            stream_loaded_skills: list[str] = []
+            stream_tool_call_counts_total: dict[str, int] = {}
+            stream_last_good_content: str = ""
+            for step in range(1, self.max_steps + 1):
+                if (time.perf_counter() - started) > self.timeout_s:
+                    yield ModelChunk(kind="done", finish_reason="timeout")
+                    return
+
+                # Inject completed background task results before each streaming LLM call
+                if self.tool_registry is not None:
+                    notifs = self.tool_registry.bg_task_manager.drain_notifications()
+                    if notifs:
+                        notif_lines = "\n".join(
+                            f"[bg:{n['task_id']}] {n['status']}: "
+                            f"{n.get('result') or n.get('error') or ''}"
+                            for n in notifs
+                        )
+                        messages.append({
+                            "role": "user",
+                            "content": f"<background-results>\n{notif_lines}\n</background-results>",
+                        })
+                        yield ModelChunk(kind="progress_delta", text="bg_notifications_injected")
+
+                from ..core.debug_log import debug_log as _dbg_log, is_debug_enabled as _dbg_on
+                _dbg = _dbg_on()
+                _t0 = time.perf_counter()
+                if _dbg:
+                    _dbg_log("loop", f"step {step}: LLM call starting, {len(messages)} messages")
+                stream = self.model_client.complete_stream(messages, tools=tool_specs)
+                if _dbg:
+                    _dbg_log("loop", f"step {step}: LLM stream obtained in {time.perf_counter()-_t0:.1f}s")
+                tool_calls_buffer: list[ToolCall] = []
+                step_chunks: list[ModelChunk] = []  # Buffer entire LLM response
+                step_finish_reason = "stop"
+
+                for chunk in stream:
+                    if chunk.kind == "tool_call_delta":
+                        args = self._parse_tool_args(chunk.tool_arguments_delta)
+                        tool_calls_buffer.append(ToolCall.new(
+                            id=chunk.tool_call_id or None,
+                            name=chunk.tool_name,
+                            arguments=args,
+                        ))
+                        step_chunks.append(chunk)
+                    elif chunk.kind == "done":
+                        step_finish_reason = chunk.finish_reason  # captured for length detection
+                    elif chunk.kind in ("text_delta", "reasoning_delta"):
+                        step_chunks.append(chunk)
+
+                if _dbg:
+                    _dbg_log("loop", f"step {step}: LLM stream done in {time.perf_counter()-_t0:.1f}s, {len(step_chunks)} chunks, {len(tool_calls_buffer)} tool_calls, finish={step_finish_reason}")
+
+                # — Classify: text + tool calls → progress; text only → answer —
+                if not tool_calls_buffer:
+                    # Check for tool intent before treating as final answer.
+                    # Only on the first step — once tools have been called, the model is
+                    # processing results, not describing intent. Phrases like "让我查看结果"
+                    # are legitimate follow-up, not tool-intent statements.
+                    collected_text = "".join(
+                        c.text_delta or c.reasoning_delta or ""
+                        for c in step_chunks
+                        if c.kind in ("text_delta", "reasoning_delta")
+                    )
+                    if (collected_text.strip()
+                            and not stream_any_tool_called
+                            and RuntimeModelClient._looks_like_tool_intent_text(collected_text)):
+                        # Try to salvage tool calls from text
+                        salvaged = RuntimeModelClient._parse_tool_plan_from_content(
+                            collected_text, safe_to_canonical={},
+                        )
+                        if salvaged.tool_calls:
+                            for tc in salvaged.tool_calls:
+                                yield ModelChunk(
+                                    kind="tool_call_delta",
+                                    tool_call_id=tc.id,
+                                    tool_name=tc.name,
+                                    tool_arguments_delta=json.dumps(tc.arguments, ensure_ascii=False),
+                                )
+                                tool_calls_buffer.append(tc)
+                            # Fall through to tool execution below
+                        else:
+                            stream_retry_tool_intent_count += 1
+                            if stream_retry_tool_intent_count >= 2:
+                                yield ModelChunk(kind="done", finish_reason="retry_with_tool_instruction")
+                                return
+                            messages.append({
+                                "role": "user",
+                                "content": (
+                                    "Your last response described what you intend to do "
+                                    "but did NOT actually call any tool. You MUST call the "
+                                    "appropriate tool function directly — do NOT just say "
+                                    "what you will do. Use the tool now."
+                                ),
+                            })
+                            continue
+
+                if not tool_calls_buffer:
+                    # Handle length (truncated) — compact and retry once
+                    if step_finish_reason == "length" and stream_retry_with_length_count < 1:
+                        stream_retry_with_length_count += 1
+                        compacted, _ = compact_messages(
+                            messages, session_id=session_id, model_name=self._model_name,
+                        )
+                        messages = list(compacted)
+                        continue
+                    # Final answer — no tool calls in this step
+                    for c in step_chunks:
+                        if c.kind == "text_delta":
+                            text = c.text_delta or ""
+                            if text.strip():
+                                yield ModelChunk(kind="text_delta", text_delta=text)
+                        elif c.kind == "reasoning_delta":
+                            text = c.reasoning_delta or ""
+                            if text.strip():
+                                yield ModelChunk(kind="reasoning_delta", reasoning_delta=text)
+                    yield ModelChunk(kind="done", finish_reason="stop")
+                    return
+
+                # Has tool calls — text and reasoning from this step are progress
+                for c in step_chunks:
+                    if c.kind == "text_delta":
+                        text = c.text_delta or ""
+                        if text.strip():
+                            yield ModelChunk(kind="progress_delta", progress_delta=text)
+                    elif c.kind == "reasoning_delta":
+                        text = c.reasoning_delta or ""
+                        if text.strip():
+                            yield ModelChunk(kind="progress_delta", progress_delta=text)
+                    elif c.kind == "tool_call_delta":
+                        yield c  # forward tool calls as-is
+
+                # Handle length (truncated) on steps with tool calls too
+                if step_finish_reason == "length" and stream_retry_with_length_count < 1:
+                    stream_retry_with_length_count += 1
+                    compacted, _ = compact_messages(
+                        messages, session_id=session_id, model_name=self._model_name,
+                    )
+                    messages = list(compacted)
+                    continue
+
+                # Build assistant message for conversation history (OpenAI protocol)
+                assistant_text = "".join(
+                    c.text_delta or c.reasoning_delta or ""
+                    for c in step_chunks
+                    if c.kind in ("text_delta", "reasoning_delta")
+                ).strip() or None
+                assistant_msg: dict[str, Any] = {"role": "assistant", "content": assistant_text}
+                assistant_msg["tool_calls"] = [
+                    {
+                        "id": tc.id,
+                        "type": "function",
+                        "function": {
+                            "name": tc.name,
+                            "arguments": json.dumps(tc.arguments, ensure_ascii=False),
+                        },
+                    }
+                    for tc in tool_calls_buffer
+                ]
+                messages.append(assistant_msg)
+
+                any_ok = False
+                stream_tool_names_this_step: set[str] = set()
+                stream_tool_call_counts: dict[str, int] = {}
+                for call in tool_calls_buffer:
+                    stream_tool_names_this_step.add(call.name)
+                    stream_tool_call_counts[call.name] = stream_tool_call_counts.get(call.name, 0) + 1
+
+                    # Reject tools that have failed or been called too many times
+                    reject, reject_reason, reject_kind = stream_failures.should_reject_tool(call.name)
+                    if reject:
+                        if reject_kind == "repeat":
+                            if stream_failures.is_repeat_hard_stop(call.name):
+                                yield ModelChunk(kind="done", finish_reason="consecutive_rejections")
+                                return
+                            # First repeat rejection — inject synthesis nudge
+                            messages.append({
+                                "role": "user",
+                                "content": (
+                                    f"<rejected>You have called `{call.name}` "
+                                    f"too many times. Do NOT call it again. "
+                                    "Synthesize your final answer NOW from the "
+                                    "results you already have. Write the answer "
+                                    "directly — no more tool calls.</rejected>"
+                                ),
+                            })
+                            yield ModelChunk(kind="text_delta",
+                                             text_delta=f"\n[Tool `{call.name}`: rejected: {reject_reason}]")
+                            continue
+                        # Failure kind — tool has failed too many times
+                        messages.append({
+                            "role": "user",
+                            "content": f"Tool `{call.name}` rejected: {reject_reason}",
+                        })
+                        yield ModelChunk(kind="text_delta",
+                                         text_delta=f"\n[Tool `{call.name}`: rejected: {reject_reason}]")
+                        continue
+
+                    # — Dedup: skill.load — prevent re-loading the same skill in one turn
+                    if call.name == "skill.load":
+                        skill_name = str(call.arguments.get("name") or "").strip()
+                        if skill_name and skill_name in stream_loaded_skills:
+                            messages.append({
+                                "role": "tool",
+                                "tool_call_id": call.id,
+                                "content": (
+                                    f"Skill `{skill_name}` is already loaded in this turn. "
+                                    f"Use the instructions from the earlier skill.load result above. "
+                                    f"Do NOT load it again — proceed with answering the user."
+                                ),
+                            })
+                            yield ModelChunk(kind="text_delta",
+                                             text_delta=f"\n[skill.load `{skill_name}`: already loaded, skipped]")
+                            any_ok = True
+                            stream_any_tool_called = True
+                            stream_failures.record_success(call.name)
+                            continue
+
+                    # — Dedup: general tool calls — same args = same result
+                    reused_result = self._find_seen_result(stream_seen_calls, call)
+                    if reused_result is not None:
+                        messages.append({
+                            "role": "tool",
+                            "tool_call_id": call.id,
+                            "content": json.dumps(reused_result.get('content', ''), ensure_ascii=False)[:50000],
+                        })
+                        yield ModelChunk(kind="text_delta",
+                                         text_delta=f"\n[Tool `{call.name}`: deduplicated]")
+                        # Count dedup as progress — we have a valid cached result
+                        if reused_result.get("ok"):
+                            any_ok = True
+                            stream_any_tool_called = True
+                        stream_failures.record_success(call.name)
+                        continue
+
+                    canonical_key = (call.name, self._tool_args_frozen(call))
+
+                    if call.name == "skill.run":
+                        skill_name = str(call.arguments.get("name") or call.arguments.get("skill_name") or "").strip()
+                        skill_result = self.skill_executor.run(
+                            SkillCall.new(name=skill_name, arguments=call.arguments, source="model"),
+                            turn_context,
+                        )
+                        obs_text = skill_result.final_answer
+                        # Track skill.run success/failure
+                        skill_ok = skill_result.output_type != "error"
+                        if skill_ok:
+                            any_ok = True
+                            stream_any_tool_called = True
+                            stream_seen_calls.setdefault(call.name, []).append(
+                                (canonical_key[1], {"content": obs_text, "ok": True})
+                            )
+                        yield ModelChunk(kind="text_delta", text_delta=obs_text)
+                        messages.append({"role": "tool", "tool_call_id": call.id, "content": obs_text})
+                    else:
+                        result = self.tool_executor.execute(
+                            call,
+                            context={
+                                "cwd": chat_input.cwd or self.project_root,
+                                "session_id": session_id,
+                                "turn_id": turn_id,
+                                "permission_mode": self.tool_executor.permission_mode,
+                                "mode": "agent_loop",
+                            },
+                        )
+                        obs_text = self._format_content_for_observation(result.content)
+                        # Yield tool result for display
+                        yield ModelChunk(kind="text_delta",
+                                         text_delta=f"\n[Tool `{result.name}`: {obs_text[:16000]}]")
+                        # Track failures and successes
+                        if result.ok:
+                            stream_failures.record_success(result.name)
+                            any_ok = True
+                            stream_any_tool_called = True
+                            if call.name == "command_runner.run":
+                                stream_last_good_content = obs_text
+                            if call.name == "skill.load":
+                                sk_name = str(result.metadata.get("skill_name") or call.arguments.get("name") or "").strip()
+                                if sk_name and sk_name not in stream_loaded_skills:
+                                    stream_loaded_skills.append(sk_name)
+                            stream_seen_calls.setdefault(call.name, []).append(
+                                (canonical_key[1], result.to_dict())
+                            )
+                        else:
+                            classification = self.error_classifier.classify(result)
+                            stream_failures.record_failure(
+                                tool_name=result.name,
+                                error_category=classification.category,
+                                error_message=str(result.error or "")[:200],
+                                step=step,
+                            )
+                            should_stop, stop_msg = stream_failures.should_stop()
+                            if should_stop:
+                                yield ModelChunk(kind="text_delta",
+                                                 text_delta=f"\n{stop_msg}")
+                                yield ModelChunk(kind="done", finish_reason="consecutive_failures")
+                                return
+                        # Feed observation back so the LLM can respond
+                        if call.name == "skill.load" and result.ok:
+                            skill_body = obs_text
+                            # Aligned with Claude Code: skill body goes directly into the
+                            # tool result so the model can act on it. The model called
+                            # skill.load — it gets the instructions as the response.
+                            skill_tool_msg = (
+                                f"<skill-context name=\"{sk_name}\">\n"
+                                f"{skill_body}\n"
+                                "</skill-context>\n\n"
+                                f"These are the complete instructions for the `{sk_name}` skill. "
+                                "Call the tools described above NOW to complete the user's task. "
+                                "Do NOT describe what you plan to do — use the tool functions directly."
+                            )
+                            messages.append({
+                                "role": "tool",
+                                "tool_call_id": call.id,
+                                "content": skill_tool_msg,
+                            })
+                        else:
+                            messages.append({
+                                "role": "tool",
+                                "tool_call_id": call.id,
+                                "content": obs_text[:24000],
+                            })
+
+                # Mid-turn auto-compaction: prevent context overflow during long turns
+                stream_estimator = TokenEstimator(self._model_name)
+                stream_usage_pct = stream_estimator.count_messages(messages) / self._context_window if self._context_window > 0 else 0.0
+                if stream_usage_pct > 0.70:
+                    compacted, report = compact_messages(
+                        messages, session_id=session_id, model_name=self._model_name,
+                    )
+                    if report.stage != "none":
+                        messages = list(compacted)
+
+                # Progressive synthesis guidance (aligned with Codex needs_follow_up /
+                # Claude Code Stop hook). After terminal tool results, the model MUST
+                # synthesize a final answer. DeepSeek reasoning models tend to keep
+                # No-progress detection: stop if no tools succeeded in this step.
+                # Dedup already catches identical tool calls; hard cap below
+                # handles excessive same-tool-type usage. Only flag steps where
+                # every tool failed or was rejected — a step that made progress
+                # (any_ok=True) should reset the counter regardless of tool set.
+                current_tool_names = frozenset(stream_tool_names_this_step)
+                tool_set_repeat = (
+                    current_tool_names
+                    and current_tool_names == stream_last_tool_names
+                    and stream_any_tool_called
+                )
+                if not any_ok:
+                    stream_no_progress += 1
+                    if stream_no_progress >= 3:
+                        if stream_last_good_content:
+                            yield ModelChunk(kind="text_delta",
+                                             text_delta=f"\n{stream_last_good_content}")
+                        yield ModelChunk(kind="done", finish_reason="stop")
+                        return
+                else:
+                    stream_no_progress = 0
+                stream_last_tool_names = current_tool_names
+
+                # Per-tool-type loop detection: track total calls & hard-stop if looping
+                for tool_name, count in stream_tool_call_counts.items():
+                    stream_tool_call_counts_total[tool_name] = (
+                        stream_tool_call_counts_total.get(tool_name, 0) + count
+                    )
+                worst_tool = max(stream_tool_call_counts_total.items(), key=lambda kv: kv[1], default=(None, 0))
+                if worst_tool[1] >= 4 and stream_any_tool_called:
+                    if stream_last_good_content:
+                        yield ModelChunk(kind="text_delta",
+                                         text_delta=f"\n{stream_last_good_content}")
+                    yield ModelChunk(kind="done", finish_reason="stop")
+                    return
+
+            # Max steps exhausted — signal end
+            yield ModelChunk(kind="done", finish_reason="max_steps")
+
+        except Exception as exc:
+            yield ModelChunk(kind="text_delta", text_delta=self._friendly_error_message(exc))
+            yield ModelChunk(kind="done", finish_reason=self._map_provider_error_stop_reason(exc))
+
+    @staticmethod
+    def _parse_tool_args(raw_args: str) -> dict[str, Any]:
+        """Parse a JSON arguments string into a dict, falling back to empty dict."""
+        if not raw_args or not raw_args.strip():
+            return {}
+        try:
+            parsed = json.loads(raw_args)
+            if isinstance(parsed, dict):
+                return parsed
+            return {}
+        except (json.JSONDecodeError, TypeError):
+            return {}
+
+    _MAX_OBSERVATION_LEN = 50000
+
+    @staticmethod
+    def _format_content_for_observation(content: Any) -> str:
+        """Format tool result content for LLM observation, handling dicts/lists."""
+        if isinstance(content, dict):
+            tree_text = content.get("tree")
+            if tree_text:
+                return str(tree_text)
+            return json.dumps(content, ensure_ascii=False)
+        if isinstance(content, list):
+            return json.dumps(content, ensure_ascii=False)
+        if isinstance(content, str):
+            return content
+        return str(content or "")
+
+    @classmethod
+    def _observation_text(cls, result: ToolResult) -> str:
+        """Return clean tool output — no status headers, no diagnoses.
+
+        Aligned with reference agents (Claude Code, Codex, Hermes, OpenClaw):
+        feed the raw tool output to the LLM and let it decide what to do next.
+        """
+        content = result.content
+        limit = cls._MAX_OBSERVATION_LEN
+
+        if isinstance(content, dict):
+            # Command output (stdout/stderr/exit_code) — show cleanly
+            if any(k in content for k in ("stdout", "stderr", "exit_code")):
+                parts = []
+                ec = content.get("exit_code")
+                if ec is not None:
+                    parts.append(f"exit_code={ec}")
+                out = content.get("stdout")
+                if out:
+                    parts.append(str(out)[:limit])
+                err = content.get("stderr")
+                if err:
+                    parts.append(str(err)[:limit])
+                if not out and not err:
+                    parts.append("(empty output)")
+                extra = {k: v for k, v in content.items()
+                         if k not in ("stdout", "stderr", "exit_code")}
+                if extra:
+                    parts.append(json.dumps(extra, ensure_ascii=False)[:4000])
+                return "\n".join(parts) if parts else "(empty)"
+            # Tree result — just the tree text
+            tree = content.get("tree")
+            if tree:
+                return str(tree)[:limit]
+            # Other dict — JSON
+            return json.dumps(content, ensure_ascii=False)[:limit]
+
+        if isinstance(content, list):
+            return json.dumps(content, ensure_ascii=False)[:limit]
+
+        if isinstance(content, str):
+            return content[:limit]
+
+        raw = str(content or "")
+        return raw[:limit] if raw else "(empty)"
 
     @staticmethod
     def _is_sensitive_request(text: str) -> bool:
         lowered = str(text or "").lower()
-        markers = (".env", "api key", "token", "password", "id_rsa", "secret", "jarvis_llm_api_key")
+        markers = (
+            ".env",
+            "api key",
+            "api token", "access token", "bearer token", "auth token",
+            "password",
+            "id_rsa",
+            "client secret", "api secret", "secret key",
+            "jarvis_llm_api_key",
+        )
         return any(marker in lowered for marker in markers)
 
     @staticmethod
@@ -958,17 +1560,6 @@ class AgentLoop:
         return f"Tool execution did not complete (`{last.name}`): {last.error or 'unknown error'}. stop_reason={stop_reason}."
 
     @staticmethod
-    def _build_clarification_if_needed(text: str) -> dict[str, Any] | None:
-        raw = str(text or "").strip()
-        lowered = raw.lower()
-        normalized = raw.replace("。", "").replace("，", "").replace("?", "").strip()
-        if normalized in {"帮我弄一下", "处理一个", "修一个", "优化它", "这个有问题", "处理这个"}:
-            return {"missing_fields": ["target"], "question": "你希望我处理哪个文件、命令或具体问题？"}
-        if "读取那个文件" in raw or "read that file" in lowered:
-            return {"missing_fields": ["file_path"], "question": "你希望我读取哪个文件？"}
-        return None
-
-    @staticmethod
     def _map_provider_error_stop_reason(exc: Exception) -> str:
         lowered = f"{type(exc).__name__}: {exc}".lower()
         if any(marker in lowered for marker in ("winerror 10013", "access socket", "permission", "connection", "timed out", "timeout", "refused", "reset", "certificate")):
@@ -992,4 +1583,4 @@ class AgentLoop:
             return "The LLM provider returned an HTTP error (such as 403 or 404). Please check whether the base URL and provider config are correct."
         if stop_reason == "provider_unavailable":
             return "The current LLM provider is unavailable. Please check the .env configuration or try again later."
-        return f"Model call failed: {type(exc).__name__}"
+        return f"Model call failed: {type(exc).__name__} — {exc}"

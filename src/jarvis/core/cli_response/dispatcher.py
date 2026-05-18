@@ -29,7 +29,6 @@ from .natural_responses import (
 TaskRunner = Callable[[str], str]
 SkillAdminRunner = Callable[[], str]
 RepoInspectionRunner = Callable[[str], dict[str, Any]]
-CodingLoopRunner = Callable[[str], dict[str, Any]]
 WorkRequestRunner = Callable[[str], tuple[str, bool, str]]
 LLMChatRunner = Callable[[str, str], str | None]
 
@@ -41,7 +40,6 @@ def dispatch_natural_language(
     run_existing_task_flow: TaskRunner,
     run_skill_admin: SkillAdminRunner,
     run_repo_inspection: RepoInspectionRunner,
-    run_coding_loop: CodingLoopRunner | None = None,
     run_agent_tool_loop: WorkRequestRunner | None = None,
     run_llm_chat: LLMChatRunner | None = None,
     llm_provider_available: bool = False,
@@ -85,7 +83,6 @@ def dispatch_natural_language(
         "skill_management",
         "repo_inspection",
         "executor_action",
-        "coding_loop",
         "url_summary",
         "search_pipeline",
     }
@@ -120,12 +117,7 @@ def dispatch_natural_language(
     if mode == "url_summary":
         return render_url_network_policy(), False, mode, "network gated url response"
 
-    if mode == "coding_loop" and run_coding_loop is not None:
-        from .natural_responses import render_coding_loop_result
-
-        return render_coding_loop_result(run_coding_loop(user_input)), True, mode, "coding_loop routed to orchestrator"
-
-    if mode in {"coding_loop", "executor_action"}:
+    if mode == "executor_action":
         return run_existing_task_flow(user_input), True, mode, f"{mode} routed to existing task flow"
 
     if mode == "model_admin":
@@ -152,16 +144,6 @@ def _should_try_llm_chat_from_clarify(user_input: str) -> bool:
         "下一步",
         "靠谱吗",
         "会不会太复杂",
-        "浣犳槸璋",
-        "浣犺兘鍋氫粈涔",
-        "浣犲彲浠ュ府鎴",
-        "瑙ｉ噴",
-        "璁蹭竴涓",
-        "绗戣瘽",
-        "瑙勫垝",
-        "涓嬩竴姝",
-        "闈犺氨鍚",
-        "浼氫笉浼氬お澶嶆潅",
         "who are you",
         "what can you do",
         "explain",

@@ -44,6 +44,14 @@ class FileEditor:
                     {"path": path, "old": old},
                     started,
                 )
+            count = before.count(old)
+            if count > 1:
+                return error_result(
+                    "EDIT_AMBIGUOUS_MATCH",
+                    f"old_string matches {count} occurrences in the file; must be unique",
+                    {"path": path, "occurrences": count, "old": old[:200]},
+                    started,
+                )
             after = before.replace(old, new, 1)
             self._snapshots[str(target.resolve())] = before
             target.write_text(after, encoding="utf-8")
@@ -92,7 +100,7 @@ class FileEditor:
                 started,
             )
 
-    def write_file(self, path: str, content: str, create: bool = False) -> dict:
+    def write_file(self, path: str, content: str, create: bool = True) -> dict:
         started = perf_counter()
         validation = self._validate_write_target(path, create=create, started=started)
         if validation:

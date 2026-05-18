@@ -185,7 +185,7 @@ class TestWorkExecutionPrompt:
 
     def test_includes_agent_request_when_provided(self):
         """Prompt should include routing info when agent_request is provided."""
-        ar = {"is_work_request": True, "work_type": "coding_loop", "required_tools": ["workspace.read_file"]}
+        ar = {"is_work_request": True, "work_type": "agent_tool_loop", "required_tools": ["workspace.read_file"]}
         prompt = build_work_execution_prompt(
             instructions=None,
             user_input="test",
@@ -193,7 +193,7 @@ class TestWorkExecutionPrompt:
             agent_request=ar,
         )
         assert "路由信息" in prompt
-        assert "coding_loop" in prompt
+        assert "agent_tool_loop" in prompt
         assert "workspace.read_file" in prompt
 
     def test_includes_tool_results_for_multi_round(self):

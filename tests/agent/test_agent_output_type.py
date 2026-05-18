@@ -63,33 +63,43 @@ def test_output_type_refusal_api_key(tmp_path: Path):
 
 
 def test_output_type_clarification_vague_request(tmp_path: Path):
-    """'帮我弄一下' returns output_type=clarification from AgentLoop, not from clarification.py."""
+    """'帮我弄一下' — LLM returns a clarifying question as text answer (LLM-first)."""
     loop = AgentLoop(
         project_root=str(tmp_path),
         model_client=FakeModelClient(
-            scripted=[ModelResponse(assistant_text="", tool_calls=[], finish_reason="stop")]
+            scripted=[ModelResponse(
+                assistant_text="你希望我处理哪个文件、命令或具体问题？",
+                final_answer="你希望我处理哪个文件、命令或具体问题？",
+                finish_reason="stop",
+            )]
         ),
         auto_approve=True,
     )
     result = loop.run_turn(ChatInput(text="帮我弄一下", cwd=str(tmp_path), project_id="test"))
-    assert result.output_type == "clarification"
-    assert result.stop_reason == "needs_user_clarification"
+    # LLM-first: clarification is a text answer, not a special output_type
+    assert result.output_type == "answer"
+    assert result.stop_reason == "completed"
     assert result.final_answer
     assert "具体" in result.final_answer or "哪个" in result.final_answer
 
 
 def test_output_type_clarification_read_that_file(tmp_path: Path):
-    """'读取那个文件' returns output_type=clarification."""
+    """'读取那个文件' — LLM asks which file (LLM-first)."""
     loop = AgentLoop(
         project_root=str(tmp_path),
         model_client=FakeModelClient(
-            scripted=[ModelResponse(assistant_text="", tool_calls=[], finish_reason="stop")]
+            scripted=[ModelResponse(
+                assistant_text="你希望我读取哪个文件？",
+                final_answer="你希望我读取哪个文件？",
+                finish_reason="stop",
+            )]
         ),
         auto_approve=True,
     )
     result = loop.run_turn(ChatInput(text="读取那个文件", cwd=str(tmp_path), project_id="test"))
-    assert result.output_type == "clarification"
-    assert result.stop_reason == "needs_user_clarification"
+    # LLM-first: clarification is a text answer
+    assert result.output_type == "answer"
+    assert result.stop_reason == "completed"
     assert "哪个文件" in result.final_answer or "文件" in result.final_answer
 
 

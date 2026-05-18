@@ -7,6 +7,7 @@ from typing import Any, Literal
 
 
 RiskLevelSource = Literal["declared", "inferred", "unknown"]
+SkillType = Literal["executable", "reference", "hybrid", "unknown"]
 
 
 @dataclass
@@ -25,6 +26,12 @@ class SkillSpec:
     metadata: dict[str, Any] = field(default_factory=dict)
     external_metadata: dict[str, Any] = field(default_factory=dict)
     body_preview: str | None = None
+    skill_type: SkillType = "unknown"
+    tags: list[str] = field(default_factory=list)
+    capabilities: list[str] = field(default_factory=list)
+    examples: list[str] = field(default_factory=list)
+    when_to_use: str = ""
+    entrypoint: str = ""
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)

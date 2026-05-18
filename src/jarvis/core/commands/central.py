@@ -130,7 +130,7 @@ def build_command_registry() -> CommandRegistry:
         elif spec.name == "/test":
             allowed_tools = ["shell.run_scoped_tests"]
         elif spec.name == "/fix":
-            allowed_tools = ["coding_loop.patch"]
+            allowed_tools = ["file_editor.replace_text"]
         elif spec.name == "/review":
             allowed_tools = ["diff.review"]
         elif spec.name == "/plan":

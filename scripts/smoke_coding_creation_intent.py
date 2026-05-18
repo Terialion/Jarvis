@@ -33,7 +33,7 @@ def main() -> int:
         state = cli_mod.ShellState(cli_mod.DEFAULT_API_BASE)
         output = cli_mod._handle_natural_language(state, text)
 
-        if route["intent"] != "coding_task" or route["response_mode"] != "coding_loop":
+        if route["intent"] != "coding_task" or route["response_mode"] != "agent_tool_loop":
             failed += 1
             print(f"[FAIL] {text}: wrong route {json.dumps(route, ensure_ascii=False)}")
         if "我需要再确认一下" in output:

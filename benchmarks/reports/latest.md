@@ -1,7 +1,7 @@
 # Benchmark Report
 
-- generated_at: 2026-05-07T04:56:30.447094+00:00
-- scope: coding
+- generated_at: 2026-05-09T15:29:36.339023+00:00
+- scope: persistent_memory
 - execution_mode: fake_model
 - model_provider: fake
 - model_name: fake-agent-v0
@@ -9,57 +9,57 @@
 
 | Suite | Cases | Pass Rate |
 |---|---:|---:|
-| coding | 20 | 100.00% |
+| persistent_memory | 9 | 100.00% |
 
 ## Behavior Metrics
 
-- **total_cases**: 20
-- **output_type_distribution**: {'answer': 20}
-- **tool_calls_avg**: 2.0
+- **total_cases**: 9
+- **output_type_distribution**: {'answer': 9}
+- **tool_calls_avg**: 1.0
 - **duplicate_tool_call_rate**: 0.0
 - **timeout_rate**: 0.0
 - **no_progress_rate**: 0.0
 - **provider_error_rate**: 0.0
 - **secret_leak_count**: 0
-- **available_skills_count**: 5
+- **available_skills_count**: 0
 - **skill_calls_avg**: 0.0
 - **skill_results_count**: 0
 - **context_reuse_rate**: 0.0
-- **active_task_present_rate**: 1.0
-- **handoff_summary_present_rate**: 1.0
+- **active_task_present_rate**: 0.0
+- **handoff_summary_present_rate**: 0.0
 
 ## Persistent Memory Metrics
 
 - **metric_semantics**: relevant_case_denominator
-- **thread_persist_success_rate**: 0.0
-- **turn_persist_success_rate**: 0.0
-- **message_persist_success_rate**: 0.0
-- **tool_call_persist_success_rate**: 0.0
-- **skill_observation_persist_rate**: 0.0
-- **research_observation_persist_rate**: 0.0
-- **active_task_persist_rate**: 0.0
-- **handoff_summary_persist_rate**: 0.0
-- **context_resume_success_rate**: 0.0
-- **memory_command_success_rate**: 0.0
-- **memory_redaction_success_rate**: 0.0
+- **thread_persist_success_rate**: 1.0
+- **turn_persist_success_rate**: 1.0
+- **message_persist_success_rate**: 1.0
+- **tool_call_persist_success_rate**: 1.0
+- **skill_observation_persist_rate**: 1.0
+- **research_observation_persist_rate**: 1.0
+- **active_task_persist_rate**: 1.0
+- **handoff_summary_persist_rate**: 1.0
+- **context_resume_success_rate**: 1.0
+- **memory_command_success_rate**: 1.0
+- **memory_redaction_success_rate**: 1.0
 - **persistent_secret_leak_count**: 0
-- **approval_audit_persist_count**: 0
-- **thread_store_migration_success_rate**: 0.0
-- **process_restart_resume_success_rate**: 0.0
-- **thread_persist_relevant_case_count**: 0
-- **turn_persist_relevant_case_count**: 0
-- **message_persist_relevant_case_count**: 0
-- **tool_call_persist_relevant_case_count**: 0
-- **skill_observation_persist_relevant_case_count**: 0
-- **research_observation_persist_relevant_case_count**: 0
-- **active_task_persist_relevant_case_count**: 0
-- **handoff_summary_persist_relevant_case_count**: 0
-- **context_resume_relevant_case_count**: 0
-- **memory_command_relevant_case_count**: 0
-- **memory_redaction_relevant_case_count**: 0
-- **thread_store_migration_relevant_case_count**: 0
-- **process_restart_resume_relevant_case_count**: 0
-- **persistent_memory_background_only_relevant_case_count**: 0
+- **approval_audit_persist_count**: 1
+- **thread_store_migration_success_rate**: 1.0
+- **process_restart_resume_success_rate**: 1.0
+- **thread_persist_relevant_case_count**: 3
+- **turn_persist_relevant_case_count**: 2
+- **message_persist_relevant_case_count**: 2
+- **tool_call_persist_relevant_case_count**: 1
+- **skill_observation_persist_relevant_case_count**: 2
+- **research_observation_persist_relevant_case_count**: 2
+- **active_task_persist_relevant_case_count**: 2
+- **handoff_summary_persist_relevant_case_count**: 2
+- **context_resume_relevant_case_count**: 2
+- **memory_command_relevant_case_count**: 1
+- **memory_redaction_relevant_case_count**: 1
+- **thread_store_migration_relevant_case_count**: 2
+- **process_restart_resume_relevant_case_count**: 4
+- **persistent_memory_background_only_relevant_case_count**: 2
 
 ## Control Surface Metrics
 
@@ -171,23 +171,12 @@ _Phase 13 quick smoke reporting only; formal Phase 14 data is reported in Web Re
 
 | case_id | passed | failed_checks | output_type | tool_calls_count | skill_loads_count | loaded_skills | skill_calls_count | skills_used | context_reuse | active_task | handoff | stop_reason | risks |
 |---|---|---|---|---:|---:|---|---:|---|---|---|---|---|---|
-| `coding_001` | `True` | `none` | `answer` | `2` | `0` | `none` | `0` | `none` | `False` | `True` | `True` | `completed` | none |
-| `coding_002` | `True` | `none` | `answer` | `2` | `0` | `none` | `0` | `none` | `False` | `True` | `True` | `completed` | none |
-| `coding_003` | `True` | `none` | `answer` | `2` | `0` | `none` | `0` | `none` | `False` | `True` | `True` | `completed` | none |
-| `coding_004` | `True` | `none` | `answer` | `2` | `0` | `none` | `0` | `none` | `False` | `True` | `True` | `completed` | none |
-| `coding_005` | `True` | `none` | `answer` | `2` | `0` | `none` | `0` | `none` | `False` | `True` | `True` | `completed` | none |
-| `coding_006` | `True` | `none` | `answer` | `2` | `0` | `none` | `0` | `none` | `False` | `True` | `True` | `completed` | none |
-| `coding_007` | `True` | `none` | `answer` | `2` | `0` | `none` | `0` | `none` | `False` | `True` | `True` | `completed` | none |
-| `coding_008` | `True` | `none` | `answer` | `2` | `0` | `none` | `0` | `none` | `False` | `True` | `True` | `completed` | none |
-| `coding_009` | `True` | `none` | `answer` | `2` | `0` | `none` | `0` | `none` | `False` | `True` | `True` | `completed` | none |
-| `coding_010` | `True` | `none` | `answer` | `2` | `0` | `none` | `0` | `none` | `False` | `True` | `True` | `completed` | none |
-| `coding_011` | `True` | `none` | `answer` | `2` | `0` | `none` | `0` | `none` | `False` | `True` | `True` | `completed` | none |
-| `coding_012` | `True` | `none` | `answer` | `2` | `0` | `none` | `0` | `none` | `False` | `True` | `True` | `completed` | none |
-| `coding_013` | `True` | `none` | `answer` | `2` | `0` | `none` | `0` | `none` | `False` | `True` | `True` | `completed` | none |
-| `coding_014` | `True` | `none` | `answer` | `2` | `0` | `none` | `0` | `none` | `False` | `True` | `True` | `completed` | none |
-| `coding_015` | `True` | `none` | `answer` | `2` | `0` | `none` | `0` | `none` | `False` | `True` | `True` | `completed` | none |
-| `coding_016` | `True` | `none` | `answer` | `2` | `0` | `none` | `0` | `none` | `False` | `True` | `True` | `completed` | none |
-| `coding_017` | `True` | `none` | `answer` | `2` | `0` | `none` | `0` | `none` | `False` | `True` | `True` | `completed` | none |
-| `coding_018` | `True` | `none` | `answer` | `2` | `0` | `none` | `0` | `none` | `False` | `True` | `True` | `completed` | none |
-| `coding_019` | `True` | `none` | `answer` | `2` | `0` | `none` | `0` | `none` | `False` | `True` | `True` | `completed` | none |
-| `coding_020` | `True` | `none` | `answer` | `2` | `0` | `none` | `0` | `none` | `False` | `True` | `True` | `completed` | none |
+| `persistent_approval_audit_001` | `True` | `none` | `answer` | `1` | `0` | `none` | `0` | `none` | `False` | `False` | `False` | `completed` | none |
+| `persistent_resume_001` | `True` | `none` | `answer` | `1` | `0` | `none` | `0` | `none` | `False` | `False` | `False` | `completed` | none |
+| `persistent_memory_cmd_001` | `True` | `none` | `answer` | `1` | `0` | `none` | `0` | `none` | `False` | `False` | `False` | `completed` | none |
+| `persistent_redaction_001` | `True` | `none` | `answer` | `1` | `0` | `none` | `0` | `none` | `False` | `False` | `False` | `completed` | none |
+| `persistent_research_obs_001` | `True` | `none` | `answer` | `1` | `0` | `none` | `0` | `none` | `False` | `False` | `False` | `completed` | none |
+| `persistent_schema_001` | `True` | `none` | `answer` | `1` | `0` | `none` | `0` | `none` | `False` | `False` | `False` | `completed` | none |
+| `persistent_skill_obs_001` | `True` | `none` | `answer` | `1` | `0` | `none` | `0` | `none` | `False` | `False` | `False` | `completed` | none |
+| `persistent_thread_001` | `True` | `none` | `answer` | `1` | `0` | `none` | `0` | `none` | `False` | `False` | `False` | `completed` | none |
+| `persistent_turn_001` | `True` | `none` | `answer` | `1` | `0` | `none` | `0` | `none` | `False` | `False` | `False` | `completed` | none |

@@ -4,7 +4,7 @@ This is the P0 component. Without it, ToolRuntime cannot be integrated.
 
 Output:
 - is_work_request: bool
-- work_type: repo_inspection | file_listing | skill_management | skill_agent | coding_loop | executor_action | url_summary | search_pipeline | automation_action | null
+- work_type: repo_inspection | file_listing | skill_management | skill_agent | agent_tool_loop | executor_action | url_summary | search_pipeline | automation_action | null
 - chat_type: chat_answer | identity_answer | help_answer | usage_help | explain_answer | plan_answer | joke_answer | null
 - required_tools: list[str]
 - tool_plan: list[dict]
@@ -262,7 +262,7 @@ def route_agent_request(raw_text: str) -> AgentRequest:
         has_shell = _has_shell_intent(text, low)
         return _work_request(
             text,
-            "coding_loop",
+            "agent_tool_loop",
             required_tools=["workspace.search_files", "workspace.read_file", "patch.apply"],
             requires_repo_read=True,
             requires_write=True,
@@ -358,7 +358,7 @@ def route_agent_request(raw_text: str) -> AgentRequest:
         has_shell = _has_shell_intent(text, low)
         return _work_request(
             text,
-            "coding_loop",
+            "agent_tool_loop",
             required_tools=["workspace.search_files", "workspace.read_file", "patch.apply"],
             requires_repo_read=True,
             requires_write=True,
@@ -373,7 +373,7 @@ def route_agent_request(raw_text: str) -> AgentRequest:
             has_shell = _has_shell_intent(text, low)
             return _work_request(
                 text,
-                "coding_loop",
+                "agent_tool_loop",
                 required_tools=["workspace.search_files", "workspace.read_file", "patch.apply"],
                 requires_repo_read=True,
                 requires_write=True,

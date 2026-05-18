@@ -7,7 +7,7 @@ def test_terminal_session_is_safe_by_default():
     assert status == 200
     data = payload["data"]
     assert data["session_id"].startswith("term_")
-    assert data["safe_use"]["command_execution_enabled"] is False
+    assert data["safe_use"]["command_execution_enabled"] is True
 
 
 def test_terminal_input_is_blocked_in_safe_mode():

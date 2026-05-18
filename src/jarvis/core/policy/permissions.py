@@ -60,6 +60,15 @@ WORKSPACE_WRITE = PermissionMode(
     approval_required_for={"write", "shell"},
 )
 
+WORKSPACE_WRITE_NETWORK = PermissionMode(
+    name="workspace_write_network",
+    allow_repo_read=True,
+    allow_write=True,
+    allow_shell=True,
+    allow_network=True,
+    approval_required_for={"write", "shell", "network"},
+)
+
 DANGER_FULL_ACCESS = PermissionMode(
     name="danger_full_access",
     allow_repo_read=True,
@@ -72,6 +81,7 @@ DANGER_FULL_ACCESS = PermissionMode(
 BUILTIN_PERMISSION_MODES = {
     "read_only": READ_ONLY,
     "workspace_write": WORKSPACE_WRITE,
+    "workspace_write_network": WORKSPACE_WRITE_NETWORK,
     "danger_full_access": DANGER_FULL_ACCESS,
 }
 
@@ -83,7 +93,7 @@ def get_permission_mode(name: str) -> PermissionMode:
 
 PermissionAction = Literal["allow", "deny", "require_approval"]
 RiskLevel = Literal["low", "medium", "high", "critical"]
-PolicyProfile = Literal["read_only", "default", "strict", "dangerous"]
+PolicyProfile = Literal["read_only", "default", "default_network", "strict", "dangerous"]
 
 
 def redact_args_preview(arguments: dict[str, Any] | None) -> dict[str, Any]:
@@ -150,15 +160,29 @@ class ToolProfile:
 
 
 def _tool_category(tool_name: str) -> str:
-    if tool_name in {"repo_reader.read_file", "repo_reader.search_files", "skill.load"}:
+    if tool_name.startswith("repo_reader."):
         return "read"
-    if tool_name in {"file_editor.replace_text"}:
+    if tool_name.startswith("file_editor."):
         return "write"
     if tool_name in {"command_runner.run", "test_runner.run_test"}:
         return "shell"
-    if tool_name in {"web.search", "web.fetch"}:
+    if tool_name.startswith("web."):
         return "network"
-    return "unknown"
+    if tool_name.startswith("checkpoint."):
+        return "write"
+    if tool_name.startswith("memory."):
+        return "write"
+    if tool_name.startswith("task."):
+        return "write"
+    if tool_name.startswith("skill."):
+        return "read"
+    if tool_name.startswith("mcp."):
+        return "network"
+    if tool_name.startswith("bg.task."):
+        return "shell"
+    if tool_name.startswith("agent."):
+        return "read"
+    return "read"  # safe default
 
 
 def _profile_defaults(profile: PolicyProfile) -> ToolProfile:
@@ -175,6 +199,7 @@ def _profile_defaults(profile: PolicyProfile) -> ToolProfile:
                 "test_runner.run_test": ToolRule("test_runner.run_test", "deny", "high", "Read-only profile blocks test execution."),
                 "web.search": ToolRule("web.search", "deny", "medium", "Read-only profile blocks network search."),
                 "web.fetch": ToolRule("web.fetch", "deny", "medium", "Read-only profile blocks network fetch."),
+                "web.browse": ToolRule("web.browse", "deny", "medium", "Read-only profile blocks browser."),
             },
             domain_defaults={"unknown_action": "deny"},
         )
@@ -188,9 +213,29 @@ def _profile_defaults(profile: PolicyProfile) -> ToolProfile:
                 "skill.load": ToolRule("skill.load", "allow", "low", "Strict profile allows skill loading."),
                 "web.search": ToolRule("web.search", "allow", "medium", "Strict profile allows search planning."),
                 "web.fetch": ToolRule("web.fetch", "require_approval", "medium", "Strict profile requires approval for web fetch by default."),
+                "web.browse": ToolRule("web.browse", "require_approval", "medium", "Strict profile requires approval for browser."),
                 "test_runner.run_test": ToolRule("test_runner.run_test", "require_approval", "high", "Strict profile requires approval for test execution."),
                 "command_runner.run": ToolRule("command_runner.run", "require_approval", "high", "Strict profile requires approval for shell commands."),
                 "file_editor.replace_text": ToolRule("file_editor.replace_text", "require_approval", "high", "Strict profile requires approval for file edits."),
+            },
+            domain_defaults={"unknown_action": "require_approval"},
+        )
+    if profile == "default_network":
+        return ToolProfile(
+            name="default_network",
+            default_action="allow",
+            tool_defaults={
+                "command_runner.run": ToolRule("command_runner.run", "require_approval", "high", "Default+network profile requires approval for shell commands."),
+                "test_runner.run_test": ToolRule("test_runner.run_test", "require_approval", "high", "Default+network profile requires approval for test execution."),
+                "file_editor.write_file": ToolRule("file_editor.write_file", "require_approval", "high", "Default+network profile requires approval for file writes."),
+                "file_editor.insert_text": ToolRule("file_editor.insert_text", "require_approval", "high", "Default+network profile requires approval for file edits."),
+                "file_editor.replace_text": ToolRule("file_editor.replace_text", "require_approval", "high", "Default+network profile requires approval for file edits."),
+                "file_editor.diff": ToolRule("file_editor.diff", "allow", "low", "Default+network profile allows diff viewing."),
+                "checkpoint.create": ToolRule("checkpoint.create", "allow", "medium", "Default+network profile allows checkpoint creation."),
+                "checkpoint.rollback": ToolRule("checkpoint.rollback", "require_approval", "high", "Default+network profile requires approval for rollback."),
+                "web.search": ToolRule("web.search", "require_approval", "medium", "Default+network profile requires approval for web search."),
+                "web.fetch": ToolRule("web.fetch", "require_approval", "medium", "Default+network profile requires approval for web fetch."),
+                "web.browse": ToolRule("web.browse", "require_approval", "medium", "Default+network profile requires approval for browser."),
             },
             domain_defaults={"unknown_action": "require_approval"},
         )
@@ -204,6 +249,7 @@ def _profile_defaults(profile: PolicyProfile) -> ToolProfile:
                 "skill.load": ToolRule("skill.load", "allow", "low", "Dangerous profile allows skill loading."),
                 "web.search": ToolRule("web.search", "allow", "medium", "Dangerous profile allows search."),
                 "web.fetch": ToolRule("web.fetch", "allow", "medium", "Dangerous profile allows fetch on safe URLs."),
+                "web.browse": ToolRule("web.browse", "allow", "medium", "Dangerous profile allows browser."),
                 "test_runner.run_test": ToolRule("test_runner.run_test", "allow", "high", "Dangerous profile allows test execution."),
                 "command_runner.run": ToolRule("command_runner.run", "allow", "high", "Dangerous profile allows shell commands."),
                 "file_editor.replace_text": ToolRule("file_editor.replace_text", "allow", "high", "Dangerous profile allows file edits."),
@@ -212,16 +258,16 @@ def _profile_defaults(profile: PolicyProfile) -> ToolProfile:
         )
     return ToolProfile(
         name="default",
-        default_action="deny",
+        default_action="allow",
         tool_defaults={
-            "repo_reader.read_file": ToolRule("repo_reader.read_file", "allow", "low", "Default profile allows safe reads."),
-            "repo_reader.search_files": ToolRule("repo_reader.search_files", "allow", "low", "Default profile allows repository search."),
-            "skill.load": ToolRule("skill.load", "allow", "low", "Default profile allows skill loading."),
-            "web.search": ToolRule("web.search", "allow", "medium", "Default profile allows web search."),
-            "web.fetch": ToolRule("web.fetch", "allow", "medium", "Default profile allows fetch unless domain policy requires approval."),
-            "test_runner.run_test": ToolRule("test_runner.run_test", "require_approval", "high", "Default profile requires approval for test execution."),
             "command_runner.run": ToolRule("command_runner.run", "require_approval", "high", "Default profile requires approval for shell commands."),
+            "test_runner.run_test": ToolRule("test_runner.run_test", "require_approval", "high", "Default profile requires approval for test execution."),
+            "file_editor.write_file": ToolRule("file_editor.write_file", "require_approval", "high", "Default profile requires approval for file writes."),
+            "file_editor.insert_text": ToolRule("file_editor.insert_text", "require_approval", "high", "Default profile requires approval for file edits."),
             "file_editor.replace_text": ToolRule("file_editor.replace_text", "require_approval", "high", "Default profile requires approval for file edits."),
+            "file_editor.diff": ToolRule("file_editor.diff", "allow", "low", "Default profile allows diff viewing."),
+            "checkpoint.create": ToolRule("checkpoint.create", "allow", "medium", "Default profile allows checkpoint creation."),
+            "checkpoint.rollback": ToolRule("checkpoint.rollback", "require_approval", "high", "Default profile requires approval for rollback."),
         },
         domain_defaults={"unknown_action": "allow"},
     )
@@ -254,6 +300,7 @@ class PermissionPolicy:
         mapping = {
             "read_only": "read_only",
             "workspace_write": "default",
+            "workspace_write_network": "default_network",
             "danger_full_access": "dangerous",
         }
         profile = mapping.get(str(permission_mode or "").strip().lower(), "default")

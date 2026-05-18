@@ -12,6 +12,11 @@ from .result import error_result, ok_result
 class RepoReader:
     """Read and search repository content with uniform result shape."""
 
+    # Directories excluded from tree listing (match Claude Code behavior)
+    _SKIP_TREE_DIRS = {".git", ".venv", "venv", "__pycache__", ".pytest_cache",
+                       "node_modules", ".jarvis", ".tox", ".eggs", ".mypy_cache",
+                       ".ruff_cache", "logs", ".workbuddy"}
+
     def list_tree(self, repo_path: str, max_depth: int = 3) -> dict:
         started = perf_counter()
         root = Path(repo_path)
@@ -32,10 +37,18 @@ class RepoReader:
 
         try:
             items: list[dict] = []
-            for path in sorted(root.rglob("*")):
+            max_items = 500  # prevent context bloat
+            # Breadth-first ordering: shallow items first so top-level dirs
+            # (like workspace/) aren't buried under deep subtrees (like codex/).
+            for path in sorted(root.rglob("*"),
+                               key=lambda p: (len(p.relative_to(root).parts),
+                                              str(p.relative_to(root)).lower())):
                 relative = path.relative_to(root)
                 depth = len(relative.parts)
                 if depth > max_depth:
+                    continue
+                # Skip noise directories at the top level
+                if depth >= 1 and relative.parts[0] in self._SKIP_TREE_DIRS:
                     continue
                 items.append(
                     {
@@ -44,8 +57,15 @@ class RepoReader:
                         "depth": depth,
                     }
                 )
+                if len(items) >= max_items:
+                    items.append({"path": "...", "type": "truncated", "depth": 1,
+                                  "note": f"output truncated at {max_items} items"})
+                    break
+            # Format as readable tree string (matching Claude Code output style)
+            tree_text = self._format_tree(items)
             return ok_result(
-                {"repo_path": str(root), "max_depth": max_depth, "items": items},
+                {"repo_path": str(root), "max_depth": max_depth, "tree": tree_text,
+                 "item_count": len([i for i in items if i.get("type") != "truncated"])},
                 started,
             )
         except Exception as exc:  # pragma: no cover - defensive
@@ -122,6 +142,116 @@ class RepoReader:
                 {"path": path, "exception": str(exc)},
                 started,
             )
+
+    _RG_PATH: str | None = None  # cached ripgrep path
+
+    @classmethod
+    def _find_rg(cls) -> str | None:
+        if cls._RG_PATH is not None:
+            return cls._RG_PATH or None
+        import shutil
+        # Check first in project bin/
+        project_bin = Path(__file__).resolve().parent.parent.parent.parent / "bin" / "rg.exe"
+        if project_bin.exists():
+            cls._RG_PATH = str(project_bin)
+            return cls._RG_PATH
+        found = shutil.which("rg")
+        cls._RG_PATH = found or ""
+        return found
+
+    def grep(self, repo_path: str, pattern: str, *,
+             glob: str | None = None,
+             max_results: int = 20,
+             context: int = 0,
+             multiline: bool = False,
+             ) -> dict:
+        """Fast content search using ripgrep (fallback: Python scan).
+
+        Mirrors Claude Code's Grep tool: pattern, glob filter, context lines,
+        multiline mode, max_results cap.
+        """
+        started = perf_counter()
+        root = Path(repo_path)
+        if not root.exists() or not root.is_dir():
+            return error_result(
+                "REPO_INVALID_ROOT",
+                f"Repository root is invalid: {repo_path}",
+                {"repo_path": repo_path},
+                started,
+            )
+        if not pattern:
+            return error_result(
+                "COMMON_INVALID_INPUT",
+                "pattern must be non-empty",
+                {"pattern": pattern},
+                started,
+            )
+
+        try:
+            matches = self._grep_rg(root, pattern, glob=glob, max_results=max_results,
+                                    context=context, multiline=multiline)
+            return ok_result(
+                {"repo_path": str(root), "pattern": pattern, "matches": matches},
+                started,
+            )
+        except Exception as exc:
+            return error_result(
+                "REPO_SEARCH_FAILED",
+                "Grep search failed",
+                {"pattern": pattern, "exception": str(exc)},
+                started,
+            )
+
+    def _grep_rg(self, root: Path, pattern: str, *, glob: str | None,
+                 max_results: int, context: int, multiline: bool) -> list[dict]:
+        """Run ripgrep subprocess; fall back to Python scan on failure."""
+        rg = self._find_rg()
+        if rg:
+            try:
+                return self._run_rg(rg, root, pattern, glob=glob,
+                                    max_results=max_results, context=context,
+                                    multiline=multiline)
+            except Exception:
+                pass  # fall through to Python scan
+        return self._search_text(root, pattern, max_results)
+
+    @staticmethod
+    def _run_rg(rg_path: str, root: Path, pattern: str, *, glob: str | None,
+                max_results: int, context: int, multiline: bool) -> list[dict]:
+        import subprocess
+        cmd = [rg_path, "--no-heading", "--line-number", "--color=never",
+               "--max-count", str(max_results)]
+        if context:
+            cmd.extend(["-C", str(context)])
+        if multiline:
+            cmd.extend(["--multiline", "--multiline-dotall"])
+        if glob:
+            cmd.extend(["--glob", glob])
+        cmd.extend([pattern, str(root)])
+
+        proc = subprocess.run(
+            cmd, capture_output=True, text=True, timeout=15,
+            encoding="utf-8", errors="replace",
+        )
+        results: list[dict] = []
+        for line in proc.stdout.splitlines():
+            if not line.strip():
+                continue
+            parts = line.split(":", 2)
+            if len(parts) < 3:
+                continue
+            try:
+                rel = Path(parts[0]).relative_to(root).as_posix()
+            except ValueError:
+                rel = parts[0]
+            results.append({
+                "path": rel,
+                "line": int(parts[1]),
+                "snippet": parts[2].strip(),
+            })
+            if len(results) >= max_results:
+                break
+        return results
 
     def search_files(self, repo_path: str, pattern: str, max_results: int = 20) -> dict:
         started = perf_counter()
@@ -209,11 +339,49 @@ class RepoReader:
                         return results
         return results
 
-    def _iter_text_files(self, root: Path) -> Iterable[Path]:
-        skip_dirs = {".git", "__pycache__", ".venv", "node_modules"}
-        for path in root.rglob("*"):
-            if path.is_dir() and path.name in skip_dirs:
+    @staticmethod
+    def _format_tree(items: list[dict]) -> str:
+        """Format flat item list into a readable indented tree string."""
+        if not items:
+            return "(empty)"
+        lines: list[str] = []
+        for item in items:
+            if item.get("type") == "truncated":
+                lines.append(f"  ... ({item.get('note', 'truncated')})")
+                break
+            d = item["depth"]
+            name = item["path"].split("/")[-1] if "/" in item["path"] else item["path"]
+            is_dir = item["type"] == "dir"
+            suffix = "/" if is_dir else ""
+            indent = "  " * d
+            lines.append(f"{indent}{name}{suffix}")
+        return "\n".join(lines)
+
+    _SKIP_DIRS = {".git", "__pycache__", ".venv", "node_modules", ".mypy_cache",
+                   ".pytest_cache", ".ruff_cache", ".tox", ".eggs", "logs",
+                   ".jarvis", ".claude", "codex", ".workbuddy"}
+    _SKIP_EXT = {'.pyc', '.pyo', '.pyd', '.dll', '.so', '.exe', '.bin',
+                 '.zip', '.tar', '.gz', '.7z', '.png', '.jpg', '.jpeg',
+                 '.gif', '.ico', '.pdf', '.mp3', '.mp4', '.avi', '.wav',
+                 '.ttf', '.woff', '.woff2', '.eot', '.db', '.sqlite',
+                 '.sqlite3', '.jar', '.class', '.o', '.a', '.obj', '.lib'}
+
+    @classmethod
+    def _iter_text_files(cls, root: Path) -> Iterable[Path]:
+        stack = [root]
+        while stack:
+            d = stack.pop()
+            try:
+                entries = list(d.iterdir())
+            except (OSError, PermissionError):
                 continue
-            if path.is_file():
-                yield path
+            for entry in entries:
+                if entry.is_dir():
+                    if entry.name in cls._SKIP_DIRS:
+                        continue
+                    stack.append(entry)
+                elif entry.is_file():
+                    if entry.suffix.lower() in cls._SKIP_EXT:
+                        continue
+                    yield entry
 

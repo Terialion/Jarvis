@@ -51,6 +51,7 @@ class FetchRequest:
     extract_mode: str = "markdown"
     max_chars: int = 12000
     provenance: dict[str, Any] = field(default_factory=dict)
+    auto_browser_fallback: bool = True
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)

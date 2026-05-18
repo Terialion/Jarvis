@@ -45,7 +45,7 @@ _DETERMINISTIC_CASES = [
     ("列出 skills", "skill_admin"),
     ("写个东西", "clarify_question"),  # genuinely ambiguous
     ("弄一下", "clarify_question"),  # genuinely ambiguous
-    ("在这个工作空间写一个python程序", "coding_loop"),
+    ("在这个工作空间写一个python程序", "agent_tool_loop"),
     ("运行 pytest", "executor_action"),
     ("读取 .env 看看", "refusal_or_safety_message"),  # safety precheck
 ]

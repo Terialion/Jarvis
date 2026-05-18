@@ -63,7 +63,7 @@ from src.jarvis.web.research_context import ResearchObservation
 from src.jarvis.web.fixtures import FLINK_OFFICIAL_URL
 
 REPORT_ROOT = Path("benchmarks/reports")
-SUITES = ("jarvis_core", "coding", "coding_workflow", "terminal", "web_research", "context_skill", "web_research_smoke", "skill_lifecycle", "permissions", "persistent_memory", "control_surface")
+SUITES = ("jarvis_core", "coding", "coding-workflow", "terminal", "web_research", "context_skill", "web_research_smoke", "skill_lifecycle", "permissions", "persistent_memory", "control_surface")
 CONTEXT_SKILL_CATEGORIES = (
     "skill_loading",
     "skill_execution",
@@ -123,7 +123,7 @@ CONTROL_SURFACE_CATEGORIES = (
     "redaction_ui",
     "browser_boundary",
 )
-CODING_WORKFLOW_CATEGORIES = (
+coding-workflow_CATEGORIES = (
     "review",
     "test",
     "fix",
@@ -599,9 +599,9 @@ def _run_coding_case(case: BenchmarkCase) -> dict[str, Any]:
     return run_result
 
 
-def _run_coding_workflow_case(case: BenchmarkCase) -> dict[str, Any]:
+def _run_coding-workflow_case(case: BenchmarkCase) -> dict[str, Any]:
     source_workspace = Path(case.workspace or "benchmarks/suites/coding/fixtures/calculator_bug")
-    bench_root = Path(tempfile.mkdtemp(prefix=f"jarvis_coding_workflow_{case.id}_"))
+    bench_root = Path(tempfile.mkdtemp(prefix=f"jarvis_coding-workflow_{case.id}_"))
     worktree = bench_root / source_workspace.name
     if source_workspace.exists() and source_workspace.is_dir():
         shutil.copytree(source_workspace, worktree)
@@ -1256,8 +1256,8 @@ def _run_control_surface_case(case: BenchmarkCase) -> dict[str, Any]:
 def _run_case(case: BenchmarkCase, *, model_mode: str = "auto", live_web: bool = False) -> dict[str, Any]:
     if case.suite == "coding":
         return _run_coding_case(case)
-    if case.suite == "coding_workflow":
-        return _run_coding_workflow_case(case)
+    if case.suite == "coding-workflow":
+        return _run_coding-workflow_case(case)
     if case.suite == "skill_lifecycle":
         return _run_skill_lifecycle_case(case)
     if case.suite == "permissions":
@@ -1504,7 +1504,7 @@ def _compute_suite_metrics(results: list[dict[str, Any]]) -> dict[str, Any]:
     control_surface_browser_boundary_total = 0
     control_surface_second_loop_violation_total = 0
     control_surface_case_count = 0
-    coding_workflow_case_count = 0
+    coding-workflow_case_count = 0
     coding_review_success_count = 0
     coding_test_success_count = 0
     coding_fix_success_count = 0
@@ -1670,8 +1670,8 @@ def _compute_suite_metrics(results: list[dict[str, Any]]) -> dict[str, Any]:
             control_surface_secret_leak_total += int(machine.get("control_surface_secret_leak_count") or 0)
             control_surface_browser_boundary_total += int(machine.get("browser_boundary_preserved_count") or 0)
             control_surface_second_loop_violation_total += int(machine.get("second_agent_loop_violation_count") or 0)
-        if category in CODING_WORKFLOW_CATEGORIES or str(row.get("suite") or "") in {"coding", "coding_workflow"}:
-            coding_workflow_case_count += 1
+        if category in coding-workflow_CATEGORIES or str(row.get("suite") or "") in {"coding", "coding-workflow"}:
+            coding-workflow_case_count += 1
             coding_review_success_count += int(category == "review" and bool(machine.get("issues_found")))
             coding_test_success_count += int(bool(machine.get("tests_run_count")))
             coding_fix_success_count += int(bool(machine.get("patch_applied")) or bool(machine.get("approval_required_for_patch")))
@@ -1896,19 +1896,19 @@ def _compute_suite_metrics(results: list[dict[str, Any]]) -> dict[str, Any]:
         "second_agent_loop_violation_count": control_surface_second_loop_violation_total,
         "control_surface_case_count": control_surface_case_count,
     }
-    coding_workflow_metrics = {
-        "coding_review_success_rate": round(coding_review_success_count / coding_workflow_case_count, 3) if coding_workflow_case_count else 0.0,
-        "coding_test_success_rate": round(coding_test_success_count / coding_workflow_case_count, 3) if coding_workflow_case_count else 0.0,
-        "coding_fix_success_rate": round(coding_fix_success_count / coding_workflow_case_count, 3) if coding_workflow_case_count else 0.0,
-        "patch_plan_success_rate": round(coding_patch_plan_count / coding_workflow_case_count, 3) if coding_workflow_case_count else 0.0,
-        "diff_preview_success_rate": round(coding_diff_preview_count / coding_workflow_case_count, 3) if coding_workflow_case_count else 0.0,
+    coding-workflow_metrics = {
+        "coding_review_success_rate": round(coding_review_success_count / coding-workflow_case_count, 3) if coding-workflow_case_count else 0.0,
+        "coding_test_success_rate": round(coding_test_success_count / coding-workflow_case_count, 3) if coding-workflow_case_count else 0.0,
+        "coding_fix_success_rate": round(coding_fix_success_count / coding-workflow_case_count, 3) if coding-workflow_case_count else 0.0,
+        "patch_plan_success_rate": round(coding_patch_plan_count / coding-workflow_case_count, 3) if coding-workflow_case_count else 0.0,
+        "diff_preview_success_rate": round(coding_diff_preview_count / coding-workflow_case_count, 3) if coding-workflow_case_count else 0.0,
         "patch_apply_approval_required_count": coding_patch_approval_required_count,
-        "patch_apply_success_rate": round(coding_patch_applied_count / coding_workflow_case_count, 3) if coding_workflow_case_count else 0.0,
-        "test_passed_rate": round(coding_tests_passed_count / coding_workflow_case_count, 3) if coding_workflow_case_count else 0.0,
+        "patch_apply_success_rate": round(coding_patch_applied_count / coding-workflow_case_count, 3) if coding-workflow_case_count else 0.0,
+        "test_passed_rate": round(coding_tests_passed_count / coding-workflow_case_count, 3) if coding-workflow_case_count else 0.0,
         "self_fix_loop_success_rate": round(coding_self_fix_succeeded_count / coding_self_fix_attempted_count, 3) if coding_self_fix_attempted_count else 0.0,
         "coding_secret_leak_count": coding_secret_leak_total,
-        "coding_context_reuse_rate": round(coding_context_reuse_count / coding_workflow_case_count, 3) if coding_workflow_case_count else 0.0,
-        "coding_workflow_case_count": coding_workflow_case_count,
+        "coding_context_reuse_rate": round(coding_context_reuse_count / coding-workflow_case_count, 3) if coding-workflow_case_count else 0.0,
+        "coding-workflow_case_count": coding-workflow_case_count,
     }
     return {
         "output_type_distribution": output_types,
@@ -1936,7 +1936,7 @@ def _compute_suite_metrics(results: list[dict[str, Any]]) -> dict[str, Any]:
         "permissions_metrics": permissions_metrics,
         "persistent_memory_metrics": persistent_memory_metrics,
         "control_surface_metrics": control_surface_metrics,
-        "coding_workflow_metrics": coding_workflow_metrics,
+        "coding-workflow_metrics": coding-workflow_metrics,
         "web_research_metrics": web_research_metrics,
         "web_research_smoke_metrics": web_research_smoke_metrics,
         "context_skill_case_count": context_skill_case_count,
@@ -1944,7 +1944,7 @@ def _compute_suite_metrics(results: list[dict[str, Any]]) -> dict[str, Any]:
         "permissions_case_count": permissions_case_count,
         "persistent_memory_case_count": persistent_case_count,
         "control_surface_case_count": control_surface_case_count,
-        "coding_workflow_case_count": coding_workflow_case_count,
+        "coding-workflow_case_count": coding-workflow_case_count,
         "web_research_case_count": web_research_case_count,
     }
 

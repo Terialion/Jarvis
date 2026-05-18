@@ -11,7 +11,6 @@ def _base_kwargs():
         run_existing_task_flow=MagicMock(return_value="task_flow_result"),
         run_skill_admin=MagicMock(return_value="skills"),
         run_repo_inspection=MagicMock(return_value={}),
-        run_coding_loop=MagicMock(return_value={}),
         run_agent_tool_loop=MagicMock(return_value=("tool_loop_result", False, "loop")),
     )
 

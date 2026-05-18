@@ -1,4 +1,4 @@
-"""Checkpoint / Rollback skeleton for Jarvis Core Phase 1."""
+"""Checkpoint / Rollback with file snapshot support."""
 
 from __future__ import annotations
 
@@ -6,6 +6,7 @@ from datetime import datetime, timezone
 from time import perf_counter
 from uuid import uuid4
 
+from .checkpoint_snapshot import CheckpointSnapshotter
 from .result import error_result, ok_result
 from .task_runtime import TaskRuntime
 
@@ -15,14 +16,28 @@ def _utc_now() -> str:
 
 
 class CheckpointManager:
-    """Minimal checkpoint skeleton attached to TaskRuntime."""
+    """Checkpoint manager with file snapshot and rollback capability."""
 
-    def __init__(self, task_runtime: TaskRuntime) -> None:
+    def __init__(
+        self,
+        task_runtime: TaskRuntime,
+        *,
+        snapshotter: CheckpointSnapshotter | None = None,
+        workspace_root: str = ".",
+    ) -> None:
         self.task_runtime = task_runtime
+        self.snapshotter = snapshotter or CheckpointSnapshotter()
+        self.workspace_root = workspace_root
         self.default_top_n = 5
         self.default_sort_mode = "recent"
 
-    def create_checkpoint(self, task_id: str, label: str, metadata: dict | None = None) -> dict:
+    def create_checkpoint(
+        self,
+        task_id: str,
+        label: str,
+        metadata: dict | None = None,
+        file_paths: list[str] | None = None,
+    ) -> dict:
         started = perf_counter()
         if not task_id or not label:
             return error_result(
@@ -40,8 +55,16 @@ class CheckpointManager:
                 started,
             )
 
+        checkpoint_id = f"ckpt_{uuid4().hex[:10]}"
+        file_snapshot_info: dict | None = None
+        if file_paths:
+            saved = self.snapshotter.snapshot_files(
+                checkpoint_id, list(file_paths), self.workspace_root
+            )
+            file_snapshot_info = {"files": saved, "count": len(saved)}
+
         checkpoint = {
-            "checkpoint_id": f"ckpt_{uuid4().hex[:10]}",
+            "checkpoint_id": checkpoint_id,
             "task_id": task_id,
             "label": label,
             "metadata": metadata or {},
@@ -54,6 +77,7 @@ class CheckpointManager:
                 "test_runs_count": len(task.get("test_runs", [])),
                 "key_steps": self._summarize_steps(task.get("steps", []), max_items=self.default_top_n),
                 "step_ids": [step.get("step_id") for step in task.get("steps", []) if step.get("step_id")],
+                "file_snapshot": file_snapshot_info,
             },
         }
         task.setdefault("checkpoints", []).append(checkpoint)
@@ -82,6 +106,65 @@ class CheckpointManager:
             {"count": len(checkpoints)},
         )
         return ok_result({"task_id": task_id, "checkpoints": checkpoints}, started)
+
+    def rollback(self, task_id: str, checkpoint_id: str) -> dict:
+        """Restore task state AND files to a checkpoint snapshot."""
+        started = perf_counter()
+        task = self.task_runtime.tasks.get(task_id)
+        if task is None:
+            return error_result(
+                "TASK_NOT_FOUND",
+                f"Task not found: {task_id}",
+                {"task_id": task_id},
+                started,
+            )
+        checkpoints = list(task.get("checkpoints", []))
+        checkpoint = next(
+            (c for c in checkpoints if c.get("checkpoint_id") == checkpoint_id), None
+        )
+        if checkpoint is None:
+            return error_result(
+                "COMMON_NOT_FOUND",
+                f"Checkpoint not found: {checkpoint_id}",
+                {"task_id": task_id, "checkpoint_id": checkpoint_id},
+                started,
+            )
+
+        snapshot = checkpoint.get("snapshot") or {}
+        file_snapshot = snapshot.get("file_snapshot")
+        restored_files: list[str] = []
+        if file_snapshot and file_snapshot.get("files"):
+            try:
+                restored_files = self.snapshotter.restore_files(
+                    checkpoint_id, self.workspace_root
+                )
+            except Exception:
+                pass
+
+        target_step_ids = set(snapshot.get("step_ids") or [])
+        new_steps = [s for s in task.get("steps", []) if s.get("step_id") in target_step_ids]
+        task["steps"] = new_steps
+        task["status"] = snapshot.get("status", task.get("status"))
+        task["updated_at"] = _utc_now()
+        self.task_runtime.add_checkpoint_step(
+            task_id,
+            "rollback",
+            {
+                "checkpoint_id": checkpoint_id,
+                "label": checkpoint.get("label"),
+                "restored_files": restored_files,
+            },
+        )
+        return ok_result(
+            {
+                "task_id": task_id,
+                "checkpoint_id": checkpoint_id,
+                "label": checkpoint.get("label"),
+                "restored_files": restored_files,
+                "current_status": task["status"],
+            },
+            started,
+        )
 
     def describe_checkpoint(
         self,

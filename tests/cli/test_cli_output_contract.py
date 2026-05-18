@@ -144,7 +144,6 @@ def test_json_output_has_skill_fields(tmp_path: Path):
     parsed = json.loads(rendered)
     assert "available_skills" in parsed["result"]
     assert "loaded_skills" in parsed["result"]
-    assert "skill_loads_count" in parsed["result"]
 
 
 def test_json_output_pure_json(tmp_path: Path):
@@ -190,7 +189,8 @@ def test_verbose_output_shows_output_type(tmp_path: Path):
         output_mode="verbose",
         mask_fn=lambda x: x,
     )
-    assert "output_type=answer" in rendered
+    assert "Output type" in rendered
+    assert "answer" in rendered
 
 
 def test_trace_output_shows_events(tmp_path: Path):

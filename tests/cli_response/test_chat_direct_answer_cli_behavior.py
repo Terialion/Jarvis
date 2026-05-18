@@ -11,7 +11,6 @@ def _kwargs(user_input: str = "你是谁？你能做什么？"):
         run_existing_task_flow=MagicMock(return_value="task_flow_result"),
         run_skill_admin=MagicMock(return_value="skills"),
         run_repo_inspection=MagicMock(return_value={}),
-        run_coding_loop=MagicMock(return_value={}),
         run_agent_tool_loop=MagicMock(return_value=("tool_loop_result", False, "loop")),
     )
 
@@ -79,14 +78,14 @@ def test_work_request_still_enters_tool_loop_not_chat_prompt():
     kwargs = _kwargs("读取 src 目录并修改 router.py。")
 
     response, _, mode, desc = dispatch_natural_language(
-        route_after_safety={"response_mode": "coding_loop"},
+        route_after_safety={"response_mode": "agent_tool_loop"},
         run_llm_chat=llm_runner,
         llm_provider_available=True,
         **kwargs,
     )
 
     assert response == "tool_loop_result"
-    assert mode == "coding_loop"
+    assert mode == "agent_tool_loop"
     assert "work_runner" in desc
     llm_runner.assert_not_called()
     kwargs["run_agent_tool_loop"].assert_called_once_with("读取 src 目录并修改 router.py。")

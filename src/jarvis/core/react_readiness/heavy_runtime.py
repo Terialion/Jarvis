@@ -164,7 +164,7 @@ class RunResult:
 
 @dataclass
 class HeavyReActConfig:
-    max_steps: int = 8
+    max_steps: int = 20
     timeout_s: int = 120
     max_failures: int = 3
     no_progress_threshold: int = 3

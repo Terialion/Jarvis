@@ -8,7 +8,7 @@ from .context_store import ContextStore
 from .skill_context import ActiveTaskState, HandoffSummary, SkillObservation
 from .types import AgentRunResult, TurnContext
 from ..core.policy.approval import ApprovalRequest, ApprovalResponse
-from ..store.thread_store import ThreadStore
+from ..store.session_store import SessionStore
 from ..web.research_context import ResearchObservation
 
 
@@ -17,7 +17,7 @@ class ContextUpdater:
 
     def __init__(self, *, context_store: ContextStore | None = None) -> None:
         self.context_store = context_store or ContextStore()
-        self.thread_store: ThreadStore | None = getattr(self.context_store, "thread_store", None)
+        self.session_store: SessionStore | None = getattr(self.context_store, "session_store", None)
 
     def apply_result(self, turn_context: TurnContext, agent_result: AgentRunResult) -> None:
         session_id = str(turn_context.session_id or agent_result.session_id or "default")
@@ -31,8 +31,8 @@ class ContextUpdater:
                 "related_files": self._related_files(agent_result),
             },
         )
-        if self.thread_store is not None:
-            self.thread_store.append_turn(session_id, agent_result, user_input=turn_context.user_input)
+        if self.session_store is not None:
+            self.session_store.end_turn(session_id, agent_result, user_input=turn_context.user_input)
 
         observations: list[SkillObservation] = []
         research_observations: list[ResearchObservation] = []
@@ -51,8 +51,8 @@ class ContextUpdater:
                 )
                 observations.append(observation)
                 self.context_store.add_skill_observation(session_id, observation)
-                if self.thread_store is not None:
-                    self.thread_store.append_skill_observation(session_id, observation, turn_id=agent_result.turn_id)
+                if self.session_store is not None:
+                    self.session_store.append_skill_obs(session_id, observation, turn_id=agent_result.turn_id)
 
         machine = dict((agent_result.summary or {}).get("machine") or {})
         for obs in list(machine.get("research_observations") or []):
@@ -69,18 +69,18 @@ class ContextUpdater:
             )
             research_observations.append(research)
             self.context_store.add_research_observation(session_id, research)
-            if self.thread_store is not None:
-                self.thread_store.append_research_observation(session_id, research, turn_id=agent_result.turn_id)
+            if self.session_store is not None:
+                self.session_store.append_research_obs(session_id, research, turn_id=agent_result.turn_id)
 
         active_task = self._build_active_task(turn_context, agent_result)
         self.context_store.set_active_task(session_id, active_task)
         handoff = self._build_handoff(turn_context, agent_result, observations, active_task)
         self.context_store.set_handoff_summary(session_id, handoff)
-        if self.thread_store is not None:
-            self.thread_store.save_active_task(session_id, active_task)
-            self.thread_store.save_handoff_summary(session_id, handoff)
+        if self.session_store is not None:
+            self.session_store.save_active_task(session_id, active_task)
+            self.session_store.save_handoff(session_id, handoff)
             state = self.context_store.get_state(session_id)
-            self.thread_store.save_project_facts(turn_context.project_id, state.project_facts)
+            self.session_store.save_project_facts(session_id, turn_context.project_id, state.project_facts)
             self._persist_approval_audits(session_id, agent_result)
 
         machine["active_task"] = active_task.to_dict() if active_task else {}
@@ -94,7 +94,7 @@ class ContextUpdater:
         agent_result.summary.setdefault("machine", {}).update(machine)
 
     def _persist_approval_audits(self, session_id: str, agent_result: AgentRunResult) -> None:
-        if self.thread_store is None:
+        if self.session_store is None:
             return
         for event in list(agent_result.events or []):
             if not isinstance(event, dict):
@@ -114,7 +114,7 @@ class ContextUpdater:
                     session_id=session_id,
                     turn_id=agent_result.turn_id,
                 )
-                self.thread_store.append_approval_audit(session_id, agent_result.turn_id, approval)
+                self.session_store.append_approval(session_id, approval, turn_id=agent_result.turn_id)
             elif event_type in {"approval_approved", "approval_denied"}:
                 response = ApprovalResponse(
                     approval_id=str(payload.get("approval_id") or ""),
@@ -123,7 +123,7 @@ class ContextUpdater:
                     decided_at=str(event.get("timestamp") or ""),
                     decided_by=str(payload.get("decided_by") or "") or None,
                 )
-                self.thread_store.append_approval_audit(session_id, agent_result.turn_id, response)
+                self.session_store.append_approval(session_id, response, turn_id=agent_result.turn_id)
 
     @staticmethod
     def _related_files(agent_result: AgentRunResult) -> list[str]:

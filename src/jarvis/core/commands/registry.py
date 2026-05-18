@@ -24,7 +24,7 @@ _TOOL_COMMANDS = {
     "/test": ["shell.run_scoped_tests"],
 }
 _AGENT_COMMANDS = {
-    "/fix": ["coding_loop.patch"],
+    "/fix": ["file_editor.replace_text"],
     "/review": ["diff.review"],
     "/plan": ["repo.inspect", "planning.generate"],
 }

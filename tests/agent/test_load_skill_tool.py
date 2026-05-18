@@ -56,4 +56,4 @@ def test_duplicate_skill_load_same_turn_reuses_observation(tmp_path: Path):
     assert result.skill_loads_count == 1
     event_types = [str(event.get("type") or "") for event in result.events]
     assert "skill_loaded" in event_types
-    assert "skill_observation_reused" in event_types
+    assert "skill_already_loaded" in event_types

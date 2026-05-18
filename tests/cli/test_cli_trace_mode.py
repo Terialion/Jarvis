@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from pathlib import Path
 import subprocess
 import sys
@@ -8,6 +9,9 @@ ROOT = Path(__file__).resolve().parents[2]
 
 
 def run_cli(*args, input_text=None, timeout=25):
+    env = os.environ.copy()
+    env["PYTHONIOENCODING"] = "utf-8"
+    env["PYTHONLEGACYWINDOWSSTDIO"] = "utf-8"
     return subprocess.run(
         [sys.executable, "-m", "jarvis.cli", *args],
         input=input_text,
@@ -17,6 +21,7 @@ def run_cli(*args, input_text=None, timeout=25):
         capture_output=True,
         timeout=timeout,
         cwd=str(ROOT),
+        env=env,
     )
 
 

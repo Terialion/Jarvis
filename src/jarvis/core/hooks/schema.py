@@ -15,6 +15,13 @@ from typing import Any, Callable, Literal
 
 
 class HookStage(str, Enum):
+    # Lifecycle stages
+    SESSION_START = "session_start"
+    SESSION_END = "session_end"
+    TURN_START = "turn_start"
+    TURN_END = "turn_end"
+    COMPACT_PRE = "compact_pre"
+    # Tool stages
     USER_PROMPT_SUBMIT = "user_prompt_submit"
     PRE_TOOL_USE = "pre_tool_use"
     POST_TOOL_USE = "post_tool_use"
@@ -41,7 +48,7 @@ class HookSpec:
     Matcher: dict matching tool_name, risk_level, permission, etc.
     """
     name: str
-    stage: Literal["pre_tool_use", "post_tool_use", "stop"]
+    stage: Literal["session_start", "session_end", "turn_start", "turn_end", "compact_pre", "pre_tool_use", "post_tool_use", "stop"]
     matcher: dict[str, Any] = field(default_factory=dict)
     description: str = ""
     risk_level: str = "low"

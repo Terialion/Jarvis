@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -38,4 +39,47 @@ def find_known_replacement(project_root: Path) -> ReplacementPatch | None:
         for old, new, summary in KNOWN_FIXES:
             if old in content:
                 return ReplacementPatch(path=path, old=old, new=new, summary=summary)
+    return None
+
+
+def parse_llm_diff_response(response_text: str, project_root: Path | None = None) -> ReplacementPatch | None:
+    """Extract a replacement patch from an LLM response containing old/new code blocks.
+
+    Looks for markdown-style code blocks with ``old`` / ``new`` labels, or
+    a unified diff with ``---`` / ``+++`` headers.  Falls back to
+    ``find_known_replacement`` when no structured diff is found.
+    """
+    text = str(response_text or "")
+    # Try fenced blocks with explicit labels
+    old_match = re.search(r"```(?:old|before|original)\s*\n(.*?)\n```", text, re.DOTALL | re.IGNORECASE)
+    new_match = re.search(r"```(?:new|after|fixed)\s*\n(.*?)\n```", text, re.DOTALL | re.IGNORECASE)
+    if old_match and new_match:
+        old = old_match.group(1).strip()
+        new = new_match.group(1).strip()
+        if old != new:
+            root = project_root or Path(".")
+            src = root / "src"
+            py_files = sorted(src.rglob("*.py")) if src.exists() else []
+            best_path = root / "unknown"
+            for py_file in py_files:
+                try:
+                    if old in py_file.read_text(encoding="utf-8"):
+                        best_path = py_file
+                        break
+                except Exception:
+                    continue
+            return ReplacementPatch(path=best_path, old=old, new=new, summary="LLM-generated fix.")
+
+    # Try inline old→new markers
+    inline = re.search(r"(?:replace|change)\s*[`\"](.+?)[`\"]\s*(?:with|→|->)\s*[`\"](.+?)[`\"]", text, re.IGNORECASE)
+    if inline:
+        old = inline.group(1).strip()
+        new = inline.group(2).strip()
+        if old != new and project_root:
+            return find_known_replacement(project_root) or ReplacementPatch(
+                path=project_root / "unknown", old=old, new=new, summary="LLM inline fix."
+            )
+
+    if project_root:
+        return find_known_replacement(project_root)
     return None

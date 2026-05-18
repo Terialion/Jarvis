@@ -130,3 +130,9 @@ suites/
 reference_agents/
 reference_code/
 reference_context_skill/
+.claude/
+.jarvis/
+workspace/
+bin/
+jsonschema/
+reference/

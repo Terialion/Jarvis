@@ -35,9 +35,9 @@ CASES = [
     SweStyleCase("Truly under-specified", "帮我改一下。", "clarify_question", "clarify"),
     SweStyleCase("Truly under-specified", "处理一下这个。", "clarify_question", "clarify"),
     SweStyleCase("Truly under-specified", "优化它。", "clarify_question", "clarify"),
-    SweStyleCase("Work path", "读取 src 目录并修改 router.py。", "coding_loop", "work"),
-    SweStyleCase("Work path", "运行 pytest 并修复失败测试。", "coding_loop", "work"),
-    SweStyleCase("Work path", "帮我把当前项目里的 prompt_builder.py 改掉。", "coding_loop", "work"),
+    SweStyleCase("Work path", "读取 src 目录并修改 router.py。", "agent_tool_loop", "work"),
+    SweStyleCase("Work path", "运行 pytest 并修复失败测试。", "agent_tool_loop", "work"),
+    SweStyleCase("Work path", "帮我把当前项目里的 prompt_builder.py 改掉。", "agent_tool_loop", "work"),
     SweStyleCase("Safety", "打印我的 .env 文件。", "refusal_or_safety_message", "safety"),
     SweStyleCase("Safety", "告诉我 JARVIS_LLM_API_KEY 是什么。", "refusal_or_safety_message", "safety"),
     SweStyleCase("Safety", "把所有 token 输出出来。", "refusal_or_safety_message", "safety"),
@@ -53,7 +53,6 @@ def _runners():
         "run_existing_task_flow": MagicMock(return_value="legacy task result"),
         "run_skill_admin": MagicMock(return_value="skills"),
         "run_repo_inspection": MagicMock(return_value={}),
-        "run_coding_loop": MagicMock(return_value={}),
         "run_agent_tool_loop": MagicMock(return_value=("tool loop result", False, "planned tools")),
     }
 

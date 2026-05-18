@@ -1,25 +1,26 @@
-"""Compatibility wrapper around the Phase 17 durable ThreadStore."""
+"""Compatibility wrapper that delegates to JSONL SessionStore."""
 
 from __future__ import annotations
 
 from pathlib import Path
 
-from ..store.thread_store import ThreadStore as DurableThreadStore
+from ..store.session_store import SessionStore
 
 
-class ThreadStore(DurableThreadStore):
-    """Backwards-compatible alias used by AgentLoop and ContextBuilder."""
+class ThreadStore(SessionStore):
+    """Backward-compatible alias used by AgentLoop and ContextBuilder."""
 
     def __init__(self, root: str | Path | None = None) -> None:
         if root is not None:
             root_path = Path(root)
             if root_path.suffix.lower() == ".db":
-                db_path = root_path
+                # Old .db path → use parent dir for sessions
+                sessions_dir = root_path.parent / "sessions"
             else:
-                db_path = root_path / "jarvis.db"
+                sessions_dir = root_path
         else:
-            db_path = None
-        super().__init__(db_path=db_path)
+            sessions_dir = None
+        super().__init__(sessions_dir=sessions_dir)
 
     def append_message(self, *args, **kwargs):
         metadata = kwargs.get("metadata")

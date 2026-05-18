@@ -294,6 +294,7 @@ class SkillLifecycleManager:
         trust_status = str((config.get("trust") or {}).get(spec.name, install.get("trust_status", self._default_trust_for_source(spec.source))))
         quarantine = dict((config.get("quarantine") or {}).get(spec.name) or {})
         quarantined = bool(quarantine.get("quarantined"))
+        deps = self._check_requires(spec)
         return {
             "name": spec.name,
             "source": spec.source,
@@ -316,16 +317,28 @@ class SkillLifecycleManager:
             "installed_path": str(install.get("installed_path") or spec.path),
             "source_ref": install.get("source_ref"),
             "lifecycle_config_error": self.store.last_error,
+            "dependency_warnings": deps.get("warnings", []),
+            "missing_bins": deps.get("missing_bins", []),
+            "missing_env": deps.get("missing_env", []),
         }
 
     def lifecycle_state_for(self, spec: Any) -> dict[str, Any]:
         config = self.store.load()
+        return self._lifecycle_state(spec, config)
+
+    def lifecycle_state_batch(self, specs: list[Any]) -> list[dict[str, Any]]:
+        """Load config once and compute lifecycle state for all specs."""
+        config = self.store.load()
+        return [self._lifecycle_state(s, config) for s in specs]
+
+    def _lifecycle_state(self, spec: Any, config: dict[str, Any]) -> dict[str, Any]:
         install = dict((config.get("installed") or {}).get(spec.name) or {})
         enabled = bool((config.get("enabled") or {}).get(spec.name, install.get("enabled", self._default_enabled_for_source(spec.source))))
         trust_status = str((config.get("trust") or {}).get(spec.name, install.get("trust_status", self._default_trust_for_source(spec.source))))
         quarantine = dict((config.get("quarantine") or {}).get(spec.name) or {})
         quarantined = bool(quarantine.get("quarantined"))
         validation_status = str(install.get("validation_status") or "ok")
+        deps = self._check_requires(spec)
         return {
             "installed": bool(install),
             "enabled": enabled and not quarantined,
@@ -338,6 +351,58 @@ class SkillLifecycleManager:
             "hash": str(install.get("hash") or ""),
             "installed_path": str(install.get("installed_path") or spec.path),
             "source_ref": str(install.get("source_ref") or "") or None,
+            "dependency_warnings": deps.get("warnings", []),
+            "missing_bins": deps.get("missing_bins", []),
+            "missing_env": deps.get("missing_env", []),
+        }
+
+    @staticmethod
+    def _check_requires(spec: Any) -> dict[str, Any]:
+        """Check skill dependency declarations (bins/env) and return warnings only.
+
+        Conservative: missing deps produce warnings, never disable the skill.
+        Matches OpenClaw's requires.bins / requires.anyBins semantics.
+        """
+        requires = spec.metadata.get("requires") if hasattr(spec, "metadata") else None
+        if not isinstance(requires, dict):
+            return {}
+
+        bins = requires.get("bins")
+        any_bins = requires.get("anyBins")
+        env_vars = requires.get("env")
+
+        missing_bins: list[str] = []
+        missing_any_bins: list[str] = []
+        missing_env: list[str] = []
+
+        if isinstance(bins, list):
+            for b in bins:
+                if isinstance(b, str) and not shutil.which(b):
+                    missing_bins.append(b)
+
+        if isinstance(any_bins, list):
+            found = any(isinstance(b, str) and shutil.which(b) for b in any_bins)
+            if not found and any_bins:
+                missing_any_bins = [str(b) for b in any_bins if isinstance(b, str)]
+
+        if isinstance(env_vars, list):
+            for e in env_vars:
+                if isinstance(e, str) and not os.environ.get(e):
+                    missing_env.append(e)
+
+        warnings: list[str] = []
+        for b in missing_bins:
+            warnings.append(f"required binary not found on PATH: {b}")
+        if missing_any_bins:
+            warnings.append(f"none of the optional binaries found on PATH: {', '.join(missing_any_bins)}")
+        for e in missing_env:
+            warnings.append(f"required env var not set: {e}")
+
+        return {
+            "missing_bins": missing_bins,
+            "missing_any_bins": missing_any_bins,
+            "missing_env": missing_env,
+            "warnings": warnings,
         }
 
     @staticmethod

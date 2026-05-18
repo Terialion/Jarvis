@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import urllib.error
 import urllib.request
 from dataclasses import dataclass
@@ -11,6 +12,19 @@ from typing import Any
 from .config import LLMConfig, load_llm_config
 from .provider import LLMProvider
 
+_SURROGATE_RE = re.compile(r"[\ud800-\udfff]")
+
+
+def _sanitize_surrogates(obj: Any) -> Any:
+    """Recursively replace lone surrogates (invalid UTF-8) in all strings."""
+    if isinstance(obj, str):
+        return _SURROGATE_RE.sub("�", obj)
+    if isinstance(obj, dict):
+        return {k: _sanitize_surrogates(v) for k, v in obj.items()}
+    if isinstance(obj, list):
+        return [_sanitize_surrogates(v) for v in obj]
+    return obj
+
 OPENAI_COMPATIBLE_PROVIDERS = {
     "openai_compatible",
     "openai",
@@ -19,6 +33,7 @@ OPENAI_COMPATIBLE_PROVIDERS = {
     "gemini",
     "minimax",
     "ollama",
+    "qwen",
     "custom",
 }
 
@@ -36,6 +51,7 @@ class LLMProviderConfig:
     base_url_source: str = "missing"
     model_source: str = "missing"
     deprecated_env_used: tuple[str, ...] = ()
+    supports_native_tool_calling: bool = True
 
     @property
     def is_available(self) -> bool:
@@ -68,6 +84,7 @@ class LLMProviderConfig:
             base_url_source=cfg.base_url_source,
             model_source=cfg.model_source,
             deprecated_env_used=cfg.deprecated_env_used,
+            supports_native_tool_calling=cfg.supports_native_tool_calling,
         )
 
 
@@ -88,6 +105,7 @@ class OpenAICompatibleProvider(LLMProvider):
     def __init__(self, config: LLMProviderConfig) -> None:
         self.config = config
         self.model_name = config.model or "unknown"
+        self.supports_native_tool_calling = config.supports_native_tool_calling
 
     def chat_completion(
         self,
@@ -111,12 +129,12 @@ class OpenAICompatibleProvider(LLMProvider):
             "temperature": self.config.temperature if temperature == 0.2 else temperature,
             "max_tokens": self.config.max_tokens if max_tokens is None else int(max_tokens),
         }
-        if tools:
+        if tools and self.supports_native_tool_calling:
             payload["tools"] = tools
             payload["tool_choice"] = "auto"
 
         request_url = _build_chat_completions_url(self.config.base_url)
-        body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+        body = json.dumps(_sanitize_surrogates(payload), ensure_ascii=False).encode("utf-8")
         req = urllib.request.Request(
             request_url,
             data=body,
@@ -131,6 +149,10 @@ class OpenAICompatibleProvider(LLMProvider):
                 status = int(getattr(resp, "status", 200) or 200)
                 raw = resp.read().decode("utf-8")
         except urllib.error.HTTPError as exc:
+            try:
+                resp_body = exc.read().decode("utf-8", errors="replace")[:1000]
+            except Exception:
+                resp_body = "(unable to read response body)"
             _write_provider_debug(
                 {
                     "request_url": request_url,
@@ -141,10 +163,10 @@ class OpenAICompatibleProvider(LLMProvider):
                     "temperature": payload["temperature"],
                     "max_tokens": payload["max_tokens"],
                     "http_status": int(exc.code),
-                    "error": {"type": "HTTPError", "message": f"status={exc.code}"},
+                    "error": {"type": "HTTPError", "message": f"status={exc.code}", "body": resp_body},
                 }
             )
-            raise RuntimeError(f"LLM HTTP error: status={exc.code}") from exc
+            raise RuntimeError(f"LLM HTTP error: status={exc.code} body={resp_body[:200]}") from exc
         except urllib.error.URLError as exc:
             _write_provider_debug(
                 {
@@ -194,6 +216,84 @@ class OpenAICompatibleProvider(LLMProvider):
             )
             raise RuntimeError(f"LLM provider error: type={err_type} message={err_message}")
         return data
+
+    def chat_completion_stream(
+        self,
+        *,
+        messages: list[dict[str, Any]],
+        tools: list[dict[str, Any]] | None = None,
+        temperature: float = 0.2,
+        max_tokens: int | None = None,
+        system: str | None = None,
+    ) -> Any:
+        """Stream chat completion via SSE and yield parsed chunk dicts.
+
+        Each yielded dict is the JSON-decoded ``data:`` line of a single SSE chunk.
+        The caller must check ``choices[0].delta`` / ``choices[0].finish_reason``
+        and aggregate across chunks.
+        """
+        if not self.config.is_available:
+            raise RuntimeError(f"LLM provider unavailable: {self.config.redacted_summary()}")
+
+        request_messages = list(messages or [])
+        if system:
+            request_messages = [{"role": "system", "content": system}] + request_messages
+
+        payload: dict[str, Any] = {
+            "model": self.config.model,
+            "messages": request_messages,
+            "temperature": self.config.temperature if temperature == 0.2 else temperature,
+            "max_tokens": self.config.max_tokens if max_tokens is None else int(max_tokens),
+            "stream": True,
+        }
+        if tools and self.supports_native_tool_calling:
+            payload["tools"] = tools
+            payload["tool_choice"] = "auto"
+
+        request_url = _build_chat_completions_url(self.config.base_url)
+        body = json.dumps(_sanitize_surrogates(payload), ensure_ascii=False).encode("utf-8")
+        req = urllib.request.Request(
+            request_url,
+            data=body,
+            headers={
+                "Authorization": f"Bearer {self.config.api_key}",
+                "Content-Type": "application/json",
+            },
+            method="POST",
+        )
+        try:
+            resp = urllib.request.urlopen(req, timeout=self.config.timeout_seconds)
+        except urllib.error.HTTPError as exc:
+            try:
+                resp_body = exc.read().decode("utf-8", errors="replace")[:1000]
+            except Exception:
+                resp_body = "(unable to read response body)"
+            raise RuntimeError(f"LLM HTTP error: status={exc.code} body={resp_body[:200]}") from exc
+        except urllib.error.URLError as exc:
+            raise RuntimeError(f"LLM network error: {exc.reason}") from exc
+
+        try:
+            for line in resp:
+                line_str = line.decode("utf-8").strip()
+                if not line_str:
+                    continue
+                if line_str.startswith("data: "):
+                    data_str = line_str[6:]
+                    if data_str == "[DONE]":
+                        break
+                    try:
+                        chunk = json.loads(data_str)
+                    except json.JSONDecodeError:
+                        continue
+                    if isinstance(chunk.get("error"), dict):
+                        err = chunk["error"]
+                        raise RuntimeError(
+                            f"LLM provider error: type={err.get('type', 'provider_error')} "
+                            f"message={err.get('message', 'unknown')}"
+                        )
+                    yield chunk
+        finally:
+            resp.close()
 
     def complete(self, prompt: str, *, system: str | None = None, temperature: float = 0.2) -> str:
         messages = [{"role": "user", "content": prompt}]

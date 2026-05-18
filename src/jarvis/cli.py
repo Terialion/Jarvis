@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import asyncio
 import json
 import logging
 import os
@@ -17,8 +18,9 @@ from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, Dict, List, Optional
 from urllib import request
+from uuid import uuid4
 
-from jarvis.cli_command_map import CliCommandSpec, list_command_specs, render_command_table, resolve_command, suggest_commands
+from .cli_command_map import CliCommandSpec, list_command_specs, render_command_table, resolve_command, suggest_commands
 
 _ROOT = Path(__file__).resolve().parents[1]
 if str(_ROOT) not in sys.path:
@@ -27,7 +29,7 @@ if str(_ROOT) not in sys.path:
 DEFAULT_API_BASE = os.getenv("JARVIS_API_BASE", "http://127.0.0.1:8765").rstrip("/")
 DEFAULT_WEB_URL = os.getenv("JARVIS_WEB_URL", "http://127.0.0.1:18789")
 
-SHELL_HEADER_TEMPLATE = "Jarvis Code - {mode} - {cwd}"
+SHELL_HEADER_TEMPLATE = "Jarvis Code - {cwd}"
 SHELL_HELP_HINT = "Type /help for commands, /exit to quit."
 SHELL_PROMPT = "> "
 
@@ -221,6 +223,18 @@ def _write_cli_diagnostic(checkpoint: str, exc: Optional[BaseException] = None) 
         pass
 
 
+def _ensure_utf8_stdout() -> None:
+    """Reconfigure stdout/stderr for UTF-8 on Windows to prevent UnicodeEncodeError."""
+    for stream_name in ("stdout", "stderr"):
+        stream = getattr(sys, stream_name, None)
+        if stream is None:
+            continue
+        try:
+            stream.reconfigure(encoding="utf-8", errors="replace")
+        except Exception:
+            pass
+
+
 def _safe_print(*args, **kwargs) -> None:
     stream = kwargs.pop("file", None)
     if stream is None:
@@ -361,34 +375,27 @@ def _backup_cli_coding_state() -> tuple[bool, str]:
 
 
 def _state_summary_text(state: Dict[str, Any]) -> str:
+    from .cli_ui.render import capture_rich, render_table
+
     tasks = dict(state.get("tasks") or {})
     approvals = dict(state.get("approvals") or {})
     pending = [a for a in approvals.values() if str((a or {}).get("status", "")).lower() == "pending"]
     completed_tasks = [t for t in tasks.values() if str((t or {}).get("status", "")).lower() in {"completed", "done"}]
     rejected = [a for a in approvals.values() if str((a or {}).get("status", "")).lower() == "rejected"]
     latest_task_id = str(state.get("latest_task_id") or "")
-    latest_approval_id = ""
-    if approvals:
-        latest_approval_id = sorted(approvals.keys())[-1]
-    lines = [
-        "CLI Coding State",
-        "",
-        "Path",
-        f"  {_CLI_STATE_PATH.as_posix()}",
-        "",
-        "Summary",
-        f"  schema_version: {state.get('schema_version', _CLI_STATE_SCHEMA_VERSION)}",
-        f"  tasks: {len(tasks)}",
-        f"  approvals: {len(approvals)}",
-        f"  pending_approvals: {len(pending)}",
-        f"  completed_tasks: {len(completed_tasks)}",
-        f"  rejected_approvals: {len(rejected)}",
-        "",
-        "Latest",
-        f"  task_id: {latest_task_id or '-'}",
-        f"  approval_id: {latest_approval_id or '-'}",
+    latest_approval_id = sorted(approvals.keys())[-1] if approvals else ""
+    rows = [
+        {"key": "Path", "value": _CLI_STATE_PATH.as_posix()},
+        {"key": "Schema version", "value": str(state.get('schema_version', _CLI_STATE_SCHEMA_VERSION))},
+        {"key": "Tasks", "value": str(len(tasks))},
+        {"key": "Approvals", "value": str(len(approvals))},
+        {"key": "Pending", "value": str(len(pending))},
+        {"key": "Completed", "value": str(len(completed_tasks))},
+        {"key": "Rejected", "value": str(len(rejected))},
+        {"key": "Latest task", "value": latest_task_id or "-"},
+        {"key": "Latest approval", "value": latest_approval_id or "-"},
     ]
-    return "\n".join(lines)
+    return capture_rich(render_table(rows, columns=[("Field", "key"), ("Value", "value")], title="CLI Coding State", border_style="divider"))
 
 
 def _approval_is_prunable(approval: Dict[str, Any], status_filter: str, older_than_days: int) -> bool:
@@ -534,7 +541,7 @@ def _is_library_project_request(text: str) -> bool:
 
 
 def _get_adapter(api_base: Optional[str] = None):
-    from src.jarvis.ui.app.mock_adapter import AppDataAdapter
+    from jarvis.ui.app.mock_adapter import AppDataAdapter
 
     if api_base:
         return AppDataAdapter(base_url=api_base)
@@ -543,8 +550,8 @@ def _get_adapter(api_base: Optional[str] = None):
 
 def _safe_registry():
     try:
-        from jarvis.tools.loader import load_builtin_tools
-        from jarvis.tools.registry import ToolRegistry
+        from .tools.loader import load_builtin_tools
+        from .tools.registry import ToolRegistry
 
         registry = ToolRegistry()
         load_builtin_tools(registry)
@@ -555,7 +562,7 @@ def _safe_registry():
 
 def _safe_skill_registry(refresh: bool = False):
     try:
-        from src.jarvis.skills.registry import SkillRegistry
+        from jarvis.skills.registry import SkillRegistry
 
         _ = refresh
         return SkillRegistry(project_root=_ROOT)
@@ -564,20 +571,20 @@ def _safe_skill_registry(refresh: bool = False):
 
 
 def _thread_store():
-    from src.jarvis.store.thread_store import ThreadStore
+    from jarvis.store import ThreadStore
 
     return ThreadStore()
 
 
 def _memory_store():
-    from src.jarvis.store.memory_store import MemoryStore
+    from jarvis.store.memory_store import MemoryStore
 
     return MemoryStore()
 
 
 def _build_provider_status_line() -> tuple[str, Any | None]:
     try:
-        from src.jarvis.core.llm.runtime_provider import build_runtime_llm_provider, load_llm_provider_config
+        from jarvis.core.llm.runtime_provider import build_runtime_llm_provider, load_llm_provider_config
 
         cfg = load_llm_provider_config()
         provider = build_runtime_llm_provider(cfg)
@@ -616,69 +623,72 @@ def _build_provider_status_line() -> tuple[str, Any | None]:
 
 def _render_shell_header(
     cwd: str,
-    mode: str,
     model: str = "unknown",
     provider_status: str = "configured",
     provider_line: str = "",
 ) -> str:
-    lines = [
-        SHELL_HEADER_TEMPLATE.format(mode=mode, cwd=cwd),
-        f"Model: {model} | Provider: {provider_status} | Web: {DEFAULT_WEB_URL}",
-    ]
-    if provider_line:
-        lines.append(provider_line)
-    lines.extend([SHELL_HELP_HINT, "", SHELL_PROMPT])
-    return "\n".join(lines)
+    from .cli_ui.render import capture_rich, render_header
+
+    # Build a concise provider badge — just provider name and availability
+    provider_badge = ""
+    try:
+        from jarvis.core.llm.config import load_llm_config
+        cfg = load_llm_config()
+        status = "available" if cfg.is_real_provider else "unavailable"
+        provider_badge = f"{cfg.provider} · {status}"
+    except Exception:
+        provider_badge = provider_line or provider_status
+
+    header = render_header(cwd=cwd, model=model, provider=provider_badge)
+    return capture_rich(header)
 
 
 def _render_help() -> str:
+    from .cli_ui.render import capture_rich, render_panel
+    from rich.markdown import Markdown
+
     implemented = [spec for spec in list_command_specs() if spec.name.startswith("/") and spec.status == "implemented"]
-    lines = ["Commands:"]
+    lines = ["| Command | Aliases | Description |", "|---------|---------|-------------|"]
     for spec in implemented:
-        aliases = f", {', '.join(spec.aliases)}" if spec.aliases else ""
-        lines.append(f"  {spec.name}{aliases:<18} {spec.description}")
+        aliases = ", ".join(spec.aliases) if spec.aliases else "-"
+        lines.append(f"| {spec.name} | {aliases} | {spec.description} |")
     lines.append("")
-    lines.append("Use /commands to view full mapping (implemented + skeleton + unsupported).")
-    return "\n".join(lines)
+    lines.append("*Use /commands to view full mapping (implemented + skeleton + unsupported).*")
+    return capture_rich(render_panel(Markdown("\n".join(lines)), title="Commands", border_style="agent"))
 
 
 def _render_unknown_command(cmd: str, candidates: List[str]) -> str:
+    from .cli_ui.render import capture_rich, render_panel
+
     if not candidates:
-        return f"Unknown command: {cmd}"
-    formatted = []
-    for c in candidates:
-        formatted.append(c if c.startswith("/") else f"/{c}")
-    return f"Unknown command: {cmd}\nDid you mean: {', '.join(formatted)}"
+        return capture_rich(render_panel(f"Unknown command: {cmd}", title="Error", border_style="error"))
+    formatted = [c if c.startswith("/") else f"/{c}" for c in candidates]
+    body = f"**Unknown command:** {cmd}\n\nDid you mean: {', '.join(formatted)}"
+    return capture_rich(render_panel(body, title="Unknown Command", border_style="warning"))
 
 
 def _render_capabilities(title: str, items: List[Dict[str, str]]) -> str:
-    lines = ["=" * 60, f"  {title} ({len(items)})", "=" * 60]
-    lines.append("name                         kind        status     source")
-    lines.append("--------------------------- ----------- --------- ----------")
-    for item in items:
-        lines.append(
-            f"{(item.get('name') or '')[:27]:<27} {(item.get('kind') or '')[:11]:<11} {(item.get('status') or '')[:9]:<9} {(item.get('source') or '')[:10]:<10}"
-        )
-    lines.append("=" * 60)
-    return "\n".join(lines)
+    from .cli_ui.render import capture_rich, render_table
+
+    return capture_rich(render_table(items, columns=[("Name", "name"), ("Kind", "kind"), ("Status", "status"), ("Source", "source")], title=f"{title} ({len(items)})", border_style="divider"))
 
 
 def _render_skill_table(skills: List[Dict[str, Any]], title: str = "Jarvis Skills") -> str:
-    lines = [title, "-" * len(title)]
+    from .cli_ui.render import capture_rich, render_table
+
     if not skills:
-        lines.append("No skills discovered.")
-        return "\n".join(lines)
-    lines.append("Name                  Kind      Status      Trust       Source                  Description")
-    lines.append("--------------------- --------- ---------- ---------- ----------------------- ------------------------------")
+        from .cli_ui.render import render_panel
+        return capture_rich(render_panel("No skills discovered.", title=title, border_style="divider"))
+    rows = []
     for skill in skills:
-        name = str(skill.get("name") or skill.get("skill_name") or "")[:21]
-        kind = str(skill.get("kind") or "skill")[:9]
-        status = str(skill.get("status") or "")[:10]
-        trust = str(skill.get("trust") or skill.get("metadata", {}).get("trust", {}).get("trust_level", "unknown"))[:10]
-        source = str(skill.get("source") or "")[:23]
-        description = str(skill.get("description") or "")[:30]
-        lines.append(f"{name:<21} {kind:<9} {status:<10} {trust:<10} {source:<23} {description}")
-    return "\n".join(lines)
+        name = str(skill.get("name") or skill.get("skill_name") or "")
+        kind = str(skill.get("kind") or "skill")
+        status = str(skill.get("status") or "")
+        trust = str(skill.get("trust") or skill.get("metadata", {}).get("trust", {}).get("trust_level", "unknown"))
+        source = str(skill.get("source") or "")
+        description = str(skill.get("description") or "")
+        rows.append({"name": name, "kind": kind, "status": status, "trust": trust, "source": source, "description": description})
+    return capture_rich(render_table(rows, columns=[("Name", "name"), ("Kind", "kind"), ("Status", "status"), ("Trust", "trust"), ("Source", "source"), ("Description", "description")], title=title, border_style="divider"))
 
 
 def _list_builtin_capabilities() -> List[Dict[str, str]]:
@@ -735,7 +745,7 @@ def _show_config(cfg) -> None:
 
 
 def cmd_config(args) -> int:
-    from jarvis.config.manager import init_config
+    from .config.manager import init_config
 
     cfg = init_config()
     if args.set:
@@ -771,7 +781,7 @@ def _call_tool(registry, name: str, extra_args: list) -> None:
         _safe_print(f"message: {result.message}")
     if result.data:
         data_str = str(result.data)
-        _safe_print(f"\nresult:\n{data_str[:2000]}")
+        _safe_print(f"\nresult:\n{data_str[:16000]}")
     if result.error:
         _safe_print(f"\nerror: {result.error}")
 
@@ -896,15 +906,15 @@ def cmd_test(args) -> int:
     _safe_print("=" * 60)
     checks = []
     try:
-        from jarvis.config.manager import init_config
+        from .config.manager import init_config
 
         cfg = init_config()
         checks.append(("config", True, f"schemas={len(cfg.get_schema_names())}"))
     except Exception as exc:
         checks.append(("config", False, type(exc).__name__))
     try:
-        from jarvis.tools.loader import load_builtin_tools
-        from jarvis.tools.registry import ToolRegistry
+        from .tools.loader import load_builtin_tools
+        from .tools.registry import ToolRegistry
 
         reg = ToolRegistry()
         load_builtin_tools(reg)
@@ -937,7 +947,7 @@ def cmd_server(args) -> int:
     if args.dry_run:
         _safe_print(f"[dry-run] would start Jarvis API server on {base}")
         return 0
-    from src.jarvis.api.server import run_server
+    from jarvis.api.server import run_server
 
     _safe_print(f"Starting Jarvis API server on {base}")
     run_server(host=args.host, port=args.port)
@@ -948,7 +958,7 @@ def _new_external_id(prefix: str) -> str:
     return f"{prefix}_{datetime.utcnow().strftime('%Y%m%d%H%M%S%f')}"
 
 
-def _create_local_coding_task(input_text: str, mode: str, require_approval: bool) -> Dict[str, Any]:
+def _create_local_coding_task(input_text: str, require_approval: bool) -> Dict[str, Any]:
     store = _load_cli_coding_state()
     task_id = _new_external_id("task")
     run_id = _new_external_id("run")
@@ -970,7 +980,7 @@ def _create_local_coding_task(input_text: str, mode: str, require_approval: bool
         {"type": "skill.selection.empty", "ts": _iso_now(), "detail": {"reason": "coding_fixture_flow"}},
     ]
     approval_id = ""
-    if require_approval or mode in {"safe", "ask"}:
+    if require_approval:
         approval_id = _new_external_id("approval")
         approval = {
             "approval_id": approval_id,
@@ -1017,9 +1027,9 @@ def _create_local_coding_task(input_text: str, mode: str, require_approval: bool
     return response
 
 
-def _collect_skill_trace_for_input(input_text: str, mode: str) -> Dict[str, Any]:
-    events: List[str] = ["task.created", "input.received", f"policy.checked: {mode}"]
-    policy_checked: Dict[str, Any] = {"mode": mode, "network_enabled": False, "safe_mode": mode == "safe"}
+def _collect_skill_trace_for_input(input_text: str) -> Dict[str, Any]:
+    events: List[str] = ["task.created", "input.received", "policy.checked: workspace_write"]
+    policy_checked: Dict[str, Any] = {"mode": "workspace_write", "network_enabled": False, "safe_mode": False}
     selection_reason = "no_registry"
     execution_status = "selection_empty"
     execution_reason = ""
@@ -1038,17 +1048,17 @@ def _collect_skill_trace_for_input(input_text: str, mode: str) -> Dict[str, Any]
             "instruction_sources": instruction_sources,
         }
     try:
-        from src.jarvis.core.skill_harness.executor import execute_skill
-        from src.jarvis.core.skill_harness.selector import select_skills_for_task
-        from src.jarvis.core.skill_harness.telemetry import SkillTelemetryStore, SkillUsageRecord
+        from jarvis.core.skill_harness.executor import execute_skill
+        from jarvis.core.skill_harness.selector import select_skills_for_task
+        from jarvis.core.skill_harness.telemetry import SkillTelemetryStore, SkillUsageRecord
 
         events.append("skill.registry.loaded")
         selection = select_skills_for_task(
             input_text,
             registry,
             policy={
-                "mode": mode,
-                "safe_mode": mode == "safe",
+                "mode": "workspace_write",
+                "safe_mode": False,
                 "network_enabled": False,
                 "shell_enabled": False,
                 "file_write_enabled": False,
@@ -1067,7 +1077,7 @@ def _collect_skill_trace_for_input(input_text: str, mode: str) -> Dict[str, Any]
                 registry=registry,
                 dry_run=True,
                 policy={
-                    "mode": mode,
+                    "mode": "workspace_write",
                     "network_enabled": False,
                     "shell_enabled": False,
                     "file_write_enabled": False,
@@ -1087,7 +1097,7 @@ def _collect_skill_trace_for_input(input_text: str, mode: str) -> Dict[str, Any]
                 input_preview=input_text[:160],
                 selected=bool(selected_skill),
                 executed=False,
-                mode=mode,
+                mode="workspace_write",
                 outcome=execution_status if selected_skill else "selection_empty",
                 reason=execution_reason or selection_reason,
                 policy=policy_checked,
@@ -1149,20 +1159,19 @@ def cmd_task(args) -> int:
         _safe_print(json.dumps(result, ensure_ascii=False, indent=2))
         return 0
     if args.task_cmd == "run":
-        mode = "safe" if bool(getattr(args, "safe", False)) else args.mode
         trace_enabled = bool(getattr(args, "trace", False))
         if trace_enabled:
-            trace = _collect_skill_trace_for_input(args.input, mode)
-            _safe_print(_render_trace_task_run(args.input, mode, trace))
+            trace = _collect_skill_trace_for_input(args.input)
+            _safe_print(_render_trace_task_run(args.input, trace))
             return 0
         if _is_coding_fixture_request(args.input) or _is_cli_surface_doc_request(args.input):
-            response = _create_local_coding_task(args.input, mode=mode, require_approval=bool(args.require_approval))
+            response = _create_local_coding_task(args.input, require_approval=bool(args.require_approval))
             print(json.dumps(response, ensure_ascii=False, indent=2))
             return 0
         adapter = _get_adapter(api_base=_api_base(args))
         payload = {
             "input": args.input,
-            "mode": mode,
+            "mode": "workspace_write",
             "allow_code_changes": bool(args.allow_code_changes),
             "max_commands": int(args.max_commands),
             "max_files_changed": int(args.max_files_changed),
@@ -1382,12 +1391,12 @@ def cmd_update(args) -> int:
 
 class ShellState:
     def __init__(self, api_base: str):
-        self.mode = "safe"
         self.trace_enabled = False
-        self.model = "unknown"
+        self.model = self._resolve_model()
         self.effort = "default"
         self.fast = False
         self.api_base = api_base
+        self.permission_mode: str = "workspace_write"
         self.tasks: List[Dict[str, Any]] = []
         self.approvals: Dict[str, Dict[str, Any]] = {}
         self.message_count = 0
@@ -1398,6 +1407,24 @@ class ShellState:
         self.current_thread_id: str = "cli_shell"
         self.current_project_id: str = "cli"
         self.provider_status_line, self.llm_provider = _build_provider_status_line()
+
+    # Thinking state (updated by PersistentTUI._poll_bridge)
+    last_thinking_text: str = ""
+    thinking_expanded: bool = False
+
+    def refresh(self):
+        """Re-resolve model and provider after a switch."""
+        self.model = self._resolve_model()
+        self.provider_status_line, self.llm_provider = _build_provider_status_line()
+
+    @staticmethod
+    def _resolve_model() -> str:
+        """Resolve model name from the same source as the provider status line."""
+        try:
+            from jarvis.core.llm.config import load_llm_config
+            return load_llm_config().model or "unknown"
+        except Exception:
+            return "unknown"
 
 
 def _next_task_id(state: ShellState) -> str:
@@ -1423,11 +1450,10 @@ def _record_shell_task(
     evidence: Optional[List[Dict[str, Any]]] = None,
 ) -> None:
     state.latest_task_id = task_id
-    state.tasks.append({"task_id": task_id, "input": user_input, "mode": state.mode})
+    state.tasks.append({"task_id": task_id, "input": user_input})
     state.task_records[task_id] = {
         "task_id": task_id,
         "input": user_input,
-        "mode": state.mode,
         "plan": list(plan or []),
         "events": list(events or []),
         "changed_files": list(changed_files or []),
@@ -1454,7 +1480,7 @@ def _build_plan(user_input: str) -> List[str]:
 
 
 def classify_user_input(text: str) -> InputKind:
-    from src.jarvis.core.routing.input_gateway import build_input_envelope
+    from jarvis.core.routing.input_gateway import build_input_envelope
 
     raw = str(text or "").strip()
     low = raw.lower()
@@ -1487,18 +1513,18 @@ def classify_user_input(text: str) -> InputKind:
 
 
 def _detect_intent_route(user_input: str) -> Dict[str, Any]:
-    from src.jarvis.core.routing.cli_adapter import build_cli_route
+    from jarvis.core.routing.cli_adapter import build_cli_route
 
     kind = classify_user_input(user_input)
-    result = build_cli_route(user_input, mode="safe", input_kind=kind.value)
+    result = build_cli_route(user_input, input_kind=kind.value)
     return dict(result.get("route_before_safety") or {})
 
 
-def _apply_route_safety(route: Dict[str, Any], user_input: str, mode: str) -> Dict[str, Any]:
-    from src.jarvis.core.routing.schema import IntentRoute
-    from src.jarvis.core.routing.safety_gate import apply_route_safety
+def _apply_route_safety(route: Dict[str, Any], user_input: str) -> Dict[str, Any]:
+    from jarvis.core.routing.schema import IntentRoute
+    from jarvis.core.routing.safety_gate import apply_route_safety
 
-    routed = apply_route_safety(IntentRoute(**route), user_input, mode=mode)
+    routed = apply_route_safety(IntentRoute(**route), user_input)
     return routed.to_dict()
 
 
@@ -1512,7 +1538,7 @@ def _append_intent_route_trace(
     entered_task_flow: bool,
     notes: str = "",
 ) -> None:
-    from src.jarvis.core.routing.cli_adapter import write_cli_trace
+    from jarvis.core.routing.cli_adapter import write_cli_trace
 
     try:
         write_cli_trace(
@@ -1532,7 +1558,7 @@ def _append_intent_route_trace(
 def _run_existing_task_flow(state: ShellState, user_input: str) -> str:
     state.message_count += 1
     task_id = _next_task_id(state)
-    events = ["task.created", "input.received", f"policy.checked: {state.mode}"]
+    events = ["task.created", "input.received", "policy.checked: workspace_write"]
     if re.search(r"\b(pytest|test|tests)\b", user_input.lower()) or ("测试" in user_input):
         approval_id = _next_approval_id(state)
         command = "python -m pytest examples/coding_fixture -q"
@@ -1561,19 +1587,19 @@ def _run_existing_task_flow(state: ShellState, user_input: str) -> str:
     registry = _safe_skill_registry()
     if registry is not None:
         try:
-            from src.jarvis.core.skill_harness.executor import execute_skill
-            from src.jarvis.core.skill_harness.selector import select_skills_for_task
-            from src.jarvis.core.skill_harness.telemetry import SkillTelemetryStore, SkillUsageRecord
+            from jarvis.core.skill_harness.executor import execute_skill
+            from jarvis.core.skill_harness.selector import select_skills_for_task
+            from jarvis.core.skill_harness.telemetry import SkillTelemetryStore, SkillUsageRecord
 
             events.append("skill.registry.loaded")
             selection = select_skills_for_task(
                 user_input,
                 registry,
                 policy={
-                    "mode": state.mode,
+                    "mode": "workspace_write",
                     "network_mode": "disabled",
                     "network_enabled": False,
-                    "safe_mode": state.mode == "safe",
+                    "safe_mode": False,
                 },
             )
             instruction_sources = list(dict(selection.policy).get("instruction_context", {}).get("sources", []))
@@ -1593,7 +1619,7 @@ def _run_existing_task_flow(state: ShellState, user_input: str) -> str:
                     user_input,
                     dry_run=True,
                     policy={
-                        "mode": state.mode,
+                        "mode": "workspace_write",
                         "network_mode": "disabled",
                         "network_enabled": False,
                         "shell_enabled": False,
@@ -1612,7 +1638,7 @@ def _run_existing_task_flow(state: ShellState, user_input: str) -> str:
                     input_preview=user_input[:160],
                     selected=bool(selected_skill),
                     executed=False,
-                    mode=state.mode,
+                    mode="workspace_write",
                     outcome=usage_outcome,
                     reason=usage_reason,
                     policy=dict(selection.policy),
@@ -1623,9 +1649,9 @@ def _run_existing_task_flow(state: ShellState, user_input: str) -> str:
         except Exception:
             events.append("skill.registry.error")
     plan = _build_coding_fixture_plan() if _is_coding_fixture_request(user_input) else _build_plan(user_input)
-    result = "Completed in safe mode. No files were modified."
+    result = "Completed. No files were modified."
     if selected_skill:
-        result = f"Completed in safe mode with skill dry-run: {selected_skill}. {selected_reason}".strip()
+        result = f"Completed with skill dry-run: {selected_skill}. {selected_reason}".strip()
     events.append("task.completed")
     events_map = [{"type": ev.split(":")[0], "detail": {"raw": ev}, "ts": _iso_now()} for ev in events]
     _record_shell_task(
@@ -1636,31 +1662,23 @@ def _run_existing_task_flow(state: ShellState, user_input: str) -> str:
         events=events_map,
         evidence=[{"kind": "result_summary", "detail": result}],
     )
-    return _render_task_output(task_id, state.mode, user_input, plan, events, result, include_events=state.trace_enabled)
+    return _render_task_output(task_id, user_input, plan, events, result, include_events=state.trace_enabled)
 
 
 def render_conversational_response(kind: InputKind, text: str = "") -> str:
-    input_line = f"Input: {text}\n" if text else ""
+    from .cli_ui.render import capture_rich, render_panel
+
     if kind == InputKind.GREETING:
-        return input_line + (
-            "Hello! I am Jarvis, running in safe mode. "
-            "You can ask me to inspect the repo, plan a change, route a skill, or use /help for commands."
-        )
-    if kind == InputKind.CAPABILITY_QUESTION:
-        return input_line + "\n".join(
-            [
-                "I can currently:",
-                "- list commands and skills",
-                "- route skills deterministically and run safe dry-runs",
-                "- plan small code changes",
-                "- require approval before patch apply",
-                "- show diff, review, replay, and evidence",
-                "Use /help to view commands.",
-            ]
-        )
-    if kind == InputKind.CASUAL_CHAT:
-        return input_line + "I can help with repo tasks, planning, and safe execution. Use /help to get started."
-    return input_line + "I can help, but this looks like a general request. Use /help for commands or describe a repo/task."
+        body = "Hello! I am Jarvis. You can ask me to inspect the repo, plan a change, route a skill, or use /help for commands."
+    elif kind == InputKind.CAPABILITY_QUESTION:
+        body = "I can currently:\n- list commands and skills\n- route skills deterministically and run safe dry-runs\n- plan small code changes\n- require approval before patch apply\n- show diff, review, replay, and evidence\n\nUse /help to view commands."
+    elif kind == InputKind.CASUAL_CHAT:
+        body = "I can help with repo tasks, planning, and safe execution. Use /help to get started."
+    else:
+        body = "I can help, but this looks like a general request. Use /help for commands or describe a repo/task."
+    if text:
+        body = f"**Input:** {text}\n\n{body}"
+    return capture_rich(render_panel(body, title="Jarvis", border_style="agent"))
 
 
 def _build_coding_fixture_plan() -> List[str]:
@@ -1720,7 +1738,6 @@ def _apply_cli_surface_doc_patch() -> Dict[str, Any]:
 
 def _render_task_output(
     task_id: str,
-    mode: str,
     user_input: str,
     plan: List[str],
     events: List[str],
@@ -1728,61 +1745,53 @@ def _render_task_output(
     *,
     include_events: bool = True,
 ) -> str:
-    lines = [f"Task {task_id} - completed - {mode}", "", "Input", f"  {user_input}"]
+    from .cli_ui.render import capture_rich, render_panel
+
+    body = f"**Input:** {user_input}\n\n"
     if plan:
-        lines.append("")
-        lines.append("Plan")
-        for idx, step in enumerate(plan, 1):
-            lines.append(f"  {idx}. {step}")
+        body += "**Plan**\n" + "\n".join(f"  {idx}. {step}" for idx, step in enumerate(plan, 1)) + "\n\n"
     if include_events and events:
-        lines.append("")
-        lines.append("Events")
-        for ev in events:
-            lines.append(f"  {ev}")
-    lines.append("")
-    lines.append("Result")
-    lines.append(f"  {result}")
-    return "\n".join(lines)
+        body += "**Events**\n" + "\n".join(f"  - {ev}" for ev in events) + "\n\n"
+    body += f"**Result:** {result}"
+    return capture_rich(render_panel(body, title=f"Task {task_id}", border_style="agent"))
 
 
 def _render_approval(approval_id: str, action: str, reason: str) -> str:
-    return "\n".join(
-        [
-            f"Approval required - {approval_id}",
-            "",
-            "Action",
-            f"  {action}",
-            "",
-            "Reason",
-            f"  {reason}",
-            "",
-            "Options",
-            f"  /approve {approval_id}",
-            f"  /deny {approval_id}",
-            f"  /reject {approval_id}",
-        ]
+    from .cli_ui.render import capture_rich, render_panel
+
+    body = (
+        f"**Action:** {action}\n\n"
+        f"**Reason:** {reason}\n\n"
+        f"**Options:**\n"
+        f"  `/approve {approval_id}`\n"
+        f"  `/deny {approval_id}`\n"
+        f"  `/reject {approval_id}`"
     )
+    return capture_rich(render_panel(body, title=f"Approval Required - {approval_id}", border_style="warning"))
 
 
 def _render_command_stub(spec: CliCommandSpec) -> str:
-    note = "command recognized; deeper behavior will be expanded incrementally."
+    from .cli_ui.render import capture_rich, render_panel
+
     if spec.status == "skeleton":
         note = "command is planned and currently not active beyond safe skeleton routing."
     elif spec.status == "unsupported":
         note = "command is unsupported in current Jarvis CLI and remains disabled."
-    return (
-        f"{spec.name}\n"
-        f"  mapped Claude equivalent: {spec.claude_equivalent or spec.name}\n"
-        f"  status: {spec.status}\n"
-        f"  safety: {spec.safety}\n"
-        f"  note: {note}"
+    else:
+        note = "command recognized; deeper behavior will be expanded incrementally."
+    body = (
+        f"**Claude equivalent:** {spec.claude_equivalent or spec.name}\n"
+        f"**Status:** {spec.status}\n"
+        f"**Safety:** {spec.safety}\n\n"
+        f"*{note}*"
     )
+    return capture_rich(render_panel(body, title=spec.name, border_style="divider"))
 
 
 def _shell_config() -> str:
     try:
         from io import StringIO
-        from jarvis.config.manager import init_config
+        from .config.manager import init_config
 
         cfg = init_config()
         buf = StringIO()
@@ -1797,12 +1806,160 @@ def _shell_config() -> str:
         return f"Config unavailable: {_safe_text(type(exc).__name__)}"
 
 
+def _shell_model(state: ShellState, args: list[str] | None = None) -> str:
+    """Show or set the LLM model."""
+    from .agent.model_registry import get_default_model, list_models, list_providers
+    from .config.manager import get_config
+
+    cfg = get_config()
+    current_provider = cfg.get("llm.provider") or "unknown"
+    current_model = cfg.get("llm.model") or "unknown"
+
+    if not args:
+        # Show current model + available models for current provider
+        lines = [f"Current model: {current_model}  (provider: {current_provider})"]
+        available = list_models(current_provider)
+        if available:
+            lines.append(f"Available models for {current_provider}:")
+            for m in available:
+                marker = " ← current" if m == current_model else ""
+                lines.append(f"  - {m}{marker}")
+        else:
+            lines.append(f"No model list defined for provider '{current_provider}' — use /model <name> to set any model.")
+        lines.append("Use /model <name> to switch, /model list to see all providers.")
+        return "\n".join(lines)
+
+    first = args[0].strip()
+
+    # /model list — show all providers and their models
+    if first == "list":
+        lines = ["Configured providers and models:"]
+        for prov in list_providers():
+            marker = " ← current" if prov == current_provider else ""
+            models = list_models(prov)
+            model_str = ", ".join(models) if models else "(any)"
+            lines.append(f"  {prov}{marker}: {model_str}")
+        return "\n".join(lines)
+
+    # /model <prov>/<mdl> — switch provider and model in one step
+    if "/" in first:
+        parts = first.split("/", 1)
+        new_provider = parts[0].strip()
+        new_model = parts[1].strip()
+        if new_provider and new_model:
+            cfg.set("llm.provider", new_provider, persist=True)
+            os.environ["JARVIS_LLM_PROVIDER"] = new_provider
+            cfg.set("llm.model", new_model, persist=True)
+            os.environ["JARVIS_LLM_MODEL"] = new_model
+            state.refresh()
+            header = _render_shell_header(os.getcwd(), state.model, provider_line=state.provider_status_line)
+            return f"Switched to {new_provider}/{new_model}\n{header}"
+
+    # /model <name> — switch model on current provider
+    model = first
+    cfg.set("llm.model", model, persist=True)
+    os.environ["JARVIS_LLM_MODEL"] = model
+    state.refresh()
+    header = _render_shell_header(os.getcwd(), state.model, provider_line=state.provider_status_line)
+    return f"Model: {model}\n{header}"
+
+
+def _shell_provider(state: ShellState, args: list[str] | None = None) -> str:
+    """Show or set the LLM provider."""
+    from .agent.model_registry import get_default_model, get_provider_info, list_providers
+    from .config.manager import get_config
+
+    cfg = get_config()
+    current_provider = cfg.get("llm.provider") or "unknown"
+
+    if not args:
+        lines = [f"Current provider: {current_provider}"]
+        lines.append("Available providers:")
+        for prov in list_providers():
+            info = get_provider_info(prov)
+            marker = " ← current" if prov == current_provider else ""
+            model_list = ", ".join(info.models) if info and info.models else "any"
+            lines.append(f"  {prov}{marker}: {model_list}")
+        lines.append("Use /provider <name> to switch, /model <name> to change model.")
+        return "\n".join(lines)
+
+    new_provider = args[0].strip().lower()
+    available = list_providers()
+    if new_provider not in available:
+        from difflib import get_close_matches
+        suggestions = get_close_matches(new_provider, available, n=3, cutoff=0.3)
+        hint = f" Did you mean: {', '.join(suggestions)}?" if suggestions else ""
+        return f"Unknown provider: {new_provider}. Available: {', '.join(available)}.{hint}"
+
+    cfg.set("llm.provider", new_provider, persist=True)
+    os.environ["JARVIS_LLM_PROVIDER"] = new_provider
+
+    # Auto-set default model for this provider
+    default_model = get_default_model(new_provider)
+    if default_model:
+        cfg.set("llm.model", default_model, persist=True)
+        os.environ["JARVIS_LLM_MODEL"] = default_model
+
+    state.refresh()
+    header = _render_shell_header(os.getcwd(), state.model, provider_line=state.provider_status_line)
+    model_note = f" (model: {default_model})" if default_model else ""
+    return f"Provider: {new_provider}{model_note}\n{header}"
+
+
+def _shell_thinking(state: ShellState) -> str:
+    """Toggle thinking text display (collapsed ↔ expanded)."""
+    if not state.last_thinking_text:
+        return "No thinking text available from the last agent run."
+    state.thinking_expanded = not state.thinking_expanded
+    if state.thinking_expanded:
+        lines = ["\x1b[2m  ── thinking ──\x1b[0m"]
+        for line in state.last_thinking_text.split("\n"):
+            if line.strip():
+                lines.append(f"\x1b[2m  {line}\x1b[0m")
+        return "\n".join(lines)
+    else:
+        line_count = state.last_thinking_text.count("\n") + 1
+        return (
+            f"\x1b[2m┄ Thinking ({line_count} lines) — "
+            "Ctrl+T to toggle ┄\x1b[0m"
+        )
+
+
 def _shell_status(state: ShellState) -> str:
-    return "\n".join([f"Mode: {state.mode}", f"Model: {state.model}", f"API: {state.api_base}", f"Web: {DEFAULT_WEB_URL}"])
+    from .cli_ui.render import capture_rich, render_table
+
+    rows = [
+        {"key": "Model", "value": state.model},
+        {"key": "API", "value": state.api_base},
+        {"key": "Web", "value": DEFAULT_WEB_URL},
+        {"key": "Session", "value": state.current_thread_id},
+        {"key": "Project", "value": state.current_project_id},
+        {"key": "Trace", "value": "on" if state.trace_enabled else "off"},
+        {"key": "Effort", "value": state.effort},
+    ]
+    return capture_rich(render_table(rows, columns=[("Setting", "key"), ("Value", "value")], title="Status", border_style="divider"))
+
+
+_VALID_MODES = {"read_only", "workspace_write", "workspace_write_network", "danger_full_access"}
+
+
+def _shell_mode(state: ShellState, args: list[str] | None = None) -> str:
+    mode = (args[0] if args else "").strip().lower()
+    if not mode:
+        return f"Current permission mode: {state.permission_mode}\nAvailable modes: {', '.join(sorted(_VALID_MODES))}"
+    if mode not in _VALID_MODES:
+        from difflib import get_close_matches
+
+        suggestions = get_close_matches(mode, _VALID_MODES, n=3, cutoff=0.3)
+        hint = f" Did you mean: {', '.join(suggestions)}?" if suggestions else ""
+        return f"Unknown mode: {mode}. Available: {', '.join(sorted(_VALID_MODES))}.{hint}"
+    state.permission_mode = mode
+    return f"Permission mode set to: {mode}"
 
 
 def _shell_permissions(state: ShellState) -> str:
-    from src.jarvis.core.policy import PermissionPolicy, get_approval_store
+    from jarvis.core.policy import PermissionPolicy, get_approval_store
+    from .cli_ui.render import capture_rich, render_panel
 
     registry = _safe_skill_registry()
     total = 0
@@ -1814,41 +1971,45 @@ def _shell_permissions(state: ShellState) -> str:
             quarantined = len([i for i in list(snap.get("items") or []) if i.get("quarantine")])
         except Exception:
             pass
-    permission_mode = "workspace_write" if state.mode in {"edit", "ask"} else "read_only"
+    permission_mode = state.permission_mode
     policy = PermissionPolicy.from_permission_mode(permission_mode)
     pending = len(get_approval_store().list_pending())
-    return "\n".join(
-        [
-            "Policy: safe by default",
-            f"Mode: {state.mode}",
-            f"Permission profile: {policy.profile}",
-            f"Default action: {policy.default_action}",
-            f"Pending approvals: {pending}",
-            "Dangerous actions require approval or dry-run.",
-            f"Skill trust/quarantine enforcement: loaded={total}, quarantined={quarantined}",
-            "Tool rules:",
-            *[f"  - {row.tool_name}: {row.action} ({row.risk_level})" for row in policy.tool_rules[:10]],
-        ]
+    body = (
+        f"**Policy:** safe by default\n"
+        f"**Permission profile:** {policy.profile}\n"
+        f"**Default action:** {policy.default_action}\n"
+        f"**Pending approvals:** {pending}\n"
+        f"**Skill trust/quarantine:** loaded={total}, quarantined={quarantined}\n\n"
+        f"**Tool rules:**\n"
+        + "\n".join(f"- {row.tool_name}: {row.action} ({row.risk_level})" for row in policy.tool_rules[:10])
     )
+    return capture_rich(render_panel(body, title="Permissions", border_style="divider"))
 
 
 def _shell_allowed_tools(_state: ShellState) -> str:
-    lines = ["Allowed tools and skills (safe mode view):"]
+    from .cli_ui.render import capture_rich, render_panel
+
+    body = ""
     reg = _safe_registry()
     if reg is not None:
         try:
-            lines.append("  Tools: " + ", ".join(sorted([t.name for t in reg.list_tools(category=None)])[:12]))
+            tools = sorted([t.name for t in reg.list_tools(category=None)])[:12]
+            body += "**Tools:** " + ", ".join(tools) + "\n\n"
         except Exception:
-            lines.append("  Tools: unavailable")
+            body += "**Tools:** unavailable\n\n"
+    else:
+        body += "**Tools:** no registry\n\n"
     skill_reg = _safe_skill_registry()
     if skill_reg is not None:
         try:
             snap = skill_reg.snapshot().get("data", {})
             skills = [i.get("id") or i.get("name") for i in list(snap.get("items") or []) if i.get("status") == "available" and not i.get("quarantine")]
-            lines.append("  Skills: " + ", ".join(sorted([s for s in skills if s])[:12]))
+            body += "**Skills:** " + ", ".join(sorted([s for s in skills if s])[:12])
         except Exception:
-            lines.append("  Skills: unavailable")
-    return "\n".join(lines)
+            body += "**Skills:** unavailable"
+    else:
+        body += "**Skills:** no registry"
+    return capture_rich(render_panel(body, title="Allowed Tools & Skills", border_style="divider"))
 
 
 def _shell_approvals(state: ShellState, args: Optional[List[str]] = None) -> str:
@@ -1862,21 +2023,11 @@ def _shell_approvals(state: ShellState, args: Optional[List[str]] = None) -> str
         )
         return json.dumps(result, ensure_ascii=False, indent=2)
     if not state.approvals:
-        return "No pending approvals."
-    lines = ["Pending approvals:"]
-    for approval_id, info in state.approvals.items():
-        lines.append(f"  {approval_id}: {info.get('action')}")
-    return "\n".join(lines)
-
-
-def _shell_mode(state: ShellState, args: List[str]) -> str:
-    if not args:
-        return f"Mode: {state.mode}"
-    mode = args[0].lower()
-    if mode not in {"safe", "ask", "edit"}:
-        return "Usage: /mode <safe|ask|edit>"
-    state.mode = mode
-    return f"Mode set to {state.mode}"
+        from .cli_ui.render import capture_rich, render_panel
+        return capture_rich(render_panel("No pending approvals.", title="Approvals", border_style="divider"))
+    from .cli_ui.render import capture_rich, render_table
+    rows = [{"id": aid, "action": info.get("action", "")} for aid, info in state.approvals.items()]
+    return capture_rich(render_table(rows, columns=[("ID", "id"), ("Action", "action")], title="Pending Approvals", border_style="warning"))
 
 
 def _shell_plan(state: ShellState, args: List[str]) -> str:
@@ -2012,7 +2163,7 @@ def _render_skill_debug(
 
 def _render_skill_insights() -> str:
     try:
-        from src.jarvis.core.skill_harness.telemetry import SkillTelemetryStore
+        from jarvis.core.skill_harness.telemetry import SkillTelemetryStore
 
         insights = SkillTelemetryStore().insights()
     except Exception as exc:
@@ -2102,122 +2253,454 @@ def _shell_fix(state: ShellState, args: List[str]) -> str:
     ]
     evidence = [{"kind": "plan", "detail": "minimal approved patch plan"}]
     _record_shell_task(state, task_id, user_input=text, plan=plan, events=events, evidence=evidence)
-    if state.mode in {"safe", "ask"}:
-        approval_id = _next_approval_id(state)
-        state.approvals[approval_id] = {
-            "action": f"{apply_kind}: {target_path}",
-            "reason": "File edit requires approval in safe/ask mode.",
-            "kind": apply_kind,
-            "task_id": task_id,
-            "path": target_path,
-            "patch_summary": patch_summary,
-        }
-        _append_shell_event(state, task_id, "approval.requested", {"approval_id": approval_id})
-        return _render_approval(
-            approval_id,
-            f"{apply_kind}: {target_path}",
-            f"Patch summary: {patch_summary}",
-        )
-    apply_result = _apply_coding_fixture_patch() if apply_kind == "edit_file" else _apply_cli_surface_doc_patch()
-    if apply_result["ok"]:
-        _append_shell_event(state, task_id, "file.modified", {"path": target_path, "changed": apply_result["changed"]})
-        _append_shell_event(state, task_id, "patch.applied", {"summary": apply_result["message"]})
-        rec = state.task_records.get(task_id, {})
-        rec["changed_files"] = [target_path] if apply_result["changed"] else []
-        rec["diff_summary"] = apply_result["message"]
-        rec.setdefault("evidence", []).append({"kind": "patch_summary", "detail": apply_result["message"]})
-    _append_shell_event(state, task_id, "task.completed", {"status": "completed"})
-    return apply_result["message"]
+    approval_id = _next_approval_id(state)
+    state.approvals[approval_id] = {
+        "action": f"{apply_kind}: {target_path}",
+        "reason": "File edit requires approval.",
+        "kind": apply_kind,
+        "task_id": task_id,
+        "path": target_path,
+        "patch_summary": patch_summary,
+    }
+    _append_shell_event(state, task_id, "approval.requested", {"approval_id": approval_id})
+    return _render_approval(
+        approval_id,
+        f"{apply_kind}: {target_path}",
+        f"Patch summary: {patch_summary}",
+    )
 
 
-def _shell_diff(state: ShellState) -> str:
-    task_id = state.latest_task_id
-    if not task_id or task_id not in state.task_records:
-        return "Diff\n\nChanged files:\n- none\n\nSummary:\n- no local patch recorded"
-    record = state.task_records[task_id]
-    changed = list(record.get("changed_files") or [])
-    summary = record.get("diff_summary") or "no local patch recorded"
-    lines = ["Diff", "", "Changed files:"]
-    if not changed:
-        lines.append("- none")
+def _shell_build(state: ShellState, args: List[str]) -> str:
+    """Run autonomous coding session: /build <goal>"""
+    from jarvis.coding.session import CodingSession
+    from jarvis.cli_ui.console import get_console
+
+    goal = " ".join(args).strip()
+    if not goal:
+        return "Usage: /build <goal> — autonomous coding session\nExample: /build write a calculator that passes the tests"
+
+    console = get_console()
+    console.print(f"[bold]Starting coding session...[/bold]\nGoal: {goal}\n")
+
+    session = CodingSession(
+        project_root=str(Path.cwd()),
+        max_attempts=3,
+        timeout_s=120,
+        permission_mode=state.permission_mode,
+        auto_approve=True,
+    )
+
+    try:
+        result = session.run(goal)
+    except Exception as exc:
+        return f"[bold red]Coding session failed:[/bold red] {exc}"
+
+    lines: list[str] = []
+    if result["ok"]:
+        lines.append("[bold green]Coding session succeeded![/bold green]")
     else:
-        for item in changed:
-            lines.append(f"- {item}")
-    lines.extend(["", "Summary:", f"- {summary}"])
-    _append_shell_event(state, task_id, "diff.generated", {"changed_files": len(changed)})
+        lines.append(f"[bold yellow]Coding session ended: {result['stop_reason']}[/bold yellow]")
+
+    lines.append(f"\nAttempts: {result['total_attempts']}")
+    for a in result["attempts"]:
+        status = "PASS" if (a.validation and a.validation.tests_passed) else "FAIL"
+        lines.append(f"  Attempt {a.attempt}: {status}")
+        if a.validation and a.validation.errors:
+            for err in a.validation.errors:
+                lines.append(f"    Error: {err[:120]}")
+
+    if result["changed_files"]:
+        lines.append(f"\nChanged files: {', '.join(result['changed_files'])}")
+
+    if result["final_answer"]:
+        lines.append(f"\n[bold]Agent output:[/bold]\n{result['final_answer'][:3000]}")
+
     return "\n".join(lines)
 
 
-def _shell_review(state: ShellState) -> str:
+def _shell_mcp(args: List[str], state: ShellState) -> str:
+    """Manage MCP server connections: connect, disconnect, list, tools."""
+    from jarvis.gateway.mcp_client import MCPClient
+
+    mcp = getattr(state, "_mcp_client", None) if state is not None else None
+    if mcp is None:
+        mcp = MCPClient()
+        if state is not None:
+            state._mcp_client = mcp
+
+    sub = (args[0] if args else "").strip().lower()
+    rest = args[1:]
+
+    if sub == "connect":
+        if len(rest) < 2:
+            return "Usage: /mcp connect <name> <command...>\n  Connects to a stdio MCP server.\n  Example: /mcp connect my_server python -m my_mcp_server"
+        name = rest[0]
+        command = rest[1:]
+        try:
+            info = mcp.connect_stdio(name, command)
+            return (
+                f"MCP connected: {name}\n"
+                f"Server: {info['server_info'].get('name', '?')} v{info['server_info'].get('version', '?')}\n"
+                f"Tools: {info['tool_count']} | Resources: {info['resource_count']} | Prompts: {info['prompt_count']}"
+            )
+        except Exception as exc:
+            return f"MCP connect failed: {exc}"
+
+    if sub == "disconnect":
+        if not rest:
+            return "Usage: /mcp disconnect <name>"
+        name = rest[0]
+        if mcp.disconnect(name):
+            return f"MCP disconnected: {name}"
+        return f"MCP server not found: {name}"
+
+    if sub == "list":
+        names = mcp.server_names
+        if not names:
+            return "No MCP servers connected.\nUse /mcp connect <name> <command...> to connect."
+        lines = [f"MCP servers ({len(names)} connected):"]
+        for n in names:
+            tools = mcp.list_tools(n)
+            lines.append(f"  {n}: {len(tools)} tools")
+        return "\n".join(lines)
+
+    if sub == "tools":
+        if not rest:
+            names = mcp.server_names
+            if not names:
+                return "No MCP servers connected."
+        else:
+            names = [rest[0]]
+        lines = ["MCP tools:"]
+        for n in names:
+            try:
+                tools = mcp.list_tools(n)
+            except Exception:
+                lines.append(f"  {n}: (disconnected)")
+                continue
+            if not tools:
+                lines.append(f"  {n}: no tools")
+                continue
+            for t in tools:
+                desc = (t.get("description") or "")[:80]
+                lines.append(f"  {n}.{t.get('name', '?')}: {desc}")
+        return "\n".join(lines)
+
+    return (
+        "MCP commands:\n"
+        "  /mcp connect <name> <command...>  Connect to stdio MCP server\n"
+        "  /mcp disconnect <name>             Disconnect from server\n"
+        "  /mcp list                          List connected servers\n"
+        "  /mcp tools [server]                List tools from all/specific server"
+    )
+
+
+def _shell_diff(state: ShellState) -> str:
+    from .cli_ui.render import capture_rich, render_panel
+
     task_id = state.latest_task_id
     if not task_id or task_id not in state.task_records:
-        return "Review\n\nChanged files:\n- none\n\nRisk:\nlow\n\nTests:\nnot run"
+        return capture_rich(render_panel("Changed files:\n- none\n\n**Summary:** no local patch recorded", title="Diff", border_style="divider"))
+    record = state.task_records[task_id]
+    changed = list(record.get("changed_files") or [])
+    summary = record.get("diff_summary") or "no local patch recorded"
+    body = "**Changed files:**\n" + ("\n".join(f"- {item}" for item in changed) if changed else "- none")
+    body += f"\n\n**Summary:** {summary}"
+    _append_shell_event(state, task_id, "diff.generated", {"changed_files": len(changed)})
+    return capture_rich(render_panel(body, title="Diff", border_style="divider"))
+
+
+def _shell_review(state: ShellState) -> str:
+    from .cli_ui.render import capture_rich, render_panel
+
+    task_id = state.latest_task_id
+    if not task_id or task_id not in state.task_records:
+        return capture_rich(render_panel("Changed files:\n- none\n\n**Risk:** low\n\n**Tests:** not run", title="Review", border_style="divider"))
     record = state.task_records[task_id]
     changed = list(record.get("changed_files") or [])
     tests = dict(record.get("tests") or {})
     risk = "low" if len(changed) <= 1 else "medium"
     test_status = tests.get("status", "not run")
-    lines = ["Review", "", "Changed files:"]
+    body = "**Changed files:**\n"
     if not changed:
-        lines.append("- none")
+        body += "- none"
     else:
-        for item in changed:
-            lines.append(f"- {item}")
-    lines.extend(["", "Risk:", risk, "", "Tests:", str(test_status)])
+        body += "\n".join(f"- {item}" for item in changed)
+    body += f"\n\n**Risk:** {risk}\n\n**Tests:** {test_status}"
     _append_shell_event(state, task_id, "review.completed", {"risk": risk, "tests": test_status})
-    return "\n".join(lines)
+    return capture_rich(render_panel(body, title="Review", border_style="divider"))
 
 
 def _shell_logs() -> str:
-    lines = ["Logs:"]
+    from .cli_ui.render import capture_rich, render_panel
+
     candidates = [str(_ROOT / "logs"), str(_ROOT / "temp" / "cli_stderr_diagnostics.json")]
-    for p in candidates:
-        if os.path.exists(p):
-            lines.append(f"  {p}")
-    if len(lines) == 1:
-        lines.append("  No logs found.")
-    return "\n".join(lines)
+    found = [p for p in candidates if os.path.exists(p)]
+    if found:
+        body = "\n".join(f"- {p}" for p in found)
+    else:
+        body = "No logs found."
+    return capture_rich(render_panel(body, title="Logs", border_style="divider"))
 
 
 def _shell_server(state: ShellState) -> str:
-    return f"Server status unknown. Try: python -m jarvis.cli server status (API: {state.api_base})"
+    from .cli_ui.render import capture_rich, render_panel
+
+    return capture_rich(render_panel(
+        f"**API:** {state.api_base}\n\nTry: `python -m jarvis.cli server status`",
+        title="Server",
+        border_style="divider",
+    ))
+
+
+def _render_web_ui() -> str:
+    from .cli_ui.render import capture_rich, render_panel
+
+    return capture_rich(render_panel(f"**URL:** {DEFAULT_WEB_URL}", title="Web UI", border_style="divider"))
 
 
 def _shell_tasks(state: ShellState, args: Optional[List[str]] = None) -> str:
+    from .cli_ui.render import capture_rich, render_panel, render_table
+
+    args = list(args or [])
+
     if args and args[0].lower() == "gc":
         persistent = _load_cli_coding_state()
         result = _gc_tasks(persistent, older_than_days=14, keep_latest=20, apply_changes=False)
         return json.dumps(result, ensure_ascii=False, indent=2)
-    if not state.tasks:
-        return "No tasks recorded in this session."
-    lines = ["Tasks:"]
-    for task in state.tasks:
-        lines.append(f"  {task.get('task_id')} - {task.get('input')}")
-    return "\n".join(lines)
+
+    mgr = _get_cli_managers()["tasks"]
+    tasks = mgr.list_all()
+
+    if not tasks:
+        return capture_rich(render_panel("No tasks recorded.", title="Tasks", border_style="divider"))
+
+    # Support filtering: /tasks pending, /tasks in_progress, /tasks completed
+    if args and args[0].lower() in ("pending", "in_progress", "completed", "blocked"):
+        tasks = [t for t in tasks if t.get("status") == args[0].lower()]
+
+    rows = []
+    for t in tasks[-50:]:
+        rows.append({
+            "id": t.get("task_id", "")[:12],
+            "subject": str(t.get("subject") or t.get("description") or "")[:80],
+            "status": t.get("status", "pending"),
+        })
+    return capture_rich(render_table(rows, columns=[
+        ("ID", "id"), ("Subject", "subject"), ("Status", "status"),
+    ], title=f"Tasks ({len(rows)})", border_style="divider"))
+
+
+# ── s15: CLI manager access (lazy singleton) ──────────────────────────
+
+
+def _get_cli_managers() -> dict[str, Any]:
+    """Lazily create manager instances for CLI slash commands."""
+    cache = getattr(_get_cli_managers, "_cache", None)
+    if cache is not None:
+        return cache
+    from jarvis.core.background import BackgroundTaskManager
+    from jarvis.core.tasks.manager import PersistentTaskManager
+    from jarvis.core.teams.manager import TeammateManager
+    from jarvis.core.teams.message_bus import MessageBus
+    from jarvis.core.worktree.manager import WorktreeManager
+
+    root = Path.cwd()
+    tasks_dir = root / ".jarvis" / "tasks"
+    tasks_dir.mkdir(parents=True, exist_ok=True)
+    task_mgr = PersistentTaskManager(tasks_dir=tasks_dir)
+
+    team_dir = root / ".jarvis" / "teams"
+    team_dir.mkdir(parents=True, exist_ok=True)
+    bus = MessageBus(inbox_dir=team_dir / "inbox")
+    team_mgr = TeammateManager(team_dir=team_dir, bus=bus)
+
+    cache = {
+        "tasks": task_mgr,
+        "bg": BackgroundTaskManager(max_workers=4),
+        "worktree": WorktreeManager(repo_root=root, tasks=task_mgr),
+        "team": team_mgr,
+    }
+    _get_cli_managers._cache = cache
+    return cache
+
+
+# ── /worktree handler ─────────────────────────────────────────────────
+
+
+def _shell_worktree(args: list[str] | None = None) -> str:
+    from .cli_ui.render import capture_rich, render_panel, render_table
+
+    args = list(args or [])
+    mgr = _get_cli_managers()["worktree"]
+
+    if not args or args[0] == "list":
+        data = mgr.list_all()
+        worktrees = data.get("worktrees", []) if isinstance(data, dict) else []
+        if not worktrees:
+            return capture_rich(render_panel("No worktrees.", title="Worktrees", border_style="divider"))
+        rows = []
+        for wt in worktrees:
+            rows.append({
+                "name": wt.get("name", ""),
+                "branch": wt.get("branch", ""),
+                "task": wt.get("task_id") or "",
+                "status": "active" if wt.get("active") else "inactive",
+            })
+        return capture_rich(render_table(rows, columns=[
+            ("Name", "name"), ("Branch", "branch"), ("Task", "task"), ("Status", "status"),
+        ], title="Worktrees", border_style="divider"))
+
+    sub = args[0].lower()
+    if sub == "create" and len(args) >= 2:
+        name = args[1]
+        task_id = args[2] if len(args) >= 3 else None
+        result = mgr.create(name, task_id=task_id)
+        if result.get("ok"):
+            return capture_rich(render_panel(f"Worktree created: {name}\nBranch: {result.get('branch', '')}", title="Worktree", border_style="success"))
+        return capture_rich(render_panel(f"Failed: {result.get('error', 'unknown')}", title="Worktree Error", border_style="error"))
+
+    if sub == "status" and len(args) >= 2:
+        result = mgr.status(args[1])
+        if result.get("ok"):
+            lines = [f"Name: {args[1]}", f"Path: {result.get('path', '')}", f"Branch: {result.get('branch', '')}"]
+            return capture_rich(render_panel("\n".join(lines), title=f"Worktree: {args[1]}", border_style="divider"))
+        return capture_rich(render_panel(f"Not found: {args[1]}", title="Worktree", border_style="error"))
+
+    if sub == "remove" and len(args) >= 2:
+        result = mgr.remove(args[1])
+        if result.get("ok"):
+            return capture_rich(render_panel(f"Removed: {args[1]}", title="Worktree", border_style="success"))
+        return capture_rich(render_panel(f"Failed: {result.get('error', 'unknown')}", title="Worktree Error", border_style="error"))
+
+    return capture_rich(render_panel(
+        "Usage: /worktree [list|create <name> [task-id]|status <name>|remove <name>]",
+        title="Worktree", border_style="divider"))
+
+
+# ── /team handler ─────────────────────────────────────────────────────
+
+
+def _shell_team(args: list[str] | None = None) -> str:
+    from .cli_ui.render import capture_rich, render_panel, render_table
+
+    args = list(args or [])
+    mgr = _get_cli_managers()["team"]
+
+    if not args or args[0] == "list":
+        members = mgr.list_all()
+        if not members:
+            return capture_rich(render_panel("No teammates.", title="Team", border_style="divider"))
+        rows = []
+        for m in members:
+            rows.append({
+                "name": m.get("name", ""),
+                "role": m.get("role", ""),
+                "status": m.get("status", "inactive"),
+                "autonomous": "yes" if m.get("autonomous") else "no",
+            })
+        return capture_rich(render_table(rows, columns=[
+            ("Name", "name"), ("Role", "role"), ("Status", "status"), ("Autonomous", "autonomous"),
+        ], title="Team", border_style="divider"))
+
+    sub = args[0].lower()
+    if sub == "spawn" and len(args) >= 3:
+        name, role = args[1], args[2]
+        prompt = " ".join(args[3:]) if len(args) > 3 else ""
+        result = mgr.spawn(name, role, prompt)
+        if result.get("ok"):
+            return capture_rich(render_panel(f"Spawned: {name} ({role})", title="Team", border_style="success"))
+        return capture_rich(render_panel(f"Failed: {result.get('error', 'unknown')}", title="Team Error", border_style="error"))
+
+    if sub == "inbox":
+        who = args[1] if len(args) >= 2 else "user"
+        msgs = mgr.bus.read_inbox(who)
+        if not msgs:
+            return capture_rich(render_panel(f"Inbox empty for {who}.", title="Inbox", border_style="divider"))
+        lines = []
+        for m in msgs[-10:]:
+            lines.append(f"- [{m.get('sender', '?')}]: {m.get('content', '')[:120]}")
+        return capture_rich(render_panel("\n".join(lines), title=f"Inbox: {who}", border_style="divider"))
+
+    if sub == "message" and len(args) >= 3:
+        to, content = args[1], " ".join(args[2:])
+        result = mgr.bus.send("user", to, content, msg_type="cli")
+        if result.get("ok"):
+            return capture_rich(render_panel(f"Sent to {to}", title="Team Message", border_style="success"))
+        return capture_rich(render_panel(f"Failed: {result.get('error', 'unknown')}", title="Team Error", border_style="error"))
+
+    return capture_rich(render_panel(
+        "Usage: /team [list|spawn <name> <role> [prompt]|inbox [name]|message <name> <content>]",
+        title="Team", border_style="divider"))
+
+
+# ── /bg handler ───────────────────────────────────────────────────────
+
+
+def _shell_bg(args: list[str] | None = None) -> str:
+    from .cli_ui.render import capture_rich, render_panel, render_table
+
+    args = list(args or [])
+    mgr = _get_cli_managers()["bg"]
+
+    if not args or args[0] == "list":
+        tasks = mgr.list_tasks()
+        if not tasks:
+            return capture_rich(render_panel("No background tasks.", title="Background Tasks", border_style="divider"))
+        rows = []
+        for t in tasks:
+            rows.append({
+                "task_id": t.get("task_id", ""),
+                "description": str(t.get("description") or "")[:60],
+                "status": t.get("status", "unknown"),
+            })
+        return capture_rich(render_table(rows, columns=[
+            ("Task ID", "task_id"), ("Description", "description"), ("Status", "status"),
+        ], title="Background Tasks", border_style="divider"))
+
+    sub = args[0].lower()
+    if sub == "check" and len(args) >= 2:
+        result = mgr.check(args[1])
+        status = result.get("status", "unknown")
+        output = str(result.get("output") or result.get("result") or "")[:500]
+        return capture_rich(render_panel(
+            f"Task: {args[1]}\nStatus: {status}\nOutput: {output or '(none)'}",
+            title="Background Task", border_style="divider"))
+
+    if sub == "cancel" and len(args) >= 2:
+        mgr.cancel(args[1])
+        return capture_rich(render_panel(f"Cancelled: {args[1]}", title="Background Task", border_style="success"))
+
+    return capture_rich(render_panel(
+        "Usage: /bg [list|check <task_id>|cancel <task_id>]",
+        title="Background Tasks", border_style="divider"))
 
 
 def _shell_tools() -> str:
+    from .cli_ui.render import capture_rich, render_table
+
     registry = _safe_registry()
     if registry is None:
-        return _render_capabilities("Capabilities", _list_builtin_capabilities())
-    items = _registry_to_capabilities(registry, "tool")
-    if not items:
         items = _list_builtin_capabilities()
-    return _render_capabilities("Tools", items)
+    else:
+        items = _registry_to_capabilities(registry, "tool")
+        if not items:
+            items = _list_builtin_capabilities()
+    return capture_rich(render_table(items, columns=[("Name", "name"), ("Kind", "kind"), ("Status", "status"), ("Source", "source")], title="Tools", border_style="divider"))
 
 
 def _shell_skills(args: Optional[List[str]] = None) -> str:
+    from .cli_ui.render import capture_rich, render_table
+
     args = list(args or [])
     registry = _safe_skill_registry()
     if registry is None:
-        return _render_capabilities("Skills", _list_builtin_capabilities())
-    items = _skill_items()
-    if not items:
-        return _render_capabilities("Skills", _list_builtin_capabilities())
-    lines = ["Jarvis Skills:"]
-    for item in items:
-        lines.append(f"- {item.get('name')}: {item.get('description')}")
-    return "\n".join(lines)
+        items = _list_builtin_capabilities()
+    else:
+        items = _skill_items()
+        if not items:
+            items = _list_builtin_capabilities()
+    return capture_rich(render_table(items, columns=[("Name", "name"), ("Kind", "kind"), ("Status", "status"), ("Source", "source"), ("Description", "description")], title="Skills", border_style="divider"))
 
 
 def _skill_usage() -> str:
@@ -2307,19 +2790,17 @@ def _skill_request_is_sensitive(raw_args: str) -> bool:
 def _skill_route_label(skill_name: str, raw_args: str, response_mode: str) -> str:
     low = f"{skill_name} {raw_args}".lower()
     if any(token in low for token in ("code", "coding", "fix", "bug", "write", "create", "新建", "修复", "写")):
-        return "coding_loop"
+        return "agent_tool_loop"
     if response_mode == "skill_tool_dispatch":
         return "tool"
     return "skill_agent"
 
 
 def _render_skill_invocation(skill_route: Any, *, item: Optional[Dict[str, Any]] = None, trigger: str = "/skill") -> str:
-    from src.jarvis.core.cli_response.natural_responses import render_refusal_safety
-
     raw_args = str(getattr(skill_route, "raw_args", "") or "")
     skill_name = str(getattr(skill_route, "candidate_skill", "") or "")
     if _skill_request_is_sensitive(raw_args):
-        return render_refusal_safety()
+        return "Action refused: this request may involve sensitive files or unsafe operations."
     if item and _skill_body_has_policy_violation(item):
         return "\n".join(
             [
@@ -2376,9 +2857,9 @@ def _render_skill_show(name: str) -> str:
 
 
 def _shell_skill(args: List[str], envelope: Any) -> str:
-    from src.jarvis.skills.authoring import create_skill, format_skill_doctor, format_skill_index, format_validation_result
-    from src.jarvis.skills.lifecycle import SkillLifecycleManager
-    from src.jarvis.skills.validator import SkillValidator, default_validation_mode_for_spec
+    from jarvis.skills.authoring import create_skill, format_skill_doctor, format_skill_index, format_validation_result
+    from jarvis.skills.lifecycle import SkillLifecycleManager
+    from jarvis.skills.validator import SkillValidator, default_validation_mode_for_spec
 
     if not args or args[0].lower() in {"help", "--help", "-h"}:
         return _skill_usage()
@@ -2566,11 +3047,20 @@ def _shell_skill(args: List[str], envelope: Any) -> str:
 
 
 def _shell_commands(args: List[str]) -> str:
+    from .cli_ui.render import capture_rich, render_table
+
     category = args[0] if args else None
-    return render_command_table(list_command_specs(category=category))
+    specs = list_command_specs(category=category)
+    rows = [
+        {"name": s.name, "category": s.category, "status": s.status, "safety": s.safety, "claude": s.claude_equivalent or "-"}
+        for s in specs
+    ]
+    return capture_rich(render_table(rows, columns=[("Name", "name"), ("Category", "category"), ("Status", "status"), ("Safety", "safety"), ("Claude", "claude")], title="Command Map", border_style="divider"))
 
 
 def _shell_context(state: ShellState, args: List[str]) -> str:
+    from .cli_ui.render import capture_rich, render_panel
+
     args = list(args or [])
     store = _thread_store()
     if not args:
@@ -2580,14 +3070,9 @@ def _shell_context(state: ShellState, args: List[str]) -> str:
         thread = store.get_thread(state.current_thread_id)
         if thread is None:
             thread = store.create_thread(title="CLI session", metadata={"source": "cli"})
-            state.current_thread_id = thread.thread_id
-        return "\n".join(
-            [
-                f"Context saved: {state.current_thread_id}",
-                f"Schema version: {store.schema_version()}",
-                "Status: persisted",
-            ]
-        )
+            state.current_thread_id = thread["thread_id"]
+        body = f"**Session:** {state.current_thread_id}\n**Schema version:** {store.schema_version()}\n**Status:** persisted"
+        return capture_rich(render_panel(body, title="Context Saved", border_style="agent"))
     if action == "resume":
         if len(args) < 2:
             return "Usage: /context resume <thread_id>"
@@ -2596,62 +3081,88 @@ def _shell_context(state: ShellState, args: List[str]) -> str:
         if thread is None:
             return f"Thread not found: {thread_id}"
         state.current_thread_id = thread_id
-        return "\n".join(
-            [
-                f"Context resumed: {thread_id}",
-                "Mode: background-only",
-                "Note: persisted memory is historical context, not a new instruction.",
-            ]
-        )
+        body = f"**Mode:** background-only\n*Note: persisted memory is historical context, not a new instruction.*"
+        return capture_rich(render_panel(body, title=f"Context Resumed: {thread_id}", border_style="agent"))
     return "Usage: /context <save|resume> [thread_id]"
 
 
 def _shell_threads(state: ShellState, args: List[str]) -> str:
+    from .cli_ui.render import capture_rich, render_panel, render_table
+
     args = list(args or [])
     store = _thread_store()
     action = str(args[0]).strip().lower() if args else "list"
     if action == "list":
         rows = store.list_threads(limit=20)
         if not rows:
-            return "No persisted threads."
-        lines = ["Threads:"]
+            return capture_rich(render_panel("No persisted threads.", title="Sessions", border_style="divider"))
+        table_rows = []
         for row in rows:
-            marker = "*" if row.thread_id == state.current_thread_id else " "
-            lines.append(f"{marker} {row.thread_id}  title={row.title or '-'}  updated_at={row.updated_at}")
-        return "\n".join(lines)
-    if action == "open":
+            marker = "*" if row.get("thread_id") == state.current_thread_id else " "
+            table_rows.append({"": marker, "Thread ID": row.get("thread_id"), "Title": row.get("title") or "(untitled)", "Updated": row.get("updated_at")})
+        return capture_rich(render_table(table_rows, columns=[("", ""), ("Thread ID", "Thread ID"), ("Title", "Title"), ("Updated", "Updated")], title="Sessions", border_style="divider"))
+    if action in ("open", "switch", "resume"):
         if len(args) < 2:
-            return "Usage: /threads open <thread_id>"
+            return f"Usage: /threads {action} <thread_id>"
         thread_id = str(args[1]).strip()
         thread = store.get_thread(thread_id)
         if thread is None:
             return f"Thread not found: {thread_id}"
-        turns = store.get_recent_turns(thread_id, limit=5)
-        handoff = store.get_handoff_summary(thread_id)
-        lines = [
-            f"Thread: {thread.thread_id}",
-            f"Title: {thread.title or '-'}",
-            f"Updated: {thread.updated_at}",
-            "Recent turns:",
+        state.current_thread_id = thread_id
+        turns = store.get_recent_turns(thread_id, limit=3)
+        body = f"**Title:** {thread.get('title', '(untitled)')}\n**Turns:** {len(list(turns))}"
+        return capture_rich(render_panel(body, title=f"Switched to {thread_id}", border_style="agent"))
+    if action == "delete":
+        if len(args) < 2:
+            return "Usage: /threads delete <thread_id>"
+        thread_id = str(args[1]).strip()
+        if thread_id == state.current_thread_id:
+            state.current_thread_id = f"session_{uuid4().hex[:12]}"
+        ok = store.delete_thread(thread_id)
+        if ok:
+            return f"Deleted: {thread_id}\nCurrent session: {state.current_thread_id}"
+        return f"Thread not found: {thread_id}"
+    if action == "info":
+        thread = store.get_thread(state.current_thread_id)
+        if thread is None:
+            return f"Current session {state.current_thread_id} not persisted yet."
+        turns = store.get_recent_turns(state.current_thread_id, limit=20)
+        msg_count = store.count_messages(state.current_thread_id)
+        rows = [
+            {"key": "Session", "value": thread['thread_id']},
+            {"key": "Title", "value": thread.get('title') or '(untitled)'},
+            {"key": "Turns", "value": str(len(list(turns)))},
+            {"key": "Messages", "value": str(msg_count)},
+            {"key": "Updated", "value": str(thread.get('updated_at', ''))},
         ]
-        lines.extend([f"  - {row.turn_id}: {row.output_type} / {row.stop_reason or '-'}" for row in turns] or ["  - none"])
-        if handoff is not None:
-            lines.extend(["Handoff summary:", f"  {handoff.summary_redacted}"])
-        return "\n".join(lines)
-    return "Usage: /threads <list|open> [thread_id]"
+        return capture_rich(render_table(rows, columns=[("Field", "key"), ("Value", "value")], title="Session Info", border_style="divider"))
+    return "Usage: /threads <list|switch|delete|info> [thread_id]"
 
 
 def _shell_memory(state: ShellState, args: Optional[List[str]] = None) -> str:
+    from .cli_ui.render import capture_rich, render_panel, render_table
+
     args = list(args or [])
     store = _memory_store()
     if not args or str(args[0]).strip().lower() == "show":
         user_memory = store.get_user_memory()
         project_memory = store.get_project_memory(state.current_project_id)
-        lines = ["Memory", "", "User memory:"]
-        lines.extend([f"  - {k}: {v}" for k, v in user_memory.items()] or ["  - none"])
-        lines.extend(["", f"Project memory ({state.current_project_id}):"])
-        lines.extend([f"  - {k}: {v}" for k, v in project_memory.items()] or ["  - none"])
-        return "\n".join(lines)
+        body = "**User memory:**\n"
+        body += "\n".join(f"- {k}: {v}" for k, v in user_memory.items()) or "- none"
+        body += f"\n\n**Project memory ({state.current_project_id}):**\n"
+        body += "\n".join(f"- {k}: {v}" for k, v in project_memory.items()) or "- none"
+        typed = store.get_typed(limit=20)
+        typed_rows = []
+        if typed:
+            for r in typed:
+                rtype = r.get("memory_type") if isinstance(r, dict) else getattr(r, "memory_type", "")
+                rkey = r.get("key") if isinstance(r, dict) else getattr(r, "key", "")
+                rval = (r.get("value_redacted") if isinstance(r, dict) else getattr(r, "value_redacted", ""))
+                typed_rows.append({"type": rtype, "key": rkey, "value": str(rval)[:2000]})
+        result = capture_rich(render_panel(body, title="Memory", border_style="divider"))
+        if typed_rows:
+            result += "\n" + capture_rich(render_table(typed_rows, columns=[("Type", "type"), ("Key", "key"), ("Value", "value")], title="Typed Memory", border_style="divider"))
+        return result
     action = str(args[0]).strip().lower()
     if action == "edit":
         if len(args) < 3:
@@ -2659,83 +3170,120 @@ def _shell_memory(state: ShellState, args: Optional[List[str]] = None) -> str:
         key = str(args[1]).strip()
         value = " ".join(str(part) for part in args[2:])
         record = store.set_user_memory(key, value)
-        return f"Memory updated: {record.key}\nValue: {record.value_redacted}"
+        rkey = record.get("key") if isinstance(record, dict) else record.key
+        rval = record.get("value_redacted") if isinstance(record, dict) else record.value_redacted
+        return f"Memory updated: {rkey}\nValue: {rval}"
+    if action == "delete":
+        if len(args) < 2:
+            return "Usage: /memory delete <key>"
+        key = str(args[1]).strip()
+        store.delete_user_memory(key)
+        return f"Memory deleted: {key}"
+    if action == "search":
+        if len(args) < 2:
+            return "Usage: /memory search <query> [--type feedback|reference|user_profile|project_fact]"
+        query = str(args[1]).strip()
+        mem_type = None
+        if len(args) >= 4 and str(args[2]).strip() == "--type":
+            mem_type = str(args[3]).strip()
+        records = store.search(query, memory_type=mem_type, limit=10)
+        if not records:
+            return f"No results for: {query}"
+        search_rows = []
+        for r in records:
+            rtype = r.get("memory_type") if isinstance(r, dict) else getattr(r, "memory_type", "")
+            rkey = r.get("key") if isinstance(r, dict) else getattr(r, "key", "")
+            rval = (r.get("value_redacted") if isinstance(r, dict) else getattr(r, "value_redacted", ""))
+            search_rows.append({"type": rtype, "key": rkey, "value": str(rval)[:200]})
+        return capture_rich(
+            render_table(search_rows, columns=[("Type", "type"), ("Key", "key"), ("Value", "value")], title=f"Search: {query}", border_style="divider")
+        )
     if action == "clear":
         store.clear_user_memory()
         return "User memory cleared."
-    return "Usage: /memory <show|edit|clear> ..."
+    return "Usage: /memory <show|edit|delete|search|clear> ..."
 
 
 def _shell_agents(_state: ShellState) -> str:
-    return "Agents: plan, explore, implement, review (skeleton routing)."
+    from .cli_ui.render import capture_rich, render_panel
+
+    return capture_rich(render_panel("**plan**, **explore**, **implement**, **review** — skeleton routing.", title="Agent Modes", border_style="divider"))
 
 
 def _shell_trace(state: ShellState, args: Optional[List[str]] = None) -> str:
+    from .cli_ui.render import capture_rich, render_panel
+
     args = list(args or [])
     if not args:
-        return f"Trace mode: {'on' if state.trace_enabled else 'off'}"
+        return capture_rich(render_panel(f"Trace mode: **{'on' if state.trace_enabled else 'off'}**", title="Trace", border_style="divider"))
     token = args[0].strip().lower()
     if token in {"on", "true", "1"}:
         state.trace_enabled = True
-        return "Trace mode: on"
+        return capture_rich(render_panel("Trace mode: **on**", title="Trace", border_style="divider"))
     if token in {"off", "false", "0"}:
         state.trace_enabled = False
-        return "Trace mode: off"
+        return capture_rich(render_panel("Trace mode: **off**", title="Trace", border_style="divider"))
     return "Usage: /trace [on|off]"
 
 
 def _shell_state() -> str:
+    from .cli_ui.render import capture_rich, render_panel
+
     if not _CLI_STATE_PATH.exists():
-        return "No CLI coding state found."
+        return capture_rich(render_panel("No CLI coding state found.", title="State", border_style="divider"))
     return _state_summary_text(_load_cli_coding_state())
 
 
 def _shell_doctor(state: ShellState) -> str:
-    lines = ["Doctor report:"]
-    try:
-        from jarvis.config.manager import init_config
+    from .cli_ui.render import capture_rich, render_panel
 
+    rows = []
+    try:
+        from .config.manager import init_config
         cfg = init_config()
-        lines.append(f"  config schemas: {len(cfg.get_schema_names())}")
+        rows.append({"item": "Config schemas", "value": str(len(cfg.get_schema_names()))})
     except Exception as exc:
-        lines.append(f"  config: unavailable ({_safe_text(type(exc).__name__)})")
+        rows.append({"item": "Config", "value": f"unavailable ({_safe_text(type(exc).__name__)})"})
     reg = _safe_registry()
     if reg is None:
-        lines.append("  tool registry: unavailable")
+        rows.append({"item": "Tool registry", "value": "unavailable"})
     else:
         try:
-            lines.append(f"  tool registry: {len(reg.list_tools(category=None))} tools")
+            rows.append({"item": "Tool registry", "value": f"{len(reg.list_tools(category=None))} tools"})
         except Exception:
-            lines.append("  tool registry: error")
+            rows.append({"item": "Tool registry", "value": "error"})
     skill_registry = _safe_skill_registry()
     if skill_registry is None:
-        lines.append("  skill registry: unavailable")
+        rows.append({"item": "Skill registry", "value": "unavailable"})
     else:
         try:
             snap = skill_registry.snapshot().get("data", {})
             discovery = snap.get("discovery", {})
-            lines.append(f"  skill registry: {int(snap.get('count', 0))} loaded")
-            lines.append(f"  skill roots: {len(list(discovery.get('roots') or []))}")
-            lines.append(f"  skill invalid: {len([i for i in list(snap.get('items') or []) if i.get('status') == 'invalid'])}")
-            lines.append(f"  skill quarantined: {len([i for i in list(snap.get('items') or []) if i.get('quarantine')])}")
+            rows.append({"item": "Skills loaded", "value": str(int(snap.get('count', 0)))})
+            rows.append({"item": "Skill roots", "value": str(len(list(discovery.get('roots') or [])))})
+            rows.append({"item": "Skills invalid", "value": str(len([i for i in list(snap.get('items') or []) if i.get('status') == 'invalid']))})
+            rows.append({"item": "Skills quarantined", "value": str(len([i for i in list(snap.get('items') or []) if i.get('quarantine')]))})
         except Exception:
-            lines.append("  skill registry: error")
+            rows.append({"item": "Skill registry", "value": "error"})
     try:
-        from src.jarvis.core.skill_harness.instructions import load_project_instruction_context
-
+        from jarvis.core.skill_harness.instructions import load_project_instruction_context
         instruction_ctx = load_project_instruction_context(_ROOT)
-        lines.append(f"  instruction sources: {len(instruction_ctx.sources)}")
-        lines.append(f"  instruction no_network: {instruction_ctx.no_network}")
-        lines.append(f"  instruction docs_only: {instruction_ctx.docs_only}")
+        rows.append({"item": "Instruction sources", "value": str(len(instruction_ctx.sources))})
+        rows.append({"item": "No network", "value": str(instruction_ctx.no_network)})
+        rows.append({"item": "Docs only", "value": str(instruction_ctx.docs_only)})
     except Exception:
-        lines.append("  instruction sources: unavailable")
-    lines.append(f"  mode: {state.mode}")
-    lines.append(f"  api_base: {state.api_base}")
-    return "\n".join(lines)
+        rows.append({"item": "Instruction sources", "value": "unavailable"})
+    rows.append({"item": "API base", "value": state.api_base})
+    return capture_rich(render_panel(
+        "\n".join(f"**{r['item']}:** {r['value']}" for r in rows),
+        title="Doctor Report",
+        border_style="divider",
+    ))
 
 
 def _shell_approve(state: ShellState, args: List[str]) -> str:
-    from src.jarvis.core.policy import get_approval_store
+    from jarvis.core.policy import get_approval_store
+    from .cli_ui.render import capture_rich, render_panel
 
     if not args:
         return "Usage: /approve <id>"
@@ -2743,17 +3291,15 @@ def _shell_approve(state: ShellState, args: List[str]) -> str:
     store = get_approval_store()
     response = store.approve(approval_id, decided_by="cli")
     if response is not None:
-        return "\n".join(
-            [
-                f"Approved: {approval_id}",
-                "Status: approved",
-                "Note: approval recorded; retry the original action to continue execution.",
-            ]
-        )
+        return capture_rich(render_panel(
+            f"**Status:** approved\n*Note: approval recorded; retry the original action to continue execution.*",
+            title=f"Approved: {approval_id}",
+            border_style="success",
+        ))
     if approval_id.lower() == "last":
         approval_id = next(reversed(state.approvals), "") if state.approvals else ""
     if approval_id not in state.approvals:
-        return f"Approval not found: {args[0]}"
+        return capture_rich(render_panel(f"Approval not found: {args[0]}", title="Error", border_style="error"))
     info = dict(state.approvals.pop(approval_id, {}))
     task_id = str(info.get("task_id") or "")
     kind = str(info.get("kind") or "")
@@ -2775,28 +3321,27 @@ def _shell_approve(state: ShellState, args: List[str]) -> str:
                 rec.setdefault("evidence", []).append({"kind": "rethink_records", "detail": apply_result["rethink_records"]})
             _append_shell_event(state, task_id, "task.completed", {"status": apply_result.get("status")})
         lines = [
-            f"Approved: {approval_id}",
             "Library project created.",
             "",
-            "Changed files",
+            "**Changed files**",
         ]
-        lines.extend([f"  - {item}" for item in list(apply_result.get("changed_files") or [])] or ["  - none"])
+        lines.extend([f"- {item}" for item in list(apply_result.get("changed_files") or [])] or ["- none"])
         lines.extend(
             [
                 "",
-                "Scoped test command",
+                "**Scoped test command**",
                 f"  {apply_result.get('command')}",
                 "",
-                "Test status",
+                "**Test status**",
                 f"  {apply_result.get('test_status')}",
             ]
         )
         if apply_result.get("rethink_records"):
-            lines.extend(["", "Rethink/Replan"])
-            lines.extend([f"  - {item.get('trigger')}: {item.get('action')}" for item in apply_result["rethink_records"]])
+            lines.extend(["", "**Rethink/Replan**"])
+            lines.extend([f"- {item.get('trigger')}: {item.get('action')}" for item in apply_result["rethink_records"]])
         if apply_result.get("summary"):
-            lines.extend(["", "Test output", str(apply_result.get("summary"))[:1200]])
-        return "\n".join(lines)
+            lines.extend(["", "**Test output**", str(apply_result.get("summary"))[:1200]])
+        return capture_rich(render_panel("\n".join(lines), title=f"Approved: {approval_id}", border_style="success"))
     if kind in {"edit_file", "edit_docs"}:
         apply_result = _apply_coding_fixture_patch() if kind == "edit_file" else _apply_cli_surface_doc_patch()
         changed_path = str(info.get("path", "examples/coding_fixture/calculator.py"))
@@ -2815,35 +3360,35 @@ def _shell_approve(state: ShellState, args: List[str]) -> str:
                 rec.setdefault("evidence", []).append({"kind": "patch_summary", "detail": apply_result.get("message", "")})
             _append_shell_event(state, task_id, "approval.resolved", {"approval_id": approval_id, "decision": "approved"})
             _append_shell_event(state, task_id, "task.completed", {"status": "completed"})
-        return f"Approved: {approval_id}\n{apply_result.get('message', '')}".strip()
+        return capture_rich(render_panel(apply_result.get('message', ''), title=f"Approved: {approval_id}", border_style="success"))
     if kind == "run_test":
         command = str(info.get("command") or "python -m pytest examples/coding_fixture -q")
         result = {"status": "dry_run", "command": command, "exit_code": None, "summary": "dry-run only"}
         if task_id in state.task_records:
             _append_shell_event(state, task_id, "approval.resolved", {"approval_id": approval_id, "decision": "approved"})
-        if state.mode == "edit":
-            try:
-                proc = subprocess.run(command.split(), capture_output=True, text=True, encoding="utf-8", errors="replace", cwd=str(_ROOT), timeout=60)
-                result = {
-                    "status": "passed" if proc.returncode == 0 else "failed",
-                    "command": command,
-                    "exit_code": proc.returncode,
-                    "summary": (proc.stdout or proc.stderr or "").strip()[:600],
-                }
-            except Exception as exc:
-                result = {"status": "error", "command": command, "exit_code": None, "summary": type(exc).__name__}
+        try:
+            proc = subprocess.run(command.split(), capture_output=True, text=True, encoding="utf-8", errors="replace", cwd=str(_ROOT), timeout=60)
+            result = {
+                "status": "passed" if proc.returncode == 0 else "failed",
+                "command": command,
+                "exit_code": proc.returncode,
+                "summary": (proc.stdout or proc.stderr or "").strip()[:600],
+            }
+        except Exception as exc:
+            result = {"status": "error", "command": command, "exit_code": None, "summary": type(exc).__name__}
         if task_id in state.task_records:
             state.task_records[task_id]["tests"] = result
             state.task_records[task_id].setdefault("evidence", []).append(
                 {"kind": "test_result", "detail": {"status": result["status"], "command": command}}
             )
             _append_shell_event(state, task_id, "test.executed" if result["status"] != "dry_run" else "test.dry_run", {"command": command, "status": result["status"]})
-        return f"Approved: {approval_id}\nTest status: {result['status']}\nCommand: {command}"
-    return f"Approved: {approval_id}"
+        return capture_rich(render_panel(f"**Test status:** {result['status']}\n**Command:** {command}", title=f"Approved: {approval_id}", border_style="success"))
+    return capture_rich(render_panel(f"Approved: {approval_id}", title="Approved", border_style="success"))
 
 
 def _shell_reject(state: ShellState, args: List[str]) -> str:
-    from src.jarvis.core.policy import get_approval_store
+    from jarvis.core.policy import get_approval_store
+    from .cli_ui.render import capture_rich, render_panel
 
     if not args:
         return "Usage: /deny <id>"
@@ -2851,28 +3396,29 @@ def _shell_reject(state: ShellState, args: List[str]) -> str:
     store = get_approval_store()
     response = store.deny(approval_id, decided_by="cli")
     if response is not None:
-        return f"Denied: {approval_id}\nStatus: denied"
+        return capture_rich(render_panel("**Status:** denied", title=f"Denied: {approval_id}", border_style="error"))
     if approval_id.lower() == "last":
         approval_id = next(reversed(state.approvals), "") if state.approvals else ""
     if approval_id not in state.approvals:
-        return f"Approval not found: {args[0]}"
+        return capture_rich(render_panel(f"Approval not found: {args[0]}", title="Error", border_style="error"))
     info = dict(state.approvals.pop(approval_id, {}))
     task_id = str(info.get("task_id") or "")
     if task_id in state.task_records:
         _append_shell_event(state, task_id, "approval.resolved", {"approval_id": approval_id, "decision": "rejected"})
-    return f"Rejected: {approval_id}"
+    return capture_rich(render_panel(f"Rejected: {approval_id}", title="Rejected", border_style="error"))
 
 
 def _shell_replay(state: ShellState, args: List[str]) -> str:
+    from .cli_ui.render import capture_rich, render_panel
+
     task_id = args[0] if args else state.latest_task_id
     if task_id and task_id in state.task_records:
         record = state.task_records[task_id]
-        lines = ["Replay", "", f"Task: {task_id}", "Events:"]
-        for event in list(record.get("events") or []):
-            lines.append(f"  {event.get('type')}")
-        return "\n".join(lines)
+        events_text = "\n".join(f"- {event.get('type')}" for event in list(record.get("events") or [])) or "- none"
+        body = f"**Task:** {task_id}\n\n**Events:**\n{events_text}"
+        return capture_rich(render_panel(body, title="Replay", border_style="divider"))
     if not task_id:
-        return "Replay unavailable: no task selected."
+        return capture_rich(render_panel("Replay unavailable: no task selected.", title="Replay", border_style="divider"))
     try:
         res = _get_adapter().get_task_replay(task_id)
         if res.ok:
@@ -2883,16 +3429,16 @@ def _shell_replay(state: ShellState, args: List[str]) -> str:
 
 
 def _shell_evidence(state: ShellState, args: List[str]) -> str:
+    from .cli_ui.render import capture_rich, render_panel
+
     task_id = args[0] if args else state.latest_task_id
     if task_id and task_id in state.task_records:
         record = state.task_records[task_id]
-        lines = ["Evidence", "", f"Task: {task_id}", "Items:"]
-        for item in list(record.get("evidence") or []):
-            kind = item.get("kind", "unknown")
-            lines.append(f"  - {kind}")
-        return "\n".join(lines)
+        items_text = "\n".join(f"- {item.get('kind', 'unknown')}" for item in list(record.get("evidence") or [])) or "- none"
+        body = f"**Task:** {task_id}\n\n**Items:**\n{items_text}"
+        return capture_rich(render_panel(body, title="Evidence", border_style="divider"))
     if not task_id:
-        return "Evidence unavailable: no task selected."
+        return capture_rich(render_panel("Evidence unavailable: no task selected.", title="Evidence", border_style="divider"))
     try:
         res = _get_adapter().get_task_evidence(task_id)
         if res.ok:
@@ -2910,11 +3456,13 @@ def _clear_state(state: ShellState) -> str:
     state.latest_task_id = ""
     state.task_counter = 0
     state.approval_counter = 0
-    return "Context cleared."
+    new_id = f"session_{uuid4().hex[:12]}"
+    state.current_thread_id = new_id
+    return f"New session: {new_id}"
 
 
 def _run_repo_inspection(user_input: str) -> Dict[str, Any]:
-    from src.jarvis.core.repo_inspection import RepoInspectionRequest, inspect_repo
+    from jarvis.core.repo_inspection import RepoInspectionRequest, inspect_repo
 
     result = inspect_repo(
         RepoInspectionRequest(
@@ -2924,17 +3472,6 @@ def _run_repo_inspection(user_input: str) -> Dict[str, Any]:
         session_id="cli_shell",
     )
     return result.to_dict()
-
-
-def _run_coding_loop(user_input: str) -> Dict[str, Any]:
-    from src.jarvis.core.coding_loop.orchestrator import run_coding_loop
-
-    return run_coding_loop(
-        user_input,
-        Path.cwd(),
-        max_rounds=3,
-        auto_approve=False,
-    )
 
 
 def _queue_library_project_approval(state: ShellState, user_input: str) -> str:
@@ -2962,7 +3499,7 @@ def _queue_library_project_approval(state: ShellState, user_input: str) -> str:
         plan=plan,
         events=[
             {"type": "task.created", "detail": {"task_id": task_id}, "ts": _iso_now()},
-            {"type": "coding_loop.entered", "detail": {"requires_write": True, "requires_shell": True}, "ts": _iso_now()},
+            {"type": "agent_tool_loop.entered", "detail": {"requires_write": True, "requires_shell": True}, "ts": _iso_now()},
             {"type": "plan.created", "detail": {"files": list(_LIBRARY_PROJECT_FILES)}, "ts": _iso_now()},
             {"type": "approval.requested", "detail": {"approval_id": approval_id}, "ts": _iso_now()},
         ],
@@ -3285,9 +3822,9 @@ def _apply_library_project(state: ShellState, task_id: str) -> Dict[str, Any]:
     return result
 
 
-def _handle_natural_language(state: ShellState, user_input: str) -> str:
+def _handle_natural_language(state: ShellState, user_input: str, *, auto_approve: bool = True) -> str:
     _maybe_warn_legacy_nl_escape_hatch(state)
-    return run_agent_turn_for_cli(user_input, state=state, output_mode="default", interactive=True)
+    return run_agent_turn_for_cli(user_input, state=state, output_mode="default", interactive=True, auto_approve=auto_approve)
 
 
 def _maybe_warn_legacy_nl_escape_hatch(state: ShellState) -> None:
@@ -3302,9 +3839,9 @@ def _maybe_warn_legacy_nl_escape_hatch(state: ShellState) -> None:
 
 
 def _handle_slash_command(state: ShellState, raw: str, envelope: Optional[Any] = None) -> Optional[str]:
-    from src.jarvis.core.routing.command_router import route_command
-    from src.jarvis.core.routing.input_gateway import build_input_envelope
-    from src.jarvis.core.routing.skill_command_router import route_skill_command
+    from jarvis.core.routing.command_router import route_command
+    from jarvis.core.routing.input_gateway import build_input_envelope
+    from jarvis.core.routing.skill_command_router import route_skill_command
 
     envelope = envelope or build_input_envelope(raw, workspace_root=Path.cwd(), session_id="cli_shell")
     command = route_command(envelope)
@@ -3329,6 +3866,9 @@ def _handle_slash_command(state: ShellState, raw: str, envelope: Optional[Any] =
         "/status": lambda: _shell_status(state),
         "/config": lambda: _shell_config(),
         "/settings": lambda: _shell_config(),
+        "/model": lambda: _shell_model(state, args),
+        "/provider": lambda: _shell_provider(state, args),
+        "/mode": lambda: _shell_mode(state, args),
         "/tools": lambda: _shell_tools(),
         "/skills": lambda: _shell_skills(args),
         "/skill": lambda: _shell_skill(args, envelope),
@@ -3339,24 +3879,30 @@ def _handle_slash_command(state: ShellState, raw: str, envelope: Optional[Any] =
         "/approve": lambda: _shell_approve(state, args),
         "/deny": lambda: _shell_reject(state, args),
         "/reject": lambda: _shell_reject(state, args),
-        "/mode": lambda: _shell_mode(state, args),
         "/plan": lambda: _shell_plan(state, args),
         "/diff": lambda: _shell_diff(state),
         "/test": lambda: _shell_test(state, args),
         "/fix": lambda: _shell_fix(state, args),
+        "/build": lambda: _shell_build(state, args),
+        "/mcp": lambda: _shell_mcp(args, state),
         "/review": lambda: _shell_review(state),
         "/replay": lambda: _shell_replay(state, args),
         "/evidence": lambda: _shell_evidence(state, args),
         "/logs": lambda: _shell_logs(),
         "/doctor": lambda: _shell_doctor(state),
         "/server": lambda: _shell_server(state),
-        "/web": lambda: f"Web UI: {DEFAULT_WEB_URL}",
-        "/app": lambda: f"Web UI: {DEFAULT_WEB_URL}",
+        "/web": lambda: _render_web_ui(),
+        "/app": lambda: _render_web_ui(),
         "/tasks": lambda: _shell_tasks(state, args),
+        "/worktree": lambda: _shell_worktree(args),
+        "/team": lambda: _shell_team(args),
+        "/bg": lambda: _shell_bg(args),
         "/state": lambda: _shell_state(),
+        "/thinking": lambda: _shell_thinking(state),
         "/trace": lambda: _shell_trace(state, args),
         "/context": lambda: _shell_context(state, args),
         "/threads": lambda: _shell_threads(state, args),
+        "/sessions": lambda: _shell_threads(state, args),
         "/memory": lambda: _shell_memory(state, args),
         "/agents": lambda: _shell_agents(state),
     }
@@ -3388,58 +3934,154 @@ def _handle_slash_command(state: ShellState, raw: str, envelope: Optional[Any] =
     return _render_unknown_command(cmd, suggest_commands(cmd))
 
 
-def run_shell(initial_prompt: Optional[str] = None) -> int:
-    from src.jarvis.core.routing.input_gateway import build_input_envelope
+def run_shell_tui(initial_prompt: Optional[str] = None, *, session_id: str | None = None) -> int:
+    """Interactive REPL using the React/Ink + Yoga Flexbox TUI.
 
-    state = ShellState(DEFAULT_API_BASE)
-    _safe_print(_render_shell_header(os.getcwd(), state.mode, state.model, provider_line=state.provider_status_line))
+    Launches a Node.js child process (Ink TUI) that communicates with the
+    Python backend via stdin/stdout JSON protocol.
+
+    The Ink TUI provides Claude Code-level UX:
+      - Yoga Layout (Flexbox) for terminal grid positioning
+      - React reconciler for virtual DOM diffing
+      - ANSI optimizer for minimal frame updates
+    """
+    return _run_ink_tui(initial_prompt=initial_prompt, session_id=session_id)
+
+
+def _run_ink_tui(
+    initial_prompt: str | None = None,
+    *,
+    session_id: str | None = None,
+) -> int:
+    """Launch the React/Ink + Yoga Flexbox TUI as a Node.js child process.
+
+    The Node TUI communicates with a Python backend (tui_bridge) via stdin/stdout
+    JSON protocol. This gives Claude Code-level TUI quality:
+      - Ink's React reconciler for virtual DOM diffing
+      - Yoga Layout (C++ Flexbox) for terminal grid layout
+      - Ink's ANSI optimizer for minimal frame updates
+
+    Requires Node.js and the jarvis_tui/ directory with installed dependencies.
+    """
+    import shutil
+    import subprocess
+
+    node = shutil.which("node") or shutil.which("node.exe")
+    if not node:
+        _safe_print("Node.js is required for the Ink TUI. Install Node.js or unset JARVIS_INK_TUI.")
+        return 1
+
+    tui_dir = Path(__file__).resolve().parent.parent.parent / "jarvis_tui"
+    if not tui_dir.is_dir():
+        _safe_print(f"Ink TUI directory not found: {tui_dir}")
+        return 1
+
+    entry = tui_dir / "src" / "entry.tsx"
+    if not entry.exists():
+        _safe_print(f"Ink TUI entry point not found: {entry}")
+        return 1
+
+    # Find the project Python
+    python_path = sys.executable or shutil.which("python") or "python"
+
+    # Detect model and git branch
+    model_name = os.environ.get("JARVIS_LLM_MODEL", "deepseek-v4-pro")
+    branch = ""
+    try:
+        head = (Path.cwd() / ".git" / "HEAD").read_text().strip()
+        if head.startswith("ref: refs/heads/"):
+            branch = head[len("ref: refs/heads/"):]
+    except Exception:
+        pass
+
+    # Use node to run tsx directly (avoids .bin shim issues on Windows)
+    tsx_cli = tui_dir / "node_modules" / "tsx" / "dist" / "cli.mjs"
+    if not tsx_cli.exists():
+        tsx_cli = tui_dir / "node_modules" / "tsx" / "dist" / "cli.js"
+    if tsx_cli.exists():
+        tsx_args = [node, str(tsx_cli), str(entry)]
+    else:
+        _safe_print("tsx not found in node_modules. Run: cd jarvis_tui && npm install")
+        return 1
+
+    args = [
+        *tsx_args,
+        "--python", python_path,
+        "--cwd", str(Path.cwd()),
+        "--model", model_name,
+        "--branch", branch,
+        "--mode", "default",
+    ]
     if initial_prompt:
-        _safe_print("\n" + _handle_natural_language(state, initial_prompt))
+        args.extend(["--prompt", initial_prompt])
+
+    # Run Node TUI; it spawns the Python bridge internally
+    try:
+        result = subprocess.run(args, cwd=str(tui_dir))
+        return result.returncode
+    except FileNotFoundError:
+        _safe_print(f"Node.js not found at: {node}")
+        return 1
+    except KeyboardInterrupt:
+        return 0
+
+
+def _run_bridge_blocking(prompt_text: str, tui: Any) -> None:
+    """Run agent bridge with synchronous polling (used for initial_prompt before TUI starts).
+
+    Uses ChunkRenderer — the same chunk processor used by the TUI's _poll_bridge_sync.
+    """
+    import time
+    from jarvis.cli_ui.agent_bridge import AgentThreadBridge
+    from jarvis.cli_ui.chunk_renderer import ChunkRenderer, ChunkRendererState
+    from jarvis.cli_ui.tui_utils import render_markdown
+    from jarvis.cli_ui.streaming import _format_elapsed
+
+    bridge = AgentThreadBridge(permission_mode="workspace_write", auto_approve=True)
+    bridge.start(prompt=prompt_text, tui=tui, session_id=tui.session_name)
+
+    state = ChunkRendererState(started_at=time.monotonic())
+    renderer = ChunkRenderer(state, write_line=tui.write_line)
+
     while True:
         try:
-            line = input(SHELL_PROMPT)
-        except (EOFError, KeyboardInterrupt):
-            _safe_print("\nbye")
-            return 0
-        if line is None:
+            chunk = bridge.chunk_queue.get(timeout=0.1)
+        except Exception:
             continue
-        raw = line.rstrip("\n")
-        if not raw.strip():
+
+        if chunk is None:
+            break
+
+        try:
+            renderer.handle_chunk(chunk)
+        except Exception:
             continue
-        envelope = build_input_envelope(raw, workspace_root=Path.cwd(), session_id="cli_shell")
-        if envelope.slash.is_slash_command:
-            result = _handle_slash_command(state, raw, envelope=envelope)
-            if result is None:
-                return 0
-            _safe_print("\n" + result)
-            continue
-        _safe_print("\n" + _handle_natural_language(state, raw))
+
+    answer, thinking, tools = renderer.finalize()
+
+    # Store state in tui for toggle support
+    if thinking.strip():
+        tui._last_thinking_text = thinking.strip()
+    tui._last_tools_data = tools
+
+    # Render final answer as markdown
+    if answer.strip():
+        width = min(tui._terminal_width(), 100)
+        rendered = render_markdown(answer.strip(), width=max(width, 40))
+        tui.write(rendered + "\n")
+
+    elapsed = renderer.elapsed
+    tui._last_latency = _format_elapsed(elapsed)
+    tui._last_status_line = f"[dim]  {tui._last_latency}[/dim]"
+    tui._render_toggle_block()
 
 
-def run_shell_from_text(input_text: str) -> int:
-    from src.jarvis.core.routing.input_gateway import build_input_envelope
 
-    state = ShellState(DEFAULT_API_BASE)
-    _safe_print(_render_shell_header(os.getcwd(), state.mode, state.model, provider_line=state.provider_status_line))
-    for raw in (input_text or "").splitlines():
-        if not raw.strip():
-            continue
-        envelope = build_input_envelope(raw, workspace_root=Path.cwd(), session_id="cli_shell")
-        if envelope.slash.is_slash_command:
-            result = _handle_slash_command(state, raw, envelope=envelope)
-            if result is None:
-                return 0
-            _safe_print("\n" + result)
-            continue
-        _safe_print("\n" + _handle_natural_language(state, raw))
-    return 0
-
-
-def _run_non_interactive(prompt: str) -> int:
+def _run_non_interactive(prompt: str, *, auto_approve: bool = False) -> int:
     state = ShellState(DEFAULT_API_BASE)
     state.trace_enabled = True
     _safe_print(state.provider_status_line)
-    _safe_print(_handle_natural_language(state, prompt))
+    _safe_print(_handle_natural_language(state, prompt, auto_approve=auto_approve))
     return 0
 
 
@@ -3493,28 +4135,6 @@ def _render_agent_result_text(*, result: Any, provider_line: str, output_mode: s
     )
 
 
-def _local_model_answer(state: ShellState) -> str:
-    line = str(state.provider_status_line or "")
-    model = re.search(r"model=([^\s]+)", line)
-    provider = re.search(r"LLM provider:\s*([^\s]+)", line)
-    base = re.search(r"base_url=([^\s]+)", line)
-    key_present = "api_key=present" in line
-    key_state_text = "\u5df2\u914d\u7f6e" if key_present else "\u672a\u914d\u7f6e"
-    return (
-        f"\u5f53\u524d\u914d\u7f6e\u7684 LLM \u662f {model.group(1) if model else 'unknown'}\uff0c"
-        f"provider \u662f {provider.group(1) if provider else 'unknown'}\uff0c"
-        f"base_url \u662f {base.group(1) if base else 'unknown'}\uff0c"
-        f"API key {key_state_text}\u3002"
-    )
-
-
-def _local_capability_answer() -> str:
-    return (
-        "\u53ef\u4ee5\u3002\u6211\u53ef\u4ee5\u8bfb\u53d6\u548c\u89e3\u91ca\u5f53\u524d\u9879\u76ee\u3001\u641c\u7d22\u4ee3\u7801\u3001\u751f\u6210\u4fee\u6539\u65b9\u6848\uff0c"
-        "\u5728\u5b89\u5168\u5ba1\u6279\u540e\u4fee\u6539\u6587\u4ef6\uff0c\u5e76\u8fd0\u884c\u6d4b\u8bd5\u603b\u7ed3\u7ed3\u679c\u3002"
-    )
-
-
 def _local_agent_result(
     *,
     final_answer: str,
@@ -3552,181 +4172,6 @@ def _local_agent_result(
     )
 
 
-def _quick_agent_result_for_cli(prompt: str, state: ShellState) -> Any | None:
-    if _looks_like_sensitive_or_dangerous(prompt):
-        return _local_agent_result(
-            final_answer="不能直接打印 .env 或 API key，因为其中可能包含敏感凭据。",
-            output_type="refusal",
-            stop_reason="safety_refusal",
-            risks=["sensitive_env_requested", "secret_requested"],
-        )
-    if _looks_like_model_question(prompt):
-        return _local_agent_result(final_answer=_local_model_answer(state), output_type="answer")
-    if _looks_like_capability_question(prompt):
-        return _local_agent_result(final_answer=_local_capability_answer(), output_type="answer")
-    if _looks_like_greeting(prompt):
-        return _local_agent_result(
-            final_answer="你好，我在。可以帮你阅读项目、解释代码、规划修改，并在需要审批时安全地执行工具任务。",
-            output_type="answer",
-        )
-    return None
-
-
-def _looks_like_model_question(text: str) -> bool:
-    low = (text or "").lower()
-    return any(
-        t in low
-        for t in (
-            "\u4f60\u662f\u4ec0\u4e48\u6a21\u578b",
-            "\u5f53\u524d\u6a21\u578b\u662f\u4ec0\u4e48",
-            "\u4f60\u7528\u7684\u662f\u4ec0\u4e48\u6a21\u578b",
-            "what model",
-            "which model",
-        )
-    )
-
-
-def _looks_like_capability_question(text: str) -> bool:
-    low = (text or "").lower()
-    return any(
-        t in low
-        for t in (
-            "\u4f60\u80fd\u5e2e\u6211\u5199\u4ee3\u7801\u5417",
-            "\u4f60\u4f1a\u5199\u4ee3\u7801\u5417",
-            "\u4f60\u80fd\u505a\u4ec0\u4e48",
-            "what can you do",
-            "can you code",
-        )
-    )
-
-
-def _looks_like_identity_question(text: str) -> bool:
-    low = (text or "").lower()
-    return any(
-        t in low
-        for t in (
-            "\u4f60\u662f\u8c01",
-            "\u4f60\u662f\u4ec0\u4e48",
-            "who are you",
-            "what are you",
-        )
-    )
-
-
-def _looks_like_greeting(text: str) -> bool:
-    low = (text or "").lower().strip()
-    return low in {
-        "hi",
-        "hello",
-        "hey",
-        "good morning",
-        "good afternoon",
-        "good evening",
-        "\u4e0b\u5348\u597d",
-        "\u665a\u4e0a\u597d",
-        "\u65e9\u4e0a\u597d",
-        "\u4f60\u597d",
-    }
-
-
-def _looks_like_joke_request(text: str) -> bool:
-    low = (text or "").lower()
-    return "\u7b11\u8bdd" in text or "joke" in low
-
-
-def _looks_like_sensitive_or_dangerous(text: str) -> bool:
-    low = (text or "").lower()
-    if any(t in low for t in (".env", "jarvis_llm_api_key", "api key", "token", "id_rsa", "password", "secret")):
-        return True
-    if ("curl " in low or "wget " in low) and ("| sh" in low or "| bash" in low):
-        return True
-    if "invoke-webrequest" in low and ("| iex" in low or "invoke-expression" in low):
-        return True
-    if "rm -rf" in low or "\u5220\u9664\u6574\u4e2a\u9879\u76ee" in text:
-        return True
-    return False
-
-
-def _looks_like_work_request(text: str) -> bool:
-    low = (text or "").lower()
-    markers = (
-        "\u8bfb\u53d6",
-        "readme",
-        "read file",
-        "\u5217\u4e00\u4e0b\u5f53\u524d\u76ee\u5f55",
-        "鍒椾竴涓嬪綋鍓嶇洰褰",
-        "current directory",
-        "run pytest",
-        "\u8fd0\u884c pytest",
-        "fix ",
-        "\u4fee\u590d",
-        "modify",
-        "\u4fee\u6539",
-        "\u6d4b\u8bd5",
-    )
-    return any(m in low for m in markers)
-
-
-def run_agent_turn_for_cli(
-    prompt: str,
-    *,
-    state: ShellState | None = None,
-    output_mode: str = "default",
-    interactive: bool = False,
-) -> str:
-    state = state or ShellState(DEFAULT_API_BASE)
-    if _looks_like_sensitive_or_dangerous(prompt):
-        return "Jarvis\n这个请求涉及敏感信息或危险操作，不能直接执行。"
-    if not _looks_like_work_request(prompt):
-        if _looks_like_identity_question(prompt):
-            return "Jarvis\nI am Jarvis, a local coding assistant. I can inspect repositories, explain code, plan changes, and run approved tests."
-        if _looks_like_capability_question(prompt):
-            return "Jarvis\n" + _local_capability_answer()
-        if _looks_like_model_question(prompt):
-            return "Jarvis\n" + _local_model_answer(state)
-        if _looks_like_greeting(prompt):
-            return "Jarvis\nHi, I'm here. I can inspect repositories, explain code, plan changes, and run approved tests."
-        if _looks_like_joke_request(prompt):
-            return "Jarvis\nWhy did the programmer like nighttime debugging? Because during the day, bugs pretend to be requirements."
-    from src.jarvis.agent.loop import AgentLoop
-    from src.jarvis.agent.types import ChatInput
-
-    loop = AgentLoop(
-        project_root=str(_ROOT),
-        permission_mode="workspace_write" if state.mode in {"edit", "ask"} else "read_only",
-        auto_approve=False,
-    )
-    result = loop.run_turn(
-        ChatInput(
-            text=prompt,
-            cwd=str(Path.cwd()),
-            session_id=state.current_thread_id,
-            metadata={"source": "jarvis.cli", "mode": output_mode},
-        )
-    )
-    rendered = _render_agent_result_text(result=result, provider_line=state.provider_status_line, output_mode=output_mode)
-    final_answer = str(getattr(result, "final_answer", "") or "")
-    has_provider_failure = "无法连接 LLM" in rendered
-    if not interactive:
-        return rendered
-    if final_answer and not has_provider_failure:
-        return rendered
-    # interactive fallback for model/capability Q should be direct, not generic clarify/network noise
-    if _looks_like_model_question(prompt):
-        return "Jarvis\n" + _local_model_answer(state)
-    if _looks_like_identity_question(prompt):
-        return "Jarvis\n\u6211\u662f Jarvis\uff0c\u672c\u5730\u5f00\u53d1\u52a9\u624b\u3002\u6211\u53ef\u4ee5\u5e2e\u4f60\u8bfb\u9879\u76ee\u3001\u89c4\u5212\u4fee\u6539\u3001\u5728\u5ba1\u6279\u540e\u6267\u884c\u6539\u52a8\u548c\u6d4b\u8bd5\u3002"
-    if _looks_like_capability_question(prompt):
-        return "Jarvis\n" + _local_capability_answer()
-    if _looks_like_greeting(prompt):
-        return "Jarvis\nHi, I’m here. I can inspect repositories, explain code, plan changes, and run approved tests."
-    if _looks_like_joke_request(prompt):
-        return "Jarvis\n\u4e3a\u4ec0\u4e48\u7a0b\u5e8f\u5458\u559c\u6b22\u6df1\u591c\u4fee bug\uff1f\u56e0\u4e3a\u767d\u5929 bug \u4f1a\u88c5\u4f5c\u9700\u6c42\u3002"
-    if _looks_like_work_request(prompt):
-        return "Jarvis\n[WORK] 无法连接 LLM，未执行工具。请检查网络后重试。"
-    return rendered
-
-
 def _friendly_cli_error_stop_reason(exc: BaseException) -> str:
     lowered = f"{type(exc).__name__}: {exc}".lower()
     if any(marker in lowered for marker in ("winerror 10013", "connection", "timed out", "timeout", "refused", "reset", "certificate")):
@@ -3755,31 +4200,91 @@ def run_agent_turn_for_cli(
     state: ShellState | None = None,
     output_mode: str = "default",
     interactive: bool = False,
+    auto_approve: bool = False,
 ) -> str:
     _ = interactive
     state = state or ShellState(DEFAULT_API_BASE)
-    quick_result = _quick_agent_result_for_cli(prompt, state)
-    if quick_result is not None:
-        return _render_agent_result_text(result=quick_result, provider_line=state.provider_status_line, output_mode=output_mode)
 
-    from src.jarvis.agent.loop import AgentLoop
-    from src.jarvis.agent.types import ChatInput
+    from jarvis.agent.loop import AgentLoop
+    from jarvis.agent.types import ChatInput
 
+    def _cli_user_prompt(*, question: str, header: str, options: list, multi_select: bool) -> dict:
+        """CLI callback for agent.ask_user — renders question and reads answer."""
+        # Pause the streaming display so the prompt text isn't overwritten
+        from jarvis.cli_ui.streaming import StreamingDisplay
+        active = StreamingDisplay._active_display
+        if active is not None:
+            active.pause()
+
+        lines = [f"\n{'─' * 50}", f"  {header or '?'}: {question}", ""]
+        for i, opt in enumerate(options, 1):
+            label = opt.get("label", f"Option {i}")
+            desc = opt.get("description", "")
+            lines.append(f"  [{i}] {label} — {desc}")
+        if multi_select:
+            lines.append(f"\n  Enter numbers (e.g. 1,3) or type 'all':")
+        else:
+            lines.append(f"\n  Enter number (1-{len(options)}) or type label:")
+        _safe_print("\n".join(lines))
+        try:
+            raw = input("> ").strip()
+        except (EOFError, KeyboardInterrupt):
+            if active is not None:
+                active.resume()
+            return {"answers": {}, "note": "user_cancelled"}
+
+        # Resume the streaming display
+        if active is not None:
+            active.resume()
+        if not raw:
+            return {"answers": {}, "note": "no_selection"}
+        if multi_select:
+            if raw.lower() == "all":
+                indices = list(range(1, len(options) + 1))
+            else:
+                indices = [int(x.strip()) for x in raw.split(",") if x.strip().isdigit()]
+            selected = {str(options[i - 1].get("label", "")): options[i - 1].get("label", "") for i in indices if 1 <= i <= len(options)}
+            return {"answers": selected}
+        else:
+            if raw.isdigit():
+                i = int(raw)
+                if 1 <= i <= len(options):
+                    label = options[i - 1].get("label", "")
+                    return {"answers": {label: label}}
+            for opt in options:
+                if opt.get("label", "").lower() == raw.lower():
+                    return {"answers": {opt["label"]: opt["label"]}}
+            return {"answers": {raw: raw}}
+
+    # Adaptive max_steps: coding tasks get 20, simple Q&A gets 8
+    _coding_markers = ("修复", "修改", "实现", "fix", "implement", "change", "update", "create", "新建", "创建", "写", "补测试", "重构", "refactor", "patch", "bug", "test ")
+    _is_coding = any(m in prompt.lower() for m in _coding_markers)
+    adaptive_steps = 20 if _is_coding else 8
+
+    streaming_used = False
     try:
         loop = AgentLoop(
-            project_root=str(_ROOT),
-            permission_mode="workspace_write" if state.mode in {"edit", "ask"} else "read_only",
-            auto_approve=False,
+            project_root=str(Path.cwd()),
+            permission_mode=state.permission_mode,
+            auto_approve=auto_approve,
+            max_steps=adaptive_steps,
+            user_prompt=_cli_user_prompt,
         )
-        result = loop.run_turn(
-            ChatInput(
-                text=prompt,
-                cwd=str(Path.cwd()),
-                session_id=state.current_thread_id,
-                metadata={"source": "jarvis.cli", "mode": output_mode},
+        # Use streaming path when output_mode is "default" (console) and not trace/json
+        streaming_used = output_mode in ("default", "quiet") and not state.trace_enabled
+        if streaming_used:
+            result = _run_agent_streaming(loop, prompt, state)
+        else:
+            result = loop.run_turn(
+                ChatInput(
+                    text=prompt,
+                    cwd=str(Path.cwd()),
+                    session_id=state.current_thread_id,
+                    metadata={"source": "jarvis.cli", "mode": output_mode},
+                )
             )
-        )
     except Exception as exc:
+        streaming_used = False  # Fall back to text rendering so error is visible
         result = _local_agent_result(
             final_answer=_friendly_cli_error_message(exc),
             output_type="error",
@@ -3788,14 +4293,236 @@ def run_agent_turn_for_cli(
             ok=False,
             events=[{"type": "turn_failed", "payload": {"error": _safe_text(str(exc)), "error_type": type(exc).__name__}}],
         )
-    return _render_agent_result_text(result=result, provider_line=state.provider_status_line, output_mode=output_mode)
+
+    # When streaming was used, answer was already rendered inline; skip duplicate
+    if streaming_used:
+        context_warning = _build_context_warning(result)
+        return ("\n" + context_warning) if context_warning else ""
+
+    # Context window warning
+    context_warning = _build_context_warning(result)
+    rendered = _render_agent_result_text(result=result, provider_line=state.provider_status_line, output_mode=output_mode)
+    if context_warning:
+        return rendered + "\n" + context_warning
+    return rendered
 
 
-def _run_non_interactive_with_mode(prompt: str, *, output_mode: str = "default") -> int:
+def _build_context_warning(result: Any) -> str:
+    """Extract context window usage from agent events and build warning if needed."""
+    events = getattr(result, "events", []) or []
+    for event in events:
+        payload = event.get("payload", {}) if isinstance(event, dict) else {}
+        event_type = event.get("type", "") if isinstance(event, dict) else ""
+        if event_type == "context_window_usage" or "context_window_usage" in str(event_type):
+            pct = float(payload.get("usage_pct", 0))
+            used = int(payload.get("used_tokens", 0))
+            window = int(payload.get("context_window", 0))
+            if pct >= 0.90:
+                return f"\n[WARNING] Context {pct:.0%} full ({used}/{window} tokens). Consider using /new to start fresh."
+            elif pct >= 0.80:
+                return f"\n[INFO] Context {pct:.0%} used ({used}/{window} tokens)."
+    return ""
+
+
+def _is_pipe_output() -> bool:
+    """Return True if stdout is redirected (pipe, file, non-TTY)."""
+    import sys
+    return not sys.stdout.isatty()
+
+
+def _render_post_stream_toggles(thinking_text: str, tools: list[dict]) -> None:
+    """Show collapsed thinking/tools hints with Ctrl+T/Ctrl+O in-place toggles.
+
+    Uses ANSI escape codes to replace (not append) the toggle content on each
+    keypress. The listener runs for 60 seconds in a daemon thread.
+    """
+    import sys
+
+    from jarvis.cli_ui.streaming import StreamingDisplay
+    from jarvis.cli_ui.key_listener import listen_for_key
+
+    if not thinking_text and not tools:
+        return
+
+    state = {
+        "thinking_expanded": False,
+        "tools_expanded": False,
+        "lines": 0,
+    }
+
+    def _render_all() -> str:
+        parts: list[str] = []
+        if thinking_text:
+            parts.append(
+                StreamingDisplay.render_thinking(
+                    thinking_text, expanded=state["thinking_expanded"]
+                )
+            )
+        if tools:
+            parts.append(
+                StreamingDisplay.render_tools_summary(
+                    tools, expanded=state["tools_expanded"]
+                )
+            )
+        return "".join(parts)
+
+    # Initial render
+    output = _render_all()
+    sys.stdout.write(output + "\n")
+    state["lines"] = output.count("\n") + 1
+    sys.stdout.flush()
+
+    def on_key(key: str) -> bool:
+        if key == "\x14" and thinking_text:  # Ctrl+T
+            state["thinking_expanded"] = not state["thinking_expanded"]
+        elif key == "\x0f" and tools:  # Ctrl+O
+            state["tools_expanded"] = not state["tools_expanded"]
+        else:
+            return False  # keep listening
+
+        # ANSI: cursor up N lines + clear to end of screen
+        sys.stdout.write(f"\x1b[{state['lines']}A\x1b[J")
+        new_output = _render_all()
+        sys.stdout.write(new_output + "\n")
+        state["lines"] = new_output.count("\n") + 1
+        sys.stdout.flush()
+        return False
+
+    listen_for_key(on_key, timeout=60.0)
+
+
+def _run_agent_streaming(loop: Any, prompt: str, state: ShellState) -> Any:
+    """Run agent turn with rich streaming display, returning AgentRunResult.
+
+    The loop now classifies text per step:
+    - ``progress_delta`` → transient progress shown in the Thinking panel
+    - ``text_delta`` → answer text or tool observation shown in the answer area
+    On finish, the Thinking panel collapses and only the final answer remains.
+    Use Ctrl+T / Ctrl+O to toggle thinking and tool summaries after the answer.
+    """
+    import re
+    from jarvis.agent.types import ChatInput, AgentRunResult
+    from jarvis.cli_ui.streaming import StreamingDisplay
+
+    chat_input = ChatInput(
+        text=prompt,
+        cwd=str(Path.cwd()),
+        session_id=state.current_thread_id,
+        metadata={"source": "jarvis.cli", "mode": "streaming"},
+    )
+    _BOS_TOKENS = ("<｜begin▁of▁sentence｜>", "<｜begin_of_sentence｜>", "<｜end▁of▁sentence｜>", "<｜end_of_sentence｜>")
+    # Pattern: \n[Tool `name`: result] — injected by loop.py after tool execution
+    _TOOL_RESULT_RE = re.compile(r'^\n?\[Tool `([^`]+)`:\s*(.*?)\]$', re.DOTALL)
+
+    collected_answer: list[str] = []
+    tool_events: list[dict[str, Any]] = []
+    tool_index_queue: list[int] = []   # FIFO — matches tool result order from loop.py
+    final_result: dict[str, Any] | None = None
+    output_tokens = 0
+
+    with StreamingDisplay() as display:
+        try:
+            for chunk in loop.run_turn_stream(chat_input):
+                try:
+                    if chunk.kind == "progress_delta":
+                        text = (chunk.progress_delta or "")
+                        for tok in _BOS_TOKENS:
+                            text = text.replace(tok, "")
+                        if text.strip():
+                            display.add_progress(text)
+                    elif chunk.kind == "text_delta":
+                        text = (chunk.text_delta or "")
+                        for tok in _BOS_TOKENS:
+                            text = text.replace(tok, "")
+                        tm = _TOOL_RESULT_RE.match(text)
+                        if tm and tool_index_queue:
+                            tool_name = tm.group(1)
+                            tool_result = tm.group(2).strip()
+                            idx = tool_index_queue.pop(0)
+                            display.finish_tool(idx, ok=True, result=tool_result)
+                        elif text.strip():
+                            collected_answer.append(text)
+                            display.add_text(text)
+                            # Estimate token count from text length
+                            output_tokens += max(1, len(text) // 3)
+                            display.add_tokens(max(1, len(text) // 3))
+                    elif chunk.kind == "reasoning_delta":
+                        text = (chunk.reasoning_delta or "")
+                        for tok in _BOS_TOKENS:
+                            text = text.replace(tok, "")
+                        if text.strip():
+                            display.add_progress(text)
+                    elif chunk.kind == "tool_call_delta" and chunk.tool_name:
+                        # New step boundary — clear old progress to avoid duplicates
+                        if not tool_index_queue:
+                            display.reset_progress()
+                        tool_events.append({"tool_name": chunk.tool_name, "arguments": chunk.tool_arguments_delta})
+                        idx = display.start_tool(chunk.tool_name, chunk.tool_arguments_delta or "")
+                        tool_index_queue.append(idx)
+                    elif chunk.kind == "done":
+                        final_result = {
+                            "finish_reason": chunk.finish_reason,
+                            "tool_calls": tool_events,
+                        }
+                    elif chunk.kind == "event" and chunk.tool_name == "turn_started":
+                        pass
+                except Exception:
+                    # Don't let a display glitch kill the agent loop
+                    pass
+        except Exception:
+            # Generator itself raised — already handled by loop's internal except
+            pass
+
+        answer = "".join(collected_answer).strip()
+        try:
+            display.finish(answer)
+        except Exception:
+            pass
+
+        # Post-stream: show collapsible thinking + tools toggle (Ctrl+T / Ctrl+O)
+        thinking_text = display.thinking_text
+        tools_data = display.tools_data
+        if not _is_pipe_output():
+            try:
+                _render_post_stream_toggles(thinking_text, tools_data)
+            except Exception:
+                pass
+
+        finish_reason = final_result.get("finish_reason", "stop") if final_result else "stop"
+        # Only persist cleanly completed answers — partial/truncated answers
+        # from timed-out or interrupted turns bleed into the next turn's context.
+        _UNCLEAN_FINISH = {"max_steps", "timeout", "no_progress", "consecutive_failures",
+                           "retry_with_tool_instruction", "provider_network_error", "length"}
+        if answer and finish_reason not in _UNCLEAN_FINISH:
+            try:
+                loop.store.append_message(
+                    state.current_thread_id, "assistant", answer,
+                    metadata={"kind": "final_answer", "finish_reason": finish_reason},
+                )
+            except Exception:
+                pass
+
+    return AgentRunResult(
+        ok=True,
+        final_answer=answer or "Streaming completed.",
+        output_type="answer",
+        stop_reason=finish_reason,
+        status="completed",
+        tool_calls=[{"name": e["tool_name"], "arguments": e["arguments"]} for e in tool_events],
+        tool_results=[],
+        events=[],
+        summary={"human": answer, "machine": {"output_type": "answer", "stop_reason": "stop", "tools_used": [e["tool_name"] for e in tool_events]}},
+    )
+
+
+
+def _run_non_interactive_with_mode(prompt: str, *, output_mode: str = "default", auto_approve: bool = False, session_id: str | None = None) -> int:
     state = ShellState(DEFAULT_API_BASE)
+    if session_id:
+        state.current_thread_id = session_id
     state.trace_enabled = output_mode == "trace"
     try:
-        _safe_print(run_agent_turn_for_cli(prompt, state=state, output_mode=output_mode))
+        _safe_print(run_agent_turn_for_cli(prompt, state=state, output_mode=output_mode, auto_approve=auto_approve))
         return 0
     except Exception as exc:
         if output_mode == "json":
@@ -3816,9 +4543,31 @@ def _run_non_interactive_with_mode(prompt: str, *, output_mode: str = "default")
     return 0
 
 
+def _should_use_tui(args: argparse.Namespace) -> bool:
+    """Determine whether to use the full-screen TUI for interactive mode."""
+    if args.use_tui is False:
+        return False
+    if args.use_tui is True:
+        return True
+    if not sys.stdin.isatty():
+        return False
+    try:
+        import prompt_toolkit  # noqa: F401
+        return True
+    except ImportError:
+        return False
+
+
 def main() -> int:
+    # Intercept tui_bridge early — it uses stdin/stdout JSON protocol
+    # and must not go through argparse (which writes to stdout).
+    if len(sys.argv) > 1 and sys.argv[1] == "tui_bridge":
+        from jarvis.tui_bridge import run_bridge
+        return run_bridge()
+
     _write_cli_diagnostic("cli_entry")
     _load_local_env_file(_ROOT / ".env")
+    _ensure_utf8_stdout()
     parser = argparse.ArgumentParser(prog="python -m jarvis.cli", description="Jarvis CLI")
     parser.add_argument("--minimal", action="store_true", help="minimal mode (no voice, no model downloads)")
     parser.add_argument("-p", "--print", dest="print_prompt", nargs="?", const="__PIPE__", help="run one-shot prompt")
@@ -3836,8 +4585,13 @@ def main() -> int:
     parser.add_argument("--json", action="store_true", help="alias: --output json")
     parser.add_argument("--trace-output", action="store_true", help="alias: --output trace")
     parser.add_argument("--json-output", action="store_true", help="alias: --output json")
+    parser.add_argument("-y", "--yes", action="store_true", help="auto-approve all tool calls (skip confirmation)")
     parser.add_argument("-c", "--continue", dest="resume_latest", action="store_true", help="resume latest session")
     parser.add_argument("-r", "--resume", dest="resume_id", help="resume by session or task id")
+    parser.add_argument("--model", dest="cli_model", default=None, help="override LLM model (e.g. deepseek-v4-pro, qwen3.6-chat)")
+    parser.add_argument("--provider", dest="cli_provider", default=None, help="override LLM provider (e.g. deepseek, openai, qwen)")
+    parser.add_argument("--tui", action="store_true", default=None, dest="use_tui", help="use full-screen TUI for interactive mode")
+    parser.add_argument("--no-tui", action="store_false", dest="use_tui", help="disable full-screen TUI")
     sub = parser.add_subparsers(dest="cmd", help="subcommands")
 
     p_cfg = sub.add_parser("config", help="config management")
@@ -3891,8 +4645,6 @@ def main() -> int:
     p_task_sub = p_task.add_subparsers(dest="task_cmd", required=True)
     p_task_run = p_task_sub.add_parser("run", help="create a task")
     p_task_run.add_argument("input")
-    p_task_run.add_argument("--mode", default="safe")
-    p_task_run.add_argument("--safe", action="store_true", help="alias for --mode safe")
     p_task_run.add_argument("--allow-code-changes", action="store_true")
     p_task_run.add_argument("--max-commands", type=int, default=3)
     p_task_run.add_argument("--max-files-changed", type=int, default=0)
@@ -3997,6 +4749,12 @@ def main() -> int:
     args = parser.parse_args(argv)
     output_mode = _resolve_output_mode(args)
 
+    # Apply CLI overrides — these take precedence over .env and config file
+    if getattr(args, "cli_model", None):
+        os.environ["JARVIS_LLM_MODEL"] = args.cli_model
+    if getattr(args, "cli_provider", None):
+        os.environ["JARVIS_LLM_PROVIDER"] = args.cli_provider
+
     # Handle --minimal flag (no voice, no model downloads)
     if getattr(args, "minimal", False):
         os.environ["JARVIS_MINIMAL_MODE"] = "true"
@@ -4020,9 +4778,11 @@ def main() -> int:
             return cmd_test(args)
         if args.cmd == "chat":
             if args.prompt:
-                return _run_non_interactive_with_mode(args.prompt, output_mode=output_mode)
+                return _run_non_interactive_with_mode(args.prompt, output_mode=output_mode, auto_approve=bool(args.yes))
             if sys.stdin and sys.stdin.isatty():
-                return run_shell()
+                if _should_use_tui(args):
+                    return run_shell_tui()
+                return run_shell_tui()
             _safe_print("Non-interactive shell: use python -m jarvis.cli -p \"...\".")
             return 0
         if args.cmd == "auth":
@@ -4064,12 +4824,20 @@ def main() -> int:
         if args.cmd == "state":
             return cmd_state(args)
 
-        if args.resume_latest:
-            _safe_print("No previous session found.")
-            return 0
+        # Resolve session_id for resume / session-name flags.
+        # -r <id> always uses that id (creates if new, resumes if exists).
+        # --resume-latest picks the most recently updated session.
+        effective_session_id: str | None = None
         if args.resume_id:
-            _safe_print(f"Session not found: {args.resume_id}")
-            return 0
+            effective_session_id = args.resume_id
+        elif args.resume_latest:
+            from jarvis.store.session_store import SessionStore
+            _resume_store = SessionStore()
+            sessions = _resume_store.list_sessions(limit=1)
+            if not sessions:
+                _safe_print("No previous session found.")
+                return 0
+            effective_session_id = sessions[0]["session_id"]
 
         prompt = initial_prompt
         if args.print_prompt is not None:
@@ -4080,7 +4848,7 @@ def main() -> int:
             if not prompt:
                 _safe_print("No prompt provided.")
                 return 1
-            return _run_non_interactive_with_mode(prompt, output_mode=output_mode)
+            return _run_non_interactive_with_mode(prompt, output_mode=output_mode, auto_approve=bool(args.yes), session_id=effective_session_id)
 
         if args.ask_prompt is not None:
             if args.ask_prompt not in {None, "__PIPE__"}:
@@ -4090,18 +4858,20 @@ def main() -> int:
             if not prompt:
                 _safe_print("No prompt provided.")
                 return 1
-            return _run_non_interactive_with_mode(prompt, output_mode=output_mode)
+            return _run_non_interactive_with_mode(prompt, output_mode=output_mode, auto_approve=bool(args.yes), session_id=effective_session_id)
 
         if prompt:
             if os.getenv("JARVIS_CLI_AGENT_ONESHOT", "0").strip() == "1":
-                return _run_non_interactive_with_mode(prompt, output_mode=output_mode)
-            return _run_non_interactive(prompt)
+                return _run_non_interactive_with_mode(prompt, output_mode=output_mode, auto_approve=bool(args.yes), session_id=effective_session_id)
+            return _run_non_interactive(prompt, auto_approve=bool(args.yes))
 
         if sys.stdin and sys.stdin.isatty():
-            return run_shell()
+            if _should_use_tui(args):
+                return run_shell_tui(session_id=effective_session_id)
+            return run_shell_tui(session_id=effective_session_id)
         input_text = _read_stdin_text()
         if input_text.strip():
-            return run_shell_from_text(input_text)
+            return _run_non_interactive(input_text, auto_approve=True)
         parser.print_help()
         return 0
     finally:

@@ -1,119 +1,184 @@
-"""Durable user/project memory store backed by ThreadStore tables."""
+"""Durable typed memory store backed by pure Markdown files.
+
+Follows Claude Code's format: .jarvis/memory/MEMORY.md index + memory/*.md files.
+Each file uses YAML-like frontmatter (name, description, type) + markdown body.
+"""
 
 from __future__ import annotations
 
-import sqlite3
 from pathlib import Path
 from typing import Any
+from uuid import uuid4
 
+from .memory_md import MarkdownMemoryStore, MemoryEntry
 from .redaction import redact_text_for_persistence
-from .schema import ProjectMemoryRecord, UserMemoryRecord, utc_now
-from .thread_store import ThreadStore
 
 
 class MemoryStore:
-    def __init__(self, db_path: str | Path | None = None) -> None:
-        self.thread_store = ThreadStore(db_path=db_path)
+    """Typed memory backed by pure Markdown — human-editable, git-trackable."""
+
+    def __init__(self, memory_md_dir: str | Path | None = None) -> None:
+        md_dir = Path(memory_md_dir) if memory_md_dir else Path(".jarvis/memory")
+        self._md = MarkdownMemoryStore(md_dir)
+
+    @property
+    def memory_md(self) -> MarkdownMemoryStore:
+        return self._md
+
+    # ── Typed memory (markdown-backed) ──────────────────────────────
+
+    def search(
+        self,
+        query: str,
+        *,
+        memory_type: str | None = None,
+        project_id: str | None = None,
+        limit: int = 10,
+    ) -> list[dict[str, Any]]:
+        results = self._md.search(query or "")
+        if memory_type:
+            results = [e for e in results if e.memory_type == memory_type]
+        return [self._entry_to_dict(e) for e in results[:max(1, int(limit))]]
+
+    def get_typed(
+        self,
+        *,
+        memory_type: str | None = None,
+        project_id: str | None = None,
+        limit: int = 50,
+    ) -> list[dict[str, Any]]:
+        if memory_type:
+            entries = self._md.load_by_type(memory_type)
+        else:
+            entries = self._md.load_all()
+        return [self._entry_to_dict(e) for e in entries[:max(1, int(limit))]]
+
+    def remember(
+        self,
+        memory_type: str,
+        key: str,
+        value: str,
+        *,
+        project_id: str | None = None,
+        source_turn_id: str | None = None,
+        metadata: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        desc = str(metadata.get("description", "")) if metadata else ""
+        entry = MemoryEntry(
+            name=str(key).strip(),
+            description=desc,
+            memory_type=memory_type,
+            content=str(value),
+        )
+        self._md.write(entry)
+        return self._entry_to_dict(entry)
+
+    def write_feedback(
+        self,
+        key: str,
+        value: str,
+        *,
+        project_id: str | None = None,
+        source_turn_id: str | None = None,
+    ) -> dict[str, Any]:
+        return self.remember("feedback", key, value, project_id=project_id)
+
+    def write_reference(
+        self,
+        key: str,
+        value: str,
+        *,
+        project_id: str | None = None,
+        source_turn_id: str | None = None,
+    ) -> dict[str, Any]:
+        return self.remember("reference", key, value, project_id=project_id)
+
+    def write_user_profile(self, key: str, value: str) -> dict[str, Any]:
+        return self.remember("user_profile", key, value)
+
+    def delete_typed(self, memory_id: str) -> None:
+        # memory_id is typically the entry name in this system
+        self._md.delete(memory_id)
+
+    # ── User memory (backward-compat KV mapped to markdown) ────────
 
     def get_user_memory(self) -> dict[str, str]:
-        with self.thread_store._connect() as conn:
-            rows = conn.execute("SELECT key, value_redacted FROM user_memory ORDER BY key ASC").fetchall()
-        return {str(row["key"]): str(row["value_redacted"]) for row in rows}
+        entries = self._md.load_by_type("user")
+        return {e.name: e.content for e in entries}
 
-    def set_user_memory(self, key: str, value: str) -> UserMemoryRecord:
-        record = UserMemoryRecord(key=str(key), value_redacted=redact_text_for_persistence(value), updated_at=utc_now())
-        with self.thread_store._connect() as conn:
-            conn.execute(
-                "INSERT OR REPLACE INTO user_memory(key, value_redacted, updated_at) VALUES (?, ?, ?)",
-                (record.key, record.value_redacted, record.updated_at),
-            )
-            conn.commit()
-        return record
+    def set_user_memory(self, key: str, value: str) -> dict[str, Any]:
+        entry = MemoryEntry(
+            name=str(key),
+            description="",
+            memory_type="user",
+            content=str(value),
+        )
+        self._md.write(entry)
+        return self._entry_to_dict(entry)
 
     def delete_user_memory(self, key: str) -> None:
-        with self.thread_store._connect() as conn:
-            conn.execute("DELETE FROM user_memory WHERE key=?", (str(key),))
-            conn.commit()
+        self._md.delete(key)
 
     def clear_user_memory(self) -> None:
-        with self.thread_store._connect() as conn:
-            conn.execute("DELETE FROM user_memory")
-            conn.commit()
+        for entry in self._md.load_by_type("user"):
+            self._md.delete(entry.name)
+
+    # ── Project memory (backward-compat KV mapped to markdown) ─────
 
     def get_project_memory(self, project_id: str) -> dict[str, str]:
-        with self.thread_store._connect() as conn:
-            rows = conn.execute(
-                "SELECT key, value_redacted FROM project_memory WHERE project_id=? ORDER BY key ASC",
-                (str(project_id),),
-            ).fetchall()
-        return {str(row["key"]): str(row["value_redacted"]) for row in rows}
+        entries = self._md.load_by_type("project")
+        prefix = f"{project_id}/"
+        return {
+            e.name[len(prefix):] if e.name.startswith(prefix) else e.name: e.content
+            for e in entries
+            if e.name.startswith(prefix) or not prefix
+        }
 
-    def set_project_memory(self, project_id: str, key: str, value: str) -> ProjectMemoryRecord:
-        record = ProjectMemoryRecord(
-            project_id=str(project_id),
-            key=str(key),
-            value_redacted=redact_text_for_persistence(value),
-            updated_at=utc_now(),
+    def set_project_memory(self, project_id: str, key: str, value: str) -> dict[str, Any]:
+        entry = MemoryEntry(
+            name=f"{project_id}/{str(key)}",
+            description="",
+            memory_type="project",
+            content=str(value),
         )
-        with self.thread_store._connect() as conn:
-            conn.execute(
-                "INSERT OR REPLACE INTO project_memory(project_id, key, value_redacted, updated_at) VALUES (?, ?, ?, ?)",
-                (record.project_id, record.key, record.value_redacted, record.updated_at),
-            )
-            conn.commit()
-        return record
+        self._md.write(entry)
+        return self._entry_to_dict(entry)
 
     def delete_project_memory(self, project_id: str, key: str) -> None:
-        with self.thread_store._connect() as conn:
-            conn.execute("DELETE FROM project_memory WHERE project_id=? AND key=?", (str(project_id), str(key)))
-            conn.commit()
+        self._md.delete(f"{project_id}/{str(key)}")
 
     def clear_project_memory(self, project_id: str) -> None:
-        with self.thread_store._connect() as conn:
-            conn.execute("DELETE FROM project_memory WHERE project_id=?", (str(project_id),))
-            conn.commit()
+        for entry in self._md.load_by_type("project"):
+            if entry.name.startswith(f"{project_id}/"):
+                self._md.delete(entry.name)
 
-    # Compatibility helpers for existing MemoryRetriever/PersistentMemoryStore callers
-    def write(self, record: dict[str, Any]) -> dict[str, Any]:
-        memory_type = str(record.get("memory_type") or "user").strip().lower()
-        key = str(record.get("key") or "").strip() or "memory"
-        value = str(record.get("value") or "")
-        project_id = str(record.get("project_id") or "").strip()
-        if memory_type == "project" and project_id:
-            saved = self.set_project_memory(project_id, key, value)
-            row = {
-                "memory_type": "project",
-                "project_id": project_id,
-                "key": saved.key,
-                "value": saved.value_redacted,
-            }
-        else:
-            saved = self.set_user_memory(key, value)
-            row = {"memory_type": "user", "key": saved.key, "value": saved.value_redacted}
-        return {"ok": True, "data": row}
+    # ── Convenience ─────────────────────────────────────────────────
 
-    def read(self, *, memory_type: str | None = None, key: str | None = None) -> list[dict[str, Any]]:
-        rows: list[dict[str, Any]] = []
-        if memory_type in {None, "user"}:
-            for mem_key, value in self.get_user_memory().items():
-                if key and mem_key != key:
-                    continue
-                rows.append({"memory_type": "user", "key": mem_key, "value": value})
-        if memory_type in {None, "project"}:
-            with self.thread_store._connect() as conn:
-                query = "SELECT project_id, key, value_redacted FROM project_memory"
-                params: tuple[Any, ...] = ()
-                if key:
-                    query += " WHERE key=?"
-                    params = (key,)
-                rows_db = conn.execute(query, params).fetchall()
-            for row in rows_db:
-                rows.append(
-                    {
-                        "memory_type": "project",
-                        "project_id": str(row["project_id"]),
-                        "key": str(row["key"]),
-                        "value": str(row["value_redacted"]),
-                    }
-                )
-        return rows
+    def write_to_both(self, memory_type: str, key: str, value: str, *, description: str = "") -> tuple[dict[str, Any], Path]:
+        """Write to markdown (sole source of truth)."""
+        entry = MemoryEntry(
+            name=key,
+            description=description,
+            memory_type=memory_type,
+            content=value,
+        )
+        md_path = self._md.write(entry)
+        return self._entry_to_dict(entry), md_path
+
+    # ── Helpers ─────────────────────────────────────────────────────
+
+    @staticmethod
+    def _entry_to_dict(entry: MemoryEntry) -> dict[str, Any]:
+        return {
+            "memory_id": entry.name,
+            "memory_type": entry.memory_type,
+            "key": entry.name,
+            "value_raw": entry.content,
+            "value_redacted": redact_text_for_persistence(entry.content),
+            "value": entry.content,  # convenience alias
+            "project_id": None,
+            "is_global": True,
+            "source_turn_id": None,
+            "metadata": {"description": entry.description, "source": "markdown"},
+            "updated_at": "",
+        }

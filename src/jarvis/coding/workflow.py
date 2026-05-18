@@ -9,7 +9,7 @@ from ..agent.tools import ToolCallExecutor, ToolRegistryAdapter
 from ..agent.types import AgentRunResult, ChatInput, ToolCall, ToolResult
 from ..core.policy import PermissionPolicy
 from ..store.redaction import redact_for_persistence, redact_text_for_persistence
-from ..store.thread_store import ThreadStore
+from ..store import ThreadStore
 from .events import coding_event
 from .patch_plan import ReplacementPatch, find_known_replacement
 from .schema import (
@@ -27,7 +27,7 @@ from .test_runner import build_test_plan
 
 
 class CodingWorkflow:
-    """Deterministic, permissioned coding workflow built on ToolCallExecutor."""
+    """Permissioned coding workflow with optional LLM-driven fix loop."""
 
     def __init__(
         self,
@@ -37,13 +37,15 @@ class CodingWorkflow:
         permission_policy: PermissionPolicy | None = None,
         auto_approve: bool = False,
         thread_store: ThreadStore | None = None,
-        session_id: str = "coding_workflow",
+        session_id: str = "coding-workflow",
         turn_id: str | None = None,
+        model_client: Any = None,
     ) -> None:
         self.project_root = Path(project_root).resolve()
         self.session_id = session_id
         self.turn_id = turn_id or f"turn_{uuid4().hex[:12]}"
         self.thread_store = thread_store
+        self.model_client = model_client
         self.registry = ToolRegistryAdapter(project_root=str(self.project_root))
         self.tool_executor = tool_executor or ToolCallExecutor(
             registry_adapter=self.registry,
@@ -114,6 +116,14 @@ class CodingWorkflow:
         return self._finalize(result, user_goal=task.user_goal)
 
     def fix(self, goal: str | None = None, *, apply: bool = False, run_tests_after: bool = True) -> CodingWorkflowResult:
+        task = CodingTask.new(user_goal=goal or "Fix failing scoped tests", mode="fix")
+        events = [coding_event(self.turn_id, "coding_task_created", task.to_dict())]
+
+        # — LLM-driven fix path —
+        if self.model_client is not None:
+            return self._llm_fix(task, events, goal=goal, apply=apply, run_tests_after=run_tests_after)
+
+        # — Fallback: deterministic fixture repair —
         patch = find_known_replacement(self.project_root)
         task = CodingTask.new(user_goal=goal or "Fix failing scoped tests", mode="fix", target_files=[self._rel(patch.path)] if patch else [])
         events = [coding_event(self.turn_id, "coding_task_created", task.to_dict())]
@@ -218,6 +228,98 @@ class CodingWorkflow:
         )
         return self._finalize(result, user_goal=task.user_goal)
 
+    def _llm_fix(
+        self,
+        task: CodingTask,
+        events: list[dict[str, Any]],
+        *,
+        goal: str | None = None,
+        apply: bool = False,
+        run_tests_after: bool = True,
+    ) -> CodingWorkflowResult:
+        """LLM-driven fix: delegate to AgentLoop with tools for diff→review→patch→test."""
+        from ..agent.loop import AgentLoop
+        from ..agent.types import ChatInput
+
+        fix_goal = goal or "Fix failing tests in this project"
+        prompt = (
+            f"{fix_goal}\n\n"
+            f"Workflow:\n"
+            f"1. Read the relevant source files.\n"
+            f"2. Run scoped tests to see failures.\n"
+            f"3. Identify the bug and propose a minimal fix.\n"
+            f"4. Apply the fix using file edit tools.\n"
+            f"5. Run tests again to verify.\n"
+            f"Report what files were changed and whether tests pass."
+        )
+
+        try:
+            agent = AgentLoop(
+                project_root=str(self.project_root),
+                permission_mode="workspace_write",
+                auto_approve=apply,
+                model_client=self.model_client,
+            )
+            agent_result = agent.run_turn(
+                ChatInput(
+                    text=prompt,
+                    cwd=str(self.project_root),
+                    session_id=self.session_id,
+                    project_id="coding-workflow",
+                )
+            )
+        except Exception as exc:
+            failure = FailureAnalysis(
+                summary=f"LLM-driven fix failed: {exc}",
+                likely_causes=[f"Agent error: {type(exc).__name__}"],
+                next_steps=["Retry with a narrower scope or fall back to manual fix."],
+            )
+            events.append(coding_event(self.turn_id, "failure_analysis_created", failure.to_dict()))
+            return self._finalize(
+                CodingWorkflowResult(
+                    task_id=task.task_id,
+                    status="blocked",
+                    failure_analysis=failure,
+                    summary=failure.summary,
+                    remaining_work=list(failure.next_steps),
+                    events=events,
+                ),
+                user_goal=task.user_goal,
+            )
+
+        # Convert agent result to coding workflow result
+        machine = dict(agent_result.summary.get("machine", {})) if isinstance(agent_result.summary, dict) else {}
+        files_changed = list(machine.get("files_changed") or [])
+        tests_run = list(machine.get("tests_run") or [])
+        status = "completed" if agent_result.ok else "failed"
+        issues: list[CodeIssue] = []
+        if not agent_result.ok:
+            issues.append(CodeIssue.new(file="unknown", summary=agent_result.final_answer[:200]))
+
+        patch_plan = PatchPlan(
+            plan_id=new_id("patchplan"),
+            task_id=task.task_id,
+            summary="LLM-driven fix",
+            target_files=files_changed,
+            steps=["LLM analyzed code and tests.", "LLM applied minimal patch.", "LLM verified with tests."],
+            risk_level="medium",
+            requires_approval=not apply,
+        )
+        events.append(coding_event(self.turn_id, "patch_plan_created", patch_plan.to_dict()))
+
+        result = CodingWorkflowResult(
+            task_id=task.task_id,
+            status=status,
+            issues=issues,
+            patch_plan=patch_plan,
+            summary=agent_result.final_answer[:2000],
+            remaining_work=[] if status == "completed" else ["LLM fix did not fully pass. Review the changes."],
+            events=events,
+            tool_calls=list(agent_result.tool_calls or []),
+            tool_results=list(agent_result.tool_results or []),
+        )
+        return self._finalize(result, user_goal=task.user_goal)
+
     @property
     def _tool_calls(self) -> list[dict[str, Any]]:
         return getattr(self, "_recorded_tool_calls", [])
@@ -242,7 +344,7 @@ class CodingWorkflow:
                 "session_id": self.session_id,
                 "turn_id": self.turn_id,
                 "permission_mode": "workspace_write",
-                "mode": "coding_workflow",
+                "mode": "coding-workflow",
             },
         )
         self._record_tool(call, result)
@@ -333,7 +435,7 @@ class CodingWorkflow:
         if self.thread_store is not None:
             agent_result = self.to_agent_result(result)
             self.thread_store.create_or_resume_session(ChatInput(text=user_goal, session_id=self.session_id, project_id="coding", cwd=str(self.project_root)))
-            self.thread_store.append_message(self.session_id, "user", user_goal, turn_id=self.turn_id, metadata={"kind": "coding_workflow_input"})
+            self.thread_store.append_message(self.session_id, "user", user_goal, turn_id=self.turn_id, metadata={"kind": "coding-workflow_input"})
             self.thread_store.append_turn(self.session_id, agent_result, user_input=user_goal)
             self.thread_store.save_final_answer(self.session_id, self.turn_id, agent_result.final_answer)
             self.thread_store.save_summary(self.session_id, self.turn_id, agent_result.summary)
@@ -351,7 +453,7 @@ class CodingWorkflow:
                 HandoffSummary(
                     user_goal=user_goal,
                     current_state=result.summary,
-                    completed_work=["coding_workflow"],
+                    completed_work=["coding-workflow"],
                     remaining_work=list(result.remaining_work),
                     context_to_keep=list(active.related_files),
                     risks=list(active.risks),
@@ -381,7 +483,7 @@ class CodingWorkflow:
             "self_fix_succeeded": False,
             "coding_secret_leak_count": 0,
             "coding_context_written": True,
-            "coding_workflow": result.to_dict(),
+            "coding-workflow": result.to_dict(),
             "active_task": {
                 "user_goal": result.summary,
                 "current_phase": result.status,
@@ -390,7 +492,7 @@ class CodingWorkflow:
             "handoff_summary": {
                 "user_goal": result.summary,
                 "current_state": result.status,
-                "completed_work": ["coding_workflow"],
+                "completed_work": ["coding-workflow"],
                 "remaining_work": list(result.remaining_work),
                 "context_to_keep": files_changed,
                 "risks": [],
@@ -415,7 +517,7 @@ class CodingWorkflow:
             skills_used=[],
             skill_calls_count=0,
             skill_results=[],
-            model_backend="coding_workflow",
+            model_backend="coding-workflow",
             model_provider="local",
             model_name="jarvis-coding-workflow-v1",
         )

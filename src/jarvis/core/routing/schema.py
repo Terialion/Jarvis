@@ -38,7 +38,7 @@ class ResponseMode(str, Enum):
     CHAT_ANSWER = "chat_answer"
     HELP_ANSWER = "help_answer"
     REPO_INSPECTION = "repo_inspection"
-    CODING_LOOP = "coding_loop"
+    AGENT_TOOL_LOOP = "agent_tool_loop"
     SEARCH_PIPELINE = "search_pipeline"
     URL_SUMMARY = "url_summary"
     EXECUTOR_ACTION = "executor_action"

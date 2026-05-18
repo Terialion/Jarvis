@@ -1,38 +1,18 @@
-"""Durable storage primitives for Phase 17 persistent memory."""
+"""Durable storage primitives — JSONL sessions + Markdown memory."""
 
 from .memory_store import MemoryStore
 from .observation_store import ObservationStore
-from .schema import (
-    ActiveTaskStateRecord,
-    ApprovalAuditRecord,
-    HandoffSummaryRecord,
-    MessageRecord,
-    ProjectFactsRecord,
-    ProjectMemoryRecord,
-    ResearchObservationRecord,
-    SkillObservationRecord,
-    ThreadRecord,
-    ToolCallRecord,
-    TurnRecord,
-    UserMemoryRecord,
-)
-from .thread_store import ThreadStore, ThreadStoreError
+from .session_store import SessionStore, SessionStoreError
+
+# Backward-compatible aliases
+ThreadStore = SessionStore
+ThreadStoreError = SessionStoreError
 
 __all__ = [
-    "ActiveTaskStateRecord",
-    "ApprovalAuditRecord",
-    "HandoffSummaryRecord",
     "MemoryStore",
-    "MessageRecord",
     "ObservationStore",
-    "ProjectFactsRecord",
-    "ProjectMemoryRecord",
-    "ResearchObservationRecord",
-    "SkillObservationRecord",
-    "ThreadRecord",
+    "SessionStore",
+    "SessionStoreError",
     "ThreadStore",
     "ThreadStoreError",
-    "ToolCallRecord",
-    "TurnRecord",
-    "UserMemoryRecord",
 ]

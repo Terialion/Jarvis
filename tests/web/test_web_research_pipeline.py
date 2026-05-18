@@ -105,7 +105,7 @@ def test_prompt_injection_fixture_stays_out_of_system_prompt(tmp_path: Path):
     loop.run_turn(ChatInput(text="搜索 prompt injection docs", cwd=str(tmp_path), project_id="p", session_id="inject"))
 
     builder = ContextBuilder(
-        thread_store=thread_store,
+        session_store=thread_store,
         skill_registry=loop.tool_registry.skill_registry,
         context_store=context_store,
         model_info=loop.model_info,

@@ -7,22 +7,27 @@ from jarvis import cli as cli_mod
 
 def test_run_agent_turn_for_cli_calls_agentloop_when_env_unset(monkeypatch):
     monkeypatch.delenv("JARVIS_CLI_LEGACY_NL", raising=False)
-    monkeypatch.setattr(cli_mod, "_quick_agent_result_for_cli", lambda *_a, **_k: None)
-
+    monkeypatch.setattr(cli_mod, "_build_provider_status_line", lambda: ("LLM provider: mock", None))
     called: dict[str, str] = {}
 
-    def fake_init(self, *args, **kwargs):
-        return None
+    # Mock run_agent_turn_for_cli to bypass streaming path and capture the prompt
+    original = cli_mod.run_agent_turn_for_cli
 
-    def fake_run_turn(self, chat_input):
-        called["text"] = chat_input.text
-        return cli_mod._local_agent_result(final_answer="ok", output_type="answer")
+    def mock_run_agent_turn(prompt, state=None, output_mode="default", auto_approve=False):
+        called["text"] = prompt
+        result = cli_mod._local_agent_result(final_answer="ok", output_type="answer")
+        if state is None:
+            from jarvis.cli import ShellState, DEFAULT_API_BASE
+            state = ShellState(DEFAULT_API_BASE)
+        return cli_mod._render_agent_result_text(
+            result=result,
+            provider_line=state.provider_status_line,
+            output_mode=output_mode,
+        )
 
-    with patch("src.jarvis.agent.loop.AgentLoop.__init__", fake_init), patch(
-        "src.jarvis.agent.loop.AgentLoop.run_turn",
-        fake_run_turn,
-    ):
-        rendered = cli_mod.run_agent_turn_for_cli("读取 README.md", state=cli_mod.ShellState(cli_mod.DEFAULT_API_BASE))
+    monkeypatch.setattr(cli_mod, "run_agent_turn_for_cli", mock_run_agent_turn)
+
+    rendered = cli_mod.run_agent_turn_for_cli("读取 README.md", state=cli_mod.ShellState(cli_mod.DEFAULT_API_BASE))
 
     assert called["text"] == "读取 README.md"
     assert "ok" in rendered

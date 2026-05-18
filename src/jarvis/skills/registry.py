@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import os
+import threading
+import time
 from pathlib import Path
 from typing import Any
 
@@ -12,6 +14,13 @@ from .schema import SkillSpec
 
 
 class SkillRegistry:
+    # Cross-instance cache: skill specs only change on install/uninstall,
+    # which invalidates this cache explicitly.
+    _specs_cache: dict[str, Any] | None = None
+    _cache_mtime: float = 0.0
+    _cache_config_path: str | None = None
+    _load_lock: threading.Lock = threading.Lock()
+
     def __init__(
         self,
         *,
@@ -64,10 +73,11 @@ class SkillRegistry:
 
     def export_index(self, *, include_inactive: bool = False) -> list[dict[str, Any]]:
         specs = self.list_discovered_skills() if include_inactive else self.list_skills()
+        states = self.lifecycle.lifecycle_state_batch(specs)
         rows: list[dict[str, Any]] = []
-        for spec in specs:
+        for spec, state in zip(specs, states):
             row = spec.to_index_row()
-            row.update(self.lifecycle.lifecycle_state_for(spec))
+            row.update(state)
             row["duplicate_status"] = "shadowed" if self._duplicates.get(spec.name) else "primary"
             rows.append(row)
         return rows
@@ -96,18 +106,60 @@ class SkillRegistry:
         }
 
     def _load_specs(self) -> dict[str, SkillSpec]:
-        if self._cache is not None:
-            return self._cache
+        # Cross-instance cache: skill specs only change on install/uninstall.
+        # Use the lifecycle config mtime as the cache key to detect changes.
+        # Thread-safe: double-checked locking — only one thread runs the
+        # expensive rglob+parse at a time; others wait on _load_lock.
+        config_path = str(self.lifecycle.store.config_path)
+        config_mtime = self.lifecycle.store.config_path.stat().st_mtime if self.lifecycle.store.config_path.exists() else 0.0
+        if (SkillRegistry._specs_cache is not None
+                and SkillRegistry._cache_config_path == config_path
+                and SkillRegistry._cache_mtime >= config_mtime):
+            self._cache = SkillRegistry._specs_cache
+            self._warnings = SkillRegistry._specs_cache.get("__warnings__", [])
+            self._discovery_roots = SkillRegistry._specs_cache.get("__discovery_roots__", [])
+            self._duplicates = SkillRegistry._specs_cache.get("__duplicates__", {})
+            return {k: v for k, v in self._cache.items() if not k.startswith("__")}
+        with SkillRegistry._load_lock:
+            # Re-check cache after acquiring lock — another thread may have
+            # filled it while we were waiting.
+            if (SkillRegistry._specs_cache is not None
+                    and SkillRegistry._cache_config_path == config_path
+                    and SkillRegistry._cache_mtime >= config_mtime):
+                self._cache = SkillRegistry._specs_cache
+                self._warnings = SkillRegistry._specs_cache.get("__warnings__", [])
+                self._discovery_roots = SkillRegistry._specs_cache.get("__discovery_roots__", [])
+                self._duplicates = SkillRegistry._specs_cache.get("__duplicates__", {})
+                return {k: v for k, v in self._cache.items() if not k.startswith("__")}
+            return self._load_specs_uncached()
+
+    def _load_specs_uncached(self) -> dict[str, SkillSpec]:
+        _t_total = time.perf_counter()
         specs: dict[str, SkillSpec] = {}
         self._warnings = []
         self._discovery_roots = []
         self._duplicates = {}
-        for source, root in self._iter_roots():
+        roots = self._iter_roots()
+        # Pre-compute root paths for _is_within_allowed_roots to avoid
+        # re-reading lifecycle config on every inner-loop call.
+        _root_paths = [root for _, root in roots]
+        _t_roots = time.perf_counter()
+        _root_timings: list[tuple[str, float, int]] = []
+        for source, root in roots:
             self._discovery_roots.append({"source": source, "path": str(root)})
             if not root.exists():
                 continue
+            try:
+                from ..core.debug_log import debug_log, is_debug_enabled
+                if is_debug_enabled():
+                    debug_log("skills", f"_load_specs_uncached entering root: {source} path={root}")
+            except Exception:
+                pass
+            _t_root = time.perf_counter()
+            _n_dirs = 0
             for skill_dir in self._iter_skill_dirs(root):
-                if not self._is_within_allowed_roots(skill_dir):
+                _n_dirs += 1
+                if not self._is_within_allowed_roots(skill_dir, _roots=_root_paths):
                     continue
                 try:
                     spec = self.loader.parse_skill_dir(skill_dir, source=source)
@@ -134,7 +186,41 @@ class SkillRegistry:
                     )
                     continue
                 specs[spec.name] = spec
+            _elapsed = time.perf_counter() - _t_root
+            _root_timings.append((source, _elapsed, _n_dirs))
+            if _elapsed > 1.0:
+                try:
+                    from ..core.debug_log import debug_log, is_debug_enabled
+                    if is_debug_enabled():
+                        debug_log("skills", f"slow root: {source} elapsed={_elapsed:.1f}s dirs={_n_dirs}")
+                except Exception:
+                    pass
+        _t_scan = time.perf_counter()
         self._cache = specs
+        # Write through to cross-instance cache
+        cached: dict[str, Any] = dict(specs)
+        cached["__warnings__"] = list(self._warnings)
+        cached["__discovery_roots__"] = list(self._discovery_roots)
+        cached["__duplicates__"] = dict(self._duplicates)
+        SkillRegistry._specs_cache = cached
+        SkillRegistry._cache_mtime = (
+            self.lifecycle.store.config_path.stat().st_mtime
+            if self.lifecycle.store.config_path.exists()
+            else 0.0
+        )
+        SkillRegistry._cache_config_path = str(self.lifecycle.store.config_path)
+        _t_end = time.perf_counter()
+        try:
+            from ..core.debug_log import debug_log, is_debug_enabled
+            if is_debug_enabled():
+                debug_log("skills",
+                    f"_load_specs_uncached: total={_t_end-_t_total:.2f}s "
+                    f"roots={_t_roots-_t_total:.2f}s scan={_t_scan-_t_roots:.2f}s "
+                    f"writeback={_t_end-_t_scan:.3f}s specs={len(specs)} "
+                    f"thread={threading.current_thread().name}"
+                )
+        except Exception:
+            pass
         return specs
 
     def _iter_roots(self) -> list[tuple[str, Path]]:
@@ -153,20 +239,61 @@ class SkillRegistry:
         roots.extend(("extra", path) for path in self.extra_dirs)
         roots.append(("home", Path.home().joinpath(".jarvis", "skills").resolve()))
         roots.append(("builtin", self.builtin_root))
+        for sub_root in self._discover_skill_roots():
+            roots.append(sub_root)
         return roots
+
+    def _discover_skill_roots(self) -> list[tuple[str, Path]]:
+        """Scan immediate subdirectories of project_root for known skill paths."""
+        discovered: list[tuple[str, Path]] = []
+        seen: set[str] = set()
+        skill_dir_names = {"skills", ".codex/skills", ".agents/skills", "optional-skills"}
+        try:
+            for entry in sorted(self.project_root.iterdir()):
+                if not entry.is_dir() or entry.name.startswith("."):
+                    continue
+                for name in skill_dir_names:
+                    candidate = entry / name
+                    try:
+                        if candidate.is_dir() and any(candidate.rglob("SKILL.md")):
+                            key = str(candidate.resolve())
+                            if key not in seen:
+                                seen.add(key)
+                                discovered.append((f"discovered:{entry.name}", candidate.resolve()))
+                    except (OSError, PermissionError):
+                        pass
+        except (OSError, PermissionError):
+            pass
+        return discovered
+
+    _SKIP_DIRS = frozenset({
+        ".git", "node_modules", "__pycache__", ".venv", "venv", ".pytest_cache",
+        ".tox", ".mypy_cache", ".ruff_cache", "dist", "build", ".eggs",
+        "__MACOSX", ".DS_Store",
+    })
+    _MAX_DEPTH = 6
 
     @staticmethod
     def _iter_skill_dirs(root: Path) -> list[Path]:
         if (root / "SKILL.md").exists():
             return [root]
         out: list[Path] = []
-        for candidate in sorted(root.iterdir() if root.exists() else []):
-            if candidate.is_dir() and (candidate / "SKILL.md").exists():
-                out.append(candidate.resolve())
-        return out
+        try:
+            for sk_md in root.rglob("SKILL.md"):
+                skill_dir = sk_md.parent
+                # Skip ignored directories anywhere in the path
+                parts = set(skill_dir.relative_to(root).parts)
+                if parts & SkillRegistry._SKIP_DIRS:
+                    continue
+                if len(skill_dir.relative_to(root).parts) > SkillRegistry._MAX_DEPTH:
+                    continue
+                out.append(skill_dir.resolve())
+        except (OSError, PermissionError):
+            pass
+        return sorted(out)
 
-    def _is_within_allowed_roots(self, path: Path) -> bool:
-        roots = [root for _, root in self._iter_roots()]
+    def _is_within_allowed_roots(self, path: Path, *, _roots: list[Path] | None = None) -> bool:
+        roots = _roots if _roots is not None else [root for _, root in self._iter_roots()]
         resolved = path.resolve()
         for root in roots:
             try:

@@ -42,7 +42,7 @@ def test_print_mode_repo_inspection_not_task(monkeypatch):
     monkeypatch.setattr(cli_mod, "_write_cli_diagnostic", lambda *_a, **_k: None)
     called: dict[str, str] = {}
 
-    def _fake_runner(prompt: str, *, output_mode: str = "default") -> int:
+    def _fake_runner(prompt: str, *, output_mode: str = "default", **kwargs) -> int:
         called["prompt"] = prompt
         called["output_mode"] = output_mode
         return 0

@@ -131,7 +131,7 @@ class TestWorkRequests:
     def test_create_file(self):
         r = route_agent_request("新建一个 hello.py，打印 hello world")
         assert r.is_work_request is True
-        assert r.work_type == "coding_loop"
+        assert r.work_type == "agent_tool_loop"
         assert r.requires_write is True
         assert r.requires_approval is True
 
@@ -146,11 +146,11 @@ class TestLocalKeywordVsGlobalIntent:
         assert r.work_type == "skill_management"
         assert "skill.list" in r.required_tools
 
-    def test_fix_view_skill_is_coding_loop(self):
-        """'修复...查看skill...' with coding verb = coding_loop."""
+    def test_fix_view_skill_is_agent_tool_loop(self):
+        """'修复...查看skill...' with coding verb = agent_tool_loop."""
         r = route_agent_request('修复"查看skill"被误判成澄清的问题，并跑相关测试')
         assert r.is_work_request is True
-        assert r.work_type == "coding_loop"
+        assert r.work_type == "agent_tool_loop"
         assert r.requires_write is True
         assert r.requires_shell is True
         assert r.requires_approval is True
@@ -162,16 +162,16 @@ class TestLocalKeywordVsGlobalIntent:
         assert r.requires_write is False
 
     def test_add_test_view_skill_is_coding(self):
-        """'给查看skill补回归测试' = coding_loop."""
+        """'给查看skill补回归测试' = agent_tool_loop."""
         r = route_agent_request("给查看skill补回归测试")
         assert r.is_work_request is True
-        assert r.work_type == "coding_loop"
+        assert r.work_type == "agent_tool_loop"
         assert r.requires_write is True
 
     def test_fix_skills_output_is_coding(self):
         r = route_agent_request("修复 /skills 输出重复的问题，并跑 tests/cli")
         assert r.is_work_request is True
-        assert r.work_type == "coding_loop"
+        assert r.work_type == "agent_tool_loop"
         assert r.requires_write is True
         assert r.requires_shell is True
 

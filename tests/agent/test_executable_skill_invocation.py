@@ -10,7 +10,25 @@ from src.jarvis.agent.types import ChatInput, ModelResponse, ToolCall
 
 def test_agentloop_invokes_summarize_file_skill(tmp_path: Path):
     (tmp_path / "README.md").write_text("# Demo\n\nA small Jarvis test repo.", encoding="utf-8")
-    loop = AgentLoop(project_root=str(tmp_path), store=ThreadStore(root=tmp_path / "threads"), auto_approve=True)
+    loop = AgentLoop(
+        project_root=str(tmp_path),
+        store=ThreadStore(root=tmp_path / "threads"),
+        model_client=FakeModelClient(
+            scripted=[
+                ModelResponse(
+                    tool_calls=[
+                        ToolCall.new(
+                            name="skill.run",
+                            arguments={"name": "summarize_file", "arguments": {"path": "README.md"}},
+                        )
+                    ],
+                    finish_reason="tool_calls",
+                ),
+                ModelResponse(final_answer="Summarized README.md.", finish_reason="stop"),
+            ]
+        ),
+        auto_approve=True,
+    )
 
     result = loop.run_turn(ChatInput(text="总结 README.md", cwd=str(tmp_path), project_id="p", session_id="s"))
 
@@ -26,7 +44,28 @@ def test_agentloop_invokes_summarize_file_skill(tmp_path: Path):
 
 def test_agentloop_invokes_repo_overview_skill_without_file_modification(tmp_path: Path):
     (tmp_path / "README.md").write_text("# Demo\n\nA repository overview target.", encoding="utf-8")
-    loop = AgentLoop(project_root=str(tmp_path), store=ThreadStore(root=tmp_path / "threads"), auto_approve=True)
+    loop = AgentLoop(
+        project_root=str(tmp_path),
+        store=ThreadStore(root=tmp_path / "threads"),
+        model_client=FakeModelClient(
+            scripted=[
+                ModelResponse(
+                    tool_calls=[
+                        ToolCall.new(
+                            name="skill.run",
+                            arguments={"name": "repo_overview", "arguments": {"root": "."}},
+                        )
+                    ],
+                    finish_reason="tool_calls",
+                ),
+                ModelResponse(
+                    final_answer="Project overview: this is a demo repository.",
+                    finish_reason="stop",
+                ),
+            ]
+        ),
+        auto_approve=True,
+    )
 
     result = loop.run_turn(ChatInput(text="给我看一下这个项目是做什么的", cwd=str(tmp_path), project_id="p", session_id="s"))
 
@@ -37,7 +76,28 @@ def test_agentloop_invokes_repo_overview_skill_without_file_modification(tmp_pat
 
 
 def test_agentloop_fix_test_failure_is_dry_run(tmp_path: Path):
-    loop = AgentLoop(project_root=str(tmp_path), store=ThreadStore(root=tmp_path / "threads"), auto_approve=True)
+    loop = AgentLoop(
+        project_root=str(tmp_path),
+        store=ThreadStore(root=tmp_path / "threads"),
+        model_client=FakeModelClient(
+            scripted=[
+                ModelResponse(
+                    tool_calls=[
+                        ToolCall.new(
+                            name="skill.run",
+                            arguments={"name": "fix_test_failure"},
+                        )
+                    ],
+                    finish_reason="tool_calls",
+                ),
+                ModelResponse(
+                    final_answer="Dry-run repair plan: would fix the test by...",
+                    finish_reason="stop",
+                ),
+            ]
+        ),
+        auto_approve=True,
+    )
 
     result = loop.run_turn(ChatInput(text="修复测试失败", cwd=str(tmp_path), project_id="p", session_id="s"))
 

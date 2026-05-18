@@ -23,7 +23,7 @@ def test_micro_compact_trims_large_tool_observations():
     ]
     compacted = micro_compact(messages, max_messages=10)
     assert len(compacted) <= 10
-    assert any("micro_compact applied" in str(row.get("content") or "") for row in compacted)
+    assert any("compaction" in str(row.get("content") or "") and ("trimmed" in str(row.get("content") or "") or "dropped" in str(row.get("content") or "")) for row in compacted)
 
 
 def test_skill_state_compaction_preserves_active_task_and_safety_prefix():

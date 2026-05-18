@@ -41,7 +41,7 @@ _RESPONSE_MODE_SCHEMA = """\
 - file_listing: 列出文件/目录内容
 - workspace_status: 当前工作目录/工作空间信息
 - skill_management: 查看/列出/管理技能
-- coding_loop: 写代码、改代码、新建文件（需要 approval）
+- agent_tool_loop: 写代码、改代码、新建文件（需要 approval）
 - executor_action: 运行命令/测试（需要 approval）
 - url_summary: URL 内容总结
 - search_pipeline: 网络搜索请求
@@ -55,11 +55,11 @@ _CLASSIFICATION_PRINCIPLES = """\
 分类判断原则：
 
 1. 闲聊、笑话、身份问题、能力问题 → 不应澄清 → chat_answer / joke_answer / help_answer
-2. 解释概念、写摘要、生成说明（未要求写文件）→ chat_answer 或 plan_answer，不要走 coding_loop
+2. 解释概念、写摘要、生成说明（未要求写文件）→ chat_answer 或 plan_answer，不要走 agent_tool_loop
 3. 当前目录、项目结构、列出文件 → 只读 repo/file/workspace，不要澄清
 4. 查看 skill / 列出 skill / 询问有哪些技能 → skill_management，不要澄清
 5. 找某个实现位置、解释代码结构 → repo_inspection 或 debug_analysis
-6. 写代码、改代码、新建文件 → coding_loop，requires_write=true，requires_approval=true
+6. 写代码、改代码、新建文件 → agent_tool_loop，requires_write=true，requires_approval=true
 7. 运行命令、pytest、git status → executor_action，requires_shell=true，requires_approval=true
 8. 读取 .env、ssh key、token → refusal_or_safety_message，risk_level=blocked
 9. 只有真正模糊的"弄一下""写个东西""处理一下" → clarify_question
@@ -149,7 +149,7 @@ _FEW_SHOT_EXAMPLES = [
         "input": "修复 bug 并跑相关测试",
         "output": {
             "intent": "coding_task",
-            "response_mode": "coding_loop",
+            "response_mode": "agent_tool_loop",
             "confidence": 0.95,
             "summary": "bug fix with test run",
             "requires_repo_read": True,
@@ -485,80 +485,19 @@ def generate_chat_response_direct(
     chat_type: str = "chat_answer",
     llm_provider: Any = None,
 ) -> str:
-    # Keep ultra-basic greetings/capability prompts resilient even when network is flaky.
-    if _is_local_fallback_request_direct(user_input):
-        return _local_fallback_response_direct(user_input, chat_type)
-    if _is_truly_under_specified_request_direct(user_input):
-        return _minimal_clarification_response_direct(user_input)
-
     if llm_provider is None:
-        return _llm_unavailable_fallback_direct()
+        return "LLM provider is not available. Please check your API configuration."
 
     prompt = build_chat_prompt_direct(user_input=user_input, chat_type=chat_type)
     try:
         result = llm_provider.complete(prompt, system=_CHAT_SYSTEM_PROMPT_DIRECT)
     except Exception as exc:
-        if "unavailable" in str(exc).lower():
-            return _llm_unavailable_fallback_direct()
-        return f"[ERROR] 无法连接 LLM: {exc}"
+        return f"LLM call failed: {exc}"
 
     text = str(result or "").strip()
     if not text:
-        return "[ERROR] LLM 返回空回答: content_length=0"
+        return "LLM returned empty response."
     return text
-
-
-def _is_local_fallback_request_direct(text: str) -> bool:
-    low = text.lower().strip()
-    return low in {
-        "你好", "晚上好", "早上好",
-        "hello", "hi", "hey", "good morning", "good evening",
-        "你是谁", "who are you",
-        "你能做什么", "what can you do",
-        "/help", "help",
-    }
-
-
-def _is_truly_under_specified_request_direct(text: str) -> bool:
-    low = text.lower().strip().rstrip("。.!！?")
-    return low in {
-        "帮我改一下",
-        "处理一下这个",
-        "优化它",
-        "help me change it",
-        "fix this",
-        "improve it",
-    }
-
-
-def _minimal_clarification_response_direct(text: str) -> str:
-    low = text.lower().strip()
-    if any(ch in low for ch in ("帮", "处理", "优化", "改")):
-        return "可以，你想处理哪一处？请告诉我目标文件、现象或期望效果。"
-    return "Sure. What exactly should I change or improve? Please share the target file, symptom, or desired outcome."
-
-
-def _local_fallback_response_direct(text: str, chat_type: str) -> str:
-    low = text.lower().strip()
-    if low in {"hello", "hi", "hey", "good morning", "good evening"}:
-        return "Hi, I’m here. I can inspect repositories, explain code, and help with coding tasks."
-    if low in {"你好", "晚上好", "早上好"}:
-        return "你好！我是 Jarvis，运行在本地的 CLI agent。你可以直接告诉我你需要做什么，比如检查项目结构、读写文件、运行命令等。用 /help 查看所有命令。"
-    if low in {"你是谁", "who are you"}:
-        return "我是 Jarvis，一个本地 CLI 助手。我可以帮助你检查项目、修改代码、运行测试、管理技能等。涉及写文件或执行命令时需要审批。"
-    if low in {"你能做什么", "what can you do"}:
-        return "我可以：检查项目结构、读写文件、运行命令、搜索代码、管理技能、规划重构等。用 /help 查看完整命令列表。"
-    if low in {"/help", "help"}:
-        return "直接输入自然语言即可。例如：'帮我检查项目结构'、'修复这个 bug'、'运行测试'。用 /help 查看所有命令。"
-    return ""
-
-
-def _llm_unavailable_fallback_direct() -> str:
-    return (
-        "当前 LLM provider 不可用，因此我不能生成完整聊天回答。\n"
-        "你可以让我执行明确的本地只读任务，例如查看当前目录、列出 skills、检查项目结构。\n"
-        "基础帮助：输入 /help 查看命令列表。"
-    )
 
 
 # ---------------------------------------------------------------------------
@@ -600,72 +539,7 @@ def build_chat_prompt(
     )
 
 
-def generate_chat_response(
-    *,
-    user_input: str,
-    chat_type: str = "chat_answer",
-    llm_provider: Any = None,
-) -> str:
-    """Generate a chat response using LLM or fallback.
-
-    If LLM provider is unavailable, returns a clear fallback message.
-    """
-    from .provider import safe_complete
-
-    # Local fallback for basic requests
-    if _is_local_fallback_request(user_input):
-        return _local_fallback_response(user_input, chat_type)
-
-    prompt = build_chat_prompt(user_input=user_input, chat_type=chat_type)
-    result = safe_complete(llm_provider, prompt, system=_CHAT_SYSTEM_PROMPT)
-
-    if result is None:
-        return _llm_unavailable_fallback()
-
-    return result
-
-
-def _is_local_fallback_request(text: str) -> bool:
-    """Check if this is a basic request that can be answered without LLM."""
-    low = text.lower().strip()
-    return low in {
-        "你好", "晚上好", "早上好", "hello", "hi", "hey", "good morning", "good evening",
-        "你是谁", "who are you",
-        "你能做什么", "what can you do",
-        "/help", "help",
-    }
-
-
-def _local_fallback_response(text: str, chat_type: str) -> str:
-    """Provide local template responses for basic requests."""
-    low = text.lower().strip()
-    if low in {"hello", "hi", "hey", "good morning", "good evening"}:
-        return "Hi, I’m here. I can inspect repositories, explain code, and help with coding tasks."
-    if low in {"你好", "晚上好", "早上好"}:
-        return "你好！我是 Jarvis，运行在本地的 CLI agent。你可以直接告诉我你需要做什么，比如检查项目结构、读写文件、运行命令等。用 /help 查看所有命令。"
-    if low in {"你是谁", "who are you"}:
-        return "我是 Jarvis，一个本地 CLI agent。我可以帮你检查项目、修改代码、运行测试、管理技能等。所有危险操作（写文件、跑命令）都需要审批。"
-    if low in {"你能做什么", "what can you do"}:
-        return "我可以：检查项目结构、读写文件、运行命令、搜索代码、管理技能、计划重构等。用 /help 查看完整命令列表。直接用自然语言告诉我你需要什么。"
-    if low in {"/help", "help"}:
-        return "直接输入自然语言即可。例如：'帮我检查项目结构'、'修复这个 bug'、'运行测试'。用 /help 查看所有命令。"
-    return ""
-
-
-def _llm_unavailable_fallback() -> str:
-    """Clear fallback when LLM provider is unavailable."""
-    return (
-        "当前 LLM provider 不可用，因此我不能生成完整聊天回答。\n"
-        "你可以让我执行明确的本地只读任务，例如查看当前目录、列出 skills、检查项目结构。\n"
-        "基础帮助：输入 /help 查看命令列表。"
-    )
-
-
-# Public chat API uses the direct-answer contract.  The older names are kept so
-# callers and tests reuse one chat path instead of a parallel implementation.
+# Public chat API — use the direct variants.
 _CHAT_SYSTEM_PROMPT = _CHAT_SYSTEM_PROMPT_DIRECT
 build_chat_prompt = build_chat_prompt_direct
 generate_chat_response = generate_chat_response_direct
-_is_local_fallback_request = _is_local_fallback_request_direct
-_local_fallback_response = _local_fallback_response_direct
-_llm_unavailable_fallback = _llm_unavailable_fallback_direct

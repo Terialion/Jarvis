@@ -38,7 +38,7 @@ class TestChatAnswerNoIntentMatching:
         """Default greeting for English input."""
         route = {"response_mode": "chat_answer", "summary": "greeting"}
         result = render_chat_answer(route, "hello")
-        assert "Hi, I'm here." in result
+        assert "I'm here." in result
 
     def test_chat_answer_no_joke_keywords_check(self):
         """Even if user input contains joke-like words, it should not auto-joke unless mode says so."""

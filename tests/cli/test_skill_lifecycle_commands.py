@@ -53,7 +53,7 @@ def test_skill_lifecycle_commands_round_trip(tmp_path: Path):
     assert result.returncode == 0
     assert "Skill installed: cli_lifecycle_skill" in output
     assert "Skill enabled: cli_lifecycle_skill" in output
-    assert "validation_status: ok" in output
+    assert "Validation: ok" in output or "validation_status: ok" in output
     assert "Skill disabled: cli_lifecycle_skill" in output
     assert "Skill trust updated: cli_lifecycle_skill -> trusted" in output
     assert "Skill quarantined: cli_lifecycle_skill" in output

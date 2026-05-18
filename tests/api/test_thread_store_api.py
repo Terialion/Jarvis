@@ -4,13 +4,13 @@ from pathlib import Path
 
 from src.jarvis.api.server import JarvisApiState, route_request
 from src.jarvis.store.memory_store import MemoryStore
-from src.jarvis.store.thread_store import ThreadStore
+from src.jarvis.store import ThreadStore
 
 
 def test_thread_and_memory_api_routes(tmp_path: Path, monkeypatch):
     db_path = tmp_path / "jarvis.db"
-    monkeypatch.setattr("src.jarvis.api.server.ThreadStore", lambda: ThreadStore(db_path=db_path))
-    monkeypatch.setattr("src.jarvis.api.server.MemoryStore", lambda: MemoryStore(db_path=db_path))
+    monkeypatch.setattr("src.jarvis.api.server.ThreadStore", lambda: ThreadStore(sessions_dir=db_path))
+    monkeypatch.setattr("src.jarvis.api.server.MemoryStore", lambda: MemoryStore(memory_md_dir=db_path))
     state = JarvisApiState()
 
     status, payload = route_request(state, "POST", "/api/context/save", {"title": "saved"})

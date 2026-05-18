@@ -21,7 +21,7 @@ def test_input_golden_set():
             continue
 
         routed = route_user_input(text, source_surface="cli", input_kind="unknown_task")
-        safe = apply_route_safety(routed, text, mode="safe")
+        safe = apply_route_safety(routed, text)
         assert safe.response_mode == item["expected_response_mode"], text
         if "expected_intent" in item:
             assert safe.intent == item["expected_intent"], text

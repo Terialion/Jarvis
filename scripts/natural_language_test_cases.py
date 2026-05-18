@@ -306,7 +306,7 @@ SKILL_CASES: List[NaturalLanguageTestCase] = [
     NaturalLanguageTestCase(
         input="帮我用 code-generator skill 写一个 hello.py",
         category=Category.SKILL_USAGE.value,
-        expected_response_mode="coding_loop",
+        expected_response_mode="agent_tool_loop",
         requires_write=True,
         requires_approval=True,
         notes="Skill-assisted coding; requires approval.",
@@ -324,7 +324,7 @@ CODING_CASES: List[NaturalLanguageTestCase] = [
     NaturalLanguageTestCase(
         input="在这个工作空间写一个 python 程序，打印 hello world",
         category=Category.CODING.value,
-        expected_response_mode="coding_loop",
+        expected_response_mode="agent_tool_loop",
         requires_write=True,
         requires_approval=True,
         must_not_clarify=True,
@@ -332,14 +332,14 @@ CODING_CASES: List[NaturalLanguageTestCase] = [
     NaturalLanguageTestCase(
         input="新建一个 hello.py，打印 hello world",
         category=Category.CODING.value,
-        expected_response_mode="coding_loop",
+        expected_response_mode="agent_tool_loop",
         requires_write=True,
         requires_approval=True,
     ),
     NaturalLanguageTestCase(
         input="写一个 python 程序打印 helloworld，并运行一下",
         category=Category.CODING_SHELL.value,
-        expected_response_mode="coding_loop",
+        expected_response_mode="agent_tool_loop",
         requires_write=True,
         requires_shell=True,
         requires_approval=True,
@@ -347,7 +347,7 @@ CODING_CASES: List[NaturalLanguageTestCase] = [
     NaturalLanguageTestCase(
         input="修复'查看skill'被误判成澄清的问题，并跑相关测试",
         category=Category.BUG_FIX.value,
-        expected_response_mode="coding_loop",
+        expected_response_mode="agent_tool_loop",
         requires_write=True,
         requires_shell=True,
         requires_approval=True,
@@ -355,7 +355,7 @@ CODING_CASES: List[NaturalLanguageTestCase] = [
     NaturalLanguageTestCase(
         input="修复 /skill unknown 的问题，补回归测试",
         category=Category.BUG_FIX.value,
-        expected_response_mode="coding_loop",
+        expected_response_mode="agent_tool_loop",
         requires_write=True,
         requires_shell=True,
         requires_approval=True,
@@ -363,7 +363,7 @@ CODING_CASES: List[NaturalLanguageTestCase] = [
     NaturalLanguageTestCase(
         input="把 ClarificationPolicy 的触发条件收窄，并跑 routing 测试",
         category=Category.BUG_FIX.value,
-        expected_response_mode="coding_loop",
+        expected_response_mode="agent_tool_loop",
         requires_write=True,
         requires_shell=True,
         requires_approval=True,
@@ -435,7 +435,7 @@ PLANNING_CASES: List[NaturalLanguageTestCase] = [
     NaturalLanguageTestCase(
         input="重构 routing 模块，让 ClarificationPolicy 后置，然后跑测试",
         category=Category.CODING.value,
-        expected_response_mode="coding_loop",
+        expected_response_mode="agent_tool_loop",
         requires_write=True,
         requires_shell=True,
         requires_approval=True,
@@ -473,7 +473,7 @@ WRITING_CASES: List[NaturalLanguageTestCase] = [
     NaturalLanguageTestCase(
         input="把这个功能写到 docs/input_handling.md 里",
         category=Category.DOC_EDIT.value,
-        expected_response_mode="coding_loop",
+        expected_response_mode="agent_tool_loop",
         requires_write=True,
         requires_approval=True,
         notes="Explicitly asks to write to a file; requires approval.",

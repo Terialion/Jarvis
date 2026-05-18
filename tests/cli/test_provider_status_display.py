@@ -13,7 +13,7 @@ def test_provider_status_available_without_key_leak(monkeypatch):
         pass
 
     monkeypatch.setattr(
-        "src.jarvis.core.llm.runtime_provider.build_runtime_llm_provider",
+        "jarvis.core.llm.runtime_provider.build_runtime_llm_provider",
         lambda *_a, **_k: _Provider(),
     )
     line, provider = cli_mod._build_provider_status_line()
@@ -25,10 +25,22 @@ def test_provider_status_available_without_key_leak(monkeypatch):
 
 
 def test_provider_status_unavailable_missing_api_key(monkeypatch):
-    monkeypatch.setenv("JARVIS_LLM_PROVIDER", "openai_compatible")
-    monkeypatch.setenv("JARVIS_LLM_BASE_URL", "https://api.example.com/v1")
-    monkeypatch.delenv("JARVIS_LLM_API_KEY", raising=False)
-    monkeypatch.setenv("JARVIS_LLM_MODEL", "demo-model")
+    from jarvis.core.llm.runtime_provider import LLMProviderConfig
+
+    fake_cfg = LLMProviderConfig(
+        provider="openai_compatible",
+        base_url="https://api.example.com/v1",
+        api_key="",
+        model="demo-model",
+    )
+    monkeypatch.setattr(
+        "jarvis.core.llm.runtime_provider.load_llm_provider_config",
+        lambda: fake_cfg,
+    )
+    monkeypatch.setattr(
+        "jarvis.core.llm.runtime_provider.build_runtime_llm_provider",
+        lambda *_a, **_k: None,
+    )
     line, provider = cli_mod._build_provider_status_line()
     assert provider is None
     assert "fallback mode enabled" in line
@@ -36,10 +48,22 @@ def test_provider_status_unavailable_missing_api_key(monkeypatch):
 
 
 def test_provider_status_unavailable_missing_model_and_base_url(monkeypatch):
-    monkeypatch.setenv("JARVIS_LLM_PROVIDER", "openai_compatible")
-    monkeypatch.delenv("JARVIS_LLM_BASE_URL", raising=False)
-    monkeypatch.setenv("JARVIS_LLM_API_KEY", "present")
-    monkeypatch.delenv("JARVIS_LLM_MODEL", raising=False)
+    from jarvis.core.llm.runtime_provider import LLMProviderConfig
+
+    fake_cfg = LLMProviderConfig(
+        provider="openai_compatible",
+        base_url="",
+        api_key="present",
+        model="",
+    )
+    monkeypatch.setattr(
+        "jarvis.core.llm.runtime_provider.load_llm_provider_config",
+        lambda: fake_cfg,
+    )
+    monkeypatch.setattr(
+        "jarvis.core.llm.runtime_provider.build_runtime_llm_provider",
+        lambda *_a, **_k: None,
+    )
     line, provider = cli_mod._build_provider_status_line()
     assert provider is None
     assert "fallback mode enabled" in line

@@ -3,16 +3,16 @@ from __future__ import annotations
 from pathlib import Path
 
 from src.jarvis.core.policy.approval import ApprovalRequest, ApprovalResponse
-from src.jarvis.store.thread_store import ThreadStore
+from src.jarvis.store import ThreadStore
 
 
 def test_approval_audit_persists_redacted_records(tmp_path: Path):
     path = tmp_path / "jarvis.db"
-    store = ThreadStore(db_path=path)
+    store = ThreadStore(sessions_dir=path)
     thread = store.create_thread(title="Approval audit")
     secret = "OPENAI_API_KEY=sk-audit-secret"
     store.append_approval_audit(
-        thread.thread_id,
+        thread["thread_id"],
         "turn_001",
         ApprovalRequest(
             approval_id="approval_001",
@@ -25,7 +25,7 @@ def test_approval_audit_persists_redacted_records(tmp_path: Path):
         ),
     )
     store.append_approval_audit(
-        thread.thread_id,
+        thread["thread_id"],
         "turn_001",
         ApprovalResponse(
             approval_id="approval_001",
@@ -36,6 +36,6 @@ def test_approval_audit_persists_redacted_records(tmp_path: Path):
         ),
     )
 
-    rows = store.get_approval_audits(thread.thread_id)
+    rows = store.get_approval_audits(thread["thread_id"])
     assert rows
-    assert all(secret not in str(row.reason_redacted or "") for row in rows)
+    assert all(secret not in str(row["reason_redacted"] or "") for row in rows)

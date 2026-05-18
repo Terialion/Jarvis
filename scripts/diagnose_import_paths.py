@@ -26,7 +26,6 @@ def main() -> int:
         "src.jarvis.core.routing.__file__": _module_file("src.jarvis.core.routing"),
         "src.jarvis.core.cli_response.__file__": _module_file("src.jarvis.core.cli_response"),
         "src.jarvis.core.repo_inspection.__file__": _module_file("src.jarvis.core.repo_inspection"),
-        "src.jarvis.core.coding_loop.__file__": _module_file("src.jarvis.core.coding_loop"),
         "src.jarvis.core.rethink.__file__": _module_file("src.jarvis.core.rethink"),
         "src.jarvis.core.react_readiness.__file__": _module_file("src.jarvis.core.react_readiness"),
         "sys.path_first_entries": sys.path[:5],
@@ -35,7 +34,6 @@ def main() -> int:
     ok = (
         str(payload["jarvis.cli.__file__"]).replace("\\", "/").endswith("/jarvis/cli.py")
         and "/src/jarvis/core/routing" in str(payload["src.jarvis.core.routing.__file__"]).replace("\\", "/")
-        and "/src/jarvis/core/coding_loop" in str(payload["src.jarvis.core.coding_loop.__file__"]).replace("\\", "/")
     )
     return 0 if ok else 1
 

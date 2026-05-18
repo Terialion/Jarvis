@@ -7,7 +7,7 @@ from typing import Any
 
 from .skill_context import ActiveTaskState, HandoffSummary, SkillObservation
 from ..store.memory_store import MemoryStore
-from ..store.thread_store import ThreadStore
+from ..store.session_store import SessionStore
 from ..web.research_context import ResearchObservation
 
 
@@ -27,19 +27,19 @@ class ContextStore:
     def __init__(
         self,
         *,
-        thread_store: ThreadStore | None = None,
+        session_store: SessionStore | None = None,
         memory_store: MemoryStore | None = None,
     ) -> None:
         self._sessions: dict[str, SessionContextState] = {}
-        self.thread_store = thread_store
+        self.session_store = session_store
         self.memory_store = memory_store
 
     def get_state(self, session_id: str) -> SessionContextState:
         key = str(session_id or "default")
         if key not in self._sessions:
             self._sessions[key] = SessionContextState()
-            if self.thread_store is not None:
-                self._hydrate_from_thread(key)
+            if self.session_store is not None:
+                self._hydrate_from_session(key)
         return self._sessions[key]
 
     def append_turn(self, session_id: str, turn: dict[str, Any]) -> None:
@@ -116,7 +116,7 @@ class ContextStore:
             self._sessions.pop(str(session_id), None)
 
     def hydrate_thread(self, thread_id: str, *, project_id: str | None = None) -> dict[str, Any]:
-        state = self._hydrate_from_thread(thread_id, project_id=project_id)
+        state = self._hydrate_from_session(thread_id, project_id=project_id)
         return {
             "thread_id": str(thread_id),
             "recent_turns": list(state.recent_turns),
@@ -127,72 +127,72 @@ class ContextStore:
             "handoff_summary": state.handoff_summary.to_dict() if state.handoff_summary else None,
         }
 
-    def _hydrate_from_thread(self, thread_id: str, *, project_id: str | None = None) -> SessionContextState:
+    def _hydrate_from_session(self, thread_id: str, *, project_id: str | None = None) -> SessionContextState:
         state = self._sessions.setdefault(str(thread_id), SessionContextState())
-        if self.thread_store is None:
+        if self.session_store is None:
             return state
-        turns = self.thread_store.get_recent_turns(thread_id, limit=12)
+        turns = self.session_store.get_recent_turns(thread_id, limit=12)
         state.recent_turns = [
             {
-                "turn_id": row.turn_id,
-                "user_input": row.input_redacted,
-                "final_answer": row.output_summary_redacted,
-                "skills_used": list(row.metadata.get("skills_used") or []),
+                "turn_id": row["turn_id"],
+                "user_input": row["input_redacted"],
+                "final_answer": row["output_summary_redacted"],
+                "skills_used": list((row.get("metadata") or {}).get("skills_used") or []),
                 "related_files": [],
             }
             for row in turns
         ]
         state.skill_observations = [
             SkillObservation(
-                skill_name=row.skill_name,
-                summary=row.summary_redacted,
-                facts=dict(row.metadata.get("facts") or {}),
-                related_files=[str(x) for x in row.related_files],
-                tool_calls=[str(x) for x in list(row.metadata.get("tool_calls") or [])],
-                created_at=row.created_at,
+                skill_name=row["skill_name"],
+                summary=row["summary_redacted"],
+                facts=dict((row.get("metadata") or {}).get("facts") or {}),
+                related_files=[str(x) for x in row.get("related_files", [])],
+                tool_calls=[str(x) for x in list((row.get("metadata") or {}).get("tool_calls") or [])],
+                created_at=row.get("created_at", ""),
             )
-            for row in self.thread_store.get_skill_observations(thread_id, limit=12)
+            for row in self.session_store.get_skill_obs(thread_id, limit=12)
         ]
         state.research_observations = [
             ResearchObservation(
-                query=row.query_redacted,
-                search_tasks=[dict(x) for x in list(row.metadata.get("search_tasks") or []) if isinstance(x, dict)],
-                sources=[dict(x) for x in row.sources_redacted if isinstance(x, dict)],
-                evidence=[dict(x) for x in row.evidence_redacted if isinstance(x, dict)],
-                answer_summary=row.answer_summary_redacted,
-                confidence=float(row.confidence),
-                remaining_questions=[str(x) for x in list(row.metadata.get("remaining_questions") or [])],
-                created_at=row.created_at,
+                query=row["query_redacted"],
+                search_tasks=[dict(x) for x in list((row.get("metadata") or {}).get("search_tasks") or []) if isinstance(x, dict)],
+                sources=[dict(x) for x in row.get("sources_redacted", []) if isinstance(x, dict)],
+                evidence=[dict(x) for x in row.get("evidence_redacted", []) if isinstance(x, dict)],
+                answer_summary=row["answer_summary_redacted"],
+                confidence=float(row.get("confidence", 0.0)),
+                remaining_questions=[str(x) for x in list((row.get("metadata") or {}).get("remaining_questions") or [])],
+                created_at=row.get("created_at", ""),
             )
-            for row in self.thread_store.get_research_observations(thread_id, limit=8)
+            for row in self.session_store.get_research_obs(thread_id, limit=8)
         ]
-        active_task = self.thread_store.get_active_task(thread_id)
+        active_task = self.session_store.get_active_task(thread_id)
         if active_task is not None:
-            metadata = dict(active_task.metadata or {})
+            metadata = dict(active_task.get("metadata") or {})
             state.active_task = ActiveTaskState(
                 task_id=str(metadata.get("task_id") or f"task_{thread_id}"),
-                user_goal=str(metadata.get("user_goal") or active_task.summary_redacted),
+                user_goal=str(metadata.get("user_goal") or active_task["summary_redacted"]),
                 current_phase=str(metadata.get("current_phase") or "resumed"),
                 completed_steps=[str(x) for x in list(metadata.get("completed_steps") or [])],
-                remaining_work=[str(x) for x in list(active_task.remaining_work or [])],
-                related_files=[str(x) for x in list(active_task.related_files or [])],
+                remaining_work=[str(x) for x in list(active_task.get("remaining_work") or [])],
+                related_files=[str(x) for x in list(active_task.get("related_files") or [])],
                 skills_used=[str(x) for x in list(metadata.get("skills_used") or [])],
                 risks=[str(x) for x in list(metadata.get("risks") or [])],
             )
-        handoff = self.thread_store.get_handoff_summary(thread_id)
+        handoff = self.session_store.get_handoff(thread_id)
         if handoff is not None:
-            metadata = dict(handoff.metadata or {})
+            metadata = dict(handoff.get("metadata") or {})
             state.handoff_summary = HandoffSummary(
                 user_goal=str(metadata.get("user_goal") or ""),
-                current_state=str(metadata.get("current_state") or handoff.summary_redacted),
+                current_state=str(metadata.get("current_state") or handoff["summary_redacted"]),
                 completed_work=[str(x) for x in list(metadata.get("completed_work") or [])],
                 remaining_work=[str(x) for x in list(metadata.get("remaining_work") or [])],
                 context_to_keep=[str(x) for x in list(metadata.get("context_to_keep") or [])],
-                risks=[str(x) for x in list(handoff.risks or [])],
+                risks=[str(x) for x in list(handoff.get("risks") or [])],
             )
-        facts = self.thread_store.get_project_facts(project_id)
+        facts = self.session_store.get_project_facts(thread_id, project_id=project_id)
         if facts is not None:
-            state.project_facts["persistent_project_facts"] = list(facts.facts_redacted)
+            state.project_facts["persistent_project_facts"] = list(facts.get("facts_redacted", []))
         if self.memory_store is not None:
             state.project_facts["persistent_user_memory"] = self.memory_store.get_user_memory()
             if project_id:

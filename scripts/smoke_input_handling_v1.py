@@ -107,9 +107,9 @@ def main() -> int:
                     failed += 1
                     print(f"[FAIL] {text}: entered task flow via {forbidden!r}")
                     break
-        if item.get("must_not_enter_coding_loop") and "Coding loop complete." in cli_out:
+        if item.get("must_not_enter_agent_tool_loop") and "Agent tool loop complete." in cli_out:
             failed += 1
-            print(f"[FAIL] {text}: should not enter coding loop")
+            print(f"[FAIL] {text}: should not enter agent tool loop")
         if item.get("must_not_read_sensitive") and safe.response_mode != "refusal_or_safety_message":
             failed += 1
             print(f"[FAIL] {text}: sensitive input not refused")
