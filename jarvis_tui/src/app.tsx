@@ -122,6 +122,7 @@ export const App: React.FC<AppProps> = ({
   const thinkingAccum = useRef("");
   const toolsAccum = useRef<ToolInfo[]>([]);
   const hadToolCall = useRef(false);
+  const hadReasoning = useRef(false);
 
   // ── Initialize bridge ───────────────────────────────────────────
 
@@ -189,14 +190,17 @@ export const App: React.FC<AppProps> = ({
       case "text_delta": {
         const text = chunk.text_delta ?? "";
         if (!text) break;
-        // Filter out tool-result text injected by AgentLoop
         if (isToolResultText(text)) break;
         if (hadToolCall.current) {
           // Text after tool calls → real answer
           answerAccum.current += text;
           setCurrentAnswer((prev) => prev + text);
+        } else if (hadReasoning.current) {
+          // Reasoning already handled → this is the answer content
+          answerAccum.current += text;
+          setCurrentAnswer((prev) => prev + text);
         } else {
-          // Text before any tool call → likely thinking/planning
+          // Text before any tool call or reasoning → likely thinking/planning
           thinkingAccum.current += text;
           setCurrentThinking((prev) => prev + text);
         }
@@ -206,6 +210,7 @@ export const App: React.FC<AppProps> = ({
       case "progress_delta": {
         const text = (chunk.reasoning_delta ?? chunk.progress_delta ?? "");
         if (text) {
+          hadReasoning.current = true;
           thinkingAccum.current += text;
           setCurrentThinking((prev) => prev + text);
         }
@@ -276,6 +281,7 @@ export const App: React.FC<AppProps> = ({
     thinkingAccum.current = "";
     toolsAccum.current = [];
     hadToolCall.current = false;
+    hadReasoning.current = false;
     setCurrentAnswer("");
     setCurrentThinking("");
     setCurrentTools([]);
@@ -311,6 +317,7 @@ export const App: React.FC<AppProps> = ({
       turnStartTime.current = Date.now();
       seenToolIds.current.clear();
       hadToolCall.current = false;
+      hadReasoning.current = false;
 
       // Add user message
       setMessages((prev) => [
