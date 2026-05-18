@@ -36,10 +36,11 @@ function nextId(): string {
 }
 
 function parseToolArgs(name: string, args: string): string {
-  // Shorten tool arguments for display
-  const maxLen = 60;
-  if (args.length <= maxLen) return args;
-  return args.slice(0, maxLen) + "...";
+  // Show first line only, truncate at 80 chars
+  const firstLine = args.split("\n")[0];
+  const maxLen = 80;
+  if (firstLine.length <= maxLen) return firstLine;
+  return firstLine.slice(0, maxLen) + "…";
 }
 
 function mapToolDisplay(name: string): string {
@@ -54,6 +55,11 @@ function mapToolDisplay(name: string): string {
     web_fetch: "WebFetch",
     task: "Task",
     ask: "AskUser",
+    "command_runner.run": "Run",
+    "skill_loader.load": "Skill",
+    "skill_loader.run": "Skill",
+    "web_search.search": "Search",
+    "web_fetch.fetch": "Fetch",
   };
   return display[name] ?? name.split(".").pop() ?? name;
 }
@@ -106,6 +112,7 @@ export const App: React.FC<AppProps> = ({
   const answerAccum = useRef("");
   const thinkingAccum = useRef("");
   const toolsAccum = useRef<ToolInfo[]>([]);
+  const hadToolCall = useRef(false);
 
   // ── Initialize bridge ───────────────────────────────────────────
 
@@ -172,9 +179,15 @@ export const App: React.FC<AppProps> = ({
     switch (chunk.kind) {
       case "text_delta": {
         const text = chunk.text_delta ?? "";
-        if (text) {
+        if (!text) break;
+        if (hadToolCall.current) {
+          // Text after tool calls → real answer
           answerAccum.current += text;
           setCurrentAnswer((prev) => prev + text);
+        } else {
+          // Text before any tool call → likely thinking/planning
+          thinkingAccum.current += text;
+          setCurrentThinking((prev) => prev + text);
         }
         break;
       }
@@ -199,6 +212,8 @@ export const App: React.FC<AppProps> = ({
         const tool: ToolInfo = { name, display, args, status: "ok" as const };
         toolsAccum.current = [...toolsAccum.current, tool];
         setCurrentTools((prev) => [...prev, tool]);
+        hadToolCall.current = true;
+        setToolsExpanded(true);
         break;
       }
       case "done": {
@@ -212,11 +227,22 @@ export const App: React.FC<AppProps> = ({
 
   const handleDone = useCallback(() => {
     const answer = answerAccum.current.trim();
-    const thinking = thinkingAccum.current.trim();
+    let thinking = thinkingAccum.current.trim();
     const tools = [...toolsAccum.current];
 
-    // Finalize the current streaming message into message history
-    if (answer || thinking) {
+    // If no tools were used, the "thinking" text is the actual answer
+    if (!hadToolCall.current && thinking && !answer) {
+      setMessages((prev) => [
+        ...prev,
+        {
+          id: nextId(),
+          role: "assistant",
+          content: thinking,
+          timestamp: Date.now(),
+        },
+      ]);
+      thinking = "";
+    } else if (answer || thinking) {
       setMessages((prev) => [
         ...prev,
         {
@@ -231,13 +257,14 @@ export const App: React.FC<AppProps> = ({
     }
 
     // Save toggle data for the last turn
-    setLastThinking(thinkingAccum.current);
-    setLastToolsList([...toolsAccum.current]);
+    setLastThinking(thinking);
+    setLastToolsList(tools);
 
     // Reset streaming state
     answerAccum.current = "";
     thinkingAccum.current = "";
     toolsAccum.current = [];
+    hadToolCall.current = false;
     setCurrentAnswer("");
     setCurrentThinking("");
     setCurrentTools([]);
@@ -272,6 +299,7 @@ export const App: React.FC<AppProps> = ({
       setLatency("");
       turnStartTime.current = Date.now();
       seenToolIds.current.clear();
+      hadToolCall.current = false;
 
       // Add user message
       setMessages((prev) => [
