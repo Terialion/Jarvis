@@ -4,7 +4,7 @@
  */
 import React, { useState, useCallback } from "react";
 import { Box, Text } from "ink";
-import TextInput from "ink-text-input";
+import { TextInput } from "./TextInput.js";
 
 interface PromptInputProps {
   onSubmit: (text: string) => void;

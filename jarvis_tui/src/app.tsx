@@ -346,24 +346,30 @@ export const App: React.FC<AppProps> = ({
       } else {
         exit();
       }
+      return true;
     }
     if (key.ctrl && input === "t") {
       if (lastThinking) setThinkingExpanded((prev) => !prev);
+      return true;
     }
     if (key.ctrl && input === "o") {
       if (lastToolsList.length > 0) setToolsExpanded((prev) => !prev);
+      return true;
     }
     if (key.shift && key.tab) {
       const modes = ["default", "plan", "accept_edits"];
       const idx = modes.indexOf(mode);
       setMode(modes[(idx + 1) % modes.length]);
+      return true;
     }
     // Message list scrolling
     if (key.pageUp) {
       setScrollOffset((prev) => prev + 8);
+      return true;
     }
     if (key.pageDown) {
       setScrollOffset((prev) => Math.max(0, prev - 8));
+      return true;
     }
   });
 
