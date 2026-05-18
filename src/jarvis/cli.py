@@ -3984,8 +3984,12 @@ def _run_ink_tui(
     # Find the project Python
     python_path = sys.executable or shutil.which("python") or "python"
 
-    # Detect model and git branch
-    model_name = os.environ.get("JARVIS_LLM_MODEL", "deepseek-v4-pro")
+    # Detect model from actual LLM config (not a hardcoded default)
+    try:
+        from jarvis.core.llm.config import load_llm_config
+        model_name = load_llm_config().model or "unknown"
+    except Exception:
+        model_name = os.environ.get("JARVIS_LLM_MODEL", "unknown")
     branch = ""
     try:
         head = (Path.cwd() / ".git" / "HEAD").read_text().strip()

@@ -118,7 +118,11 @@ function renderTable(lines: string[], startKey: number): { elements: React.React
   function renderCell(content: string, width: number, header: boolean): React.ReactNode {
     return (
       <Box key={key++} width={width}>
-        {header ? <Text bold>{content}</Text> : <Text>{content}</Text>}
+        {header ? (
+          <Text bold>{renderInline(content, key * 100)}</Text>
+        ) : (
+          <Text>{renderInline(content, key * 100)}</Text>
+        )}
       </Box>
     );
   }
