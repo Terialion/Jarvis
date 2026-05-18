@@ -45,8 +45,8 @@ class LLMProviderConfig:
     api_key: str
     model: str
     temperature: float = 0.2
-    timeout_seconds: float = 60.0
-    max_tokens: int = 4096
+    timeout_seconds: float = 300.0
+    max_tokens: int = 32768
     api_key_source: str = "missing"
     base_url_source: str = "missing"
     model_source: str = "missing"

@@ -183,7 +183,7 @@ class CodingSession:
         *,
         project_root: str = ".",
         max_attempts: int = 3,
-        timeout_s: int = 90,
+        timeout_s: int = 300,
         permission_mode: str = "workspace_write",
         auto_approve: bool = False,
     ) -> None:

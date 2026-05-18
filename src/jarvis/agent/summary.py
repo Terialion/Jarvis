@@ -24,6 +24,7 @@ class ResponseComposer:
         skill_results: list[dict[str, Any]] | None = None,
         active_task: dict[str, Any] | None = None,
         handoff_summary: dict[str, Any] | None = None,
+        previous_summaries: list[dict[str, Any]] | None = None,
         context_reuse: bool = False,
         skill_observations: list[dict[str, Any]] | None = None,
         research_observations: list[dict[str, Any]] | None = None,
@@ -98,6 +99,10 @@ class ResponseComposer:
                 if v:
                     built_handoff[k] = v
 
+        # Accumulate key facts from previous summaries so cross-turn knowledge
+        # survives multiple compactions (Hermes re-summarization pattern).
+        accumulated_context = self._build_accumulated_context(previous_summaries)
+
         machine = {
             "outcome": outcome,
             "output_type": output_type,
@@ -118,6 +123,7 @@ class ResponseComposer:
             "context_reuse": bool(context_reuse),
             "active_task": dict(active_task or {}),
             "handoff_summary": built_handoff,
+            "accumulated_context": accumulated_context,
             "skill_observations": list(skill_observations or []),
             "research_observations": list(research_observations or []),
             "web_search_runs_count": int(web_search_runs_count or 0),
@@ -142,3 +148,42 @@ class ResponseComposer:
             machine["missing_fields"] = list(clarification.get("missing_fields") or [])
             machine["clarification_question"] = str(clarification.get("question") or "").strip()
         return {"human": human, "machine": machine}
+
+    @staticmethod
+    def _build_accumulated_context(
+        previous_summaries: list[dict[str, Any]] | None,
+    ) -> list[dict[str, Any]]:
+        """Extract key cross-turn facts from older summaries.
+
+        Returns a list of compact fact records so the next compaction
+        does not silently discard knowledge from earlier turns.
+        """
+        if not previous_summaries:
+            return []
+        facts: list[dict[str, Any]] = []
+        seen_goals: set[str] = set()
+        seen_files: set[str] = set()
+        for s in previous_summaries:
+            sm = dict(s.get("summary") or {}).get("machine") or {}
+            if not isinstance(sm, dict):
+                continue
+            ho = sm.get("handoff_summary") or {}
+            if isinstance(ho, dict):
+                goal = str(ho.get("user_goal") or "").strip()
+                if goal and goal not in seen_goals:
+                    seen_goals.add(goal)
+                    facts.append({"kind": "goal", "text": goal[:200]})
+                for f in (ho.get("modified_files") or [])[:3]:
+                    f_str = str(f)
+                    if f_str and f_str not in seen_files:
+                        seen_files.add(f_str)
+                        facts.append({"kind": "file", "text": f_str})
+                for w in (ho.get("completed_work") or [])[:2]:
+                    w_str = str(w)
+                    if w_str:
+                        facts.append({"kind": "work", "text": w_str[:200]})
+            # Also carry forward any accumulated_context from older summaries
+            for prev_fact in sm.get("accumulated_context") or []:
+                if isinstance(prev_fact, dict) and prev_fact not in facts:
+                    facts.append(prev_fact)
+        return facts[:20]

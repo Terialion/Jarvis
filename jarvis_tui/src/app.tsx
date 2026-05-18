@@ -1,28 +1,16 @@
 /**
  * App — main TUI application component.
  *
- * Layout (Yoga Flexbox via Ink <Box>):
- * ┌─────────────────────────────┐
- * │ StatusBar (fixed top)       │ flexShrink=0
- * ├─────────────────────────────┤
- * │ MessageList (scrollable)    │ flexGrow=1 (fills available space)
- * ├─────────────────────────────┤
- * │ ToggleBlock (hints)        │ flexShrink=0
- * ├─────────────────────────────┤
- * │ PromptInput (fixed bottom)  │ flexShrink=0
- * ├─────────────────────────────┤
- * │ Footer (keybindings)       │ flexShrink=0
- * └─────────────────────────────┘
- *
- * The input bar "sticks" to the bottom naturally because:
- * - The outer Box has height = terminal rows (full screen)
- * - MessageList has flexGrow=1 (consumes all remaining space)
- * - PromptInput has flexShrink=0 (stays at intrinsic height)
+ * Claude Code-style inline output: completed messages go into <Static> so
+ * they accumulate in the terminal scrollback. The dynamic Ink frame only
+ * renders the current streaming content, status bar, and input area at the
+ * bottom of the terminal.
  */
 import React, { useState, useEffect, useCallback, useRef } from "react";
-import { Box, Text, useInput, useApp } from "ink";
+import { Box, Text, Static, useInput, useApp } from "ink";
 import { StatusBar } from "./components/StatusBar.js";
 import { MessageList } from "./components/MessageList.js";
+import { MarkdownRenderer } from "./components/MarkdownRenderer.js";
 import { PromptInput } from "./components/PromptInput.js";
 import { ToggleBlock } from "./components/ToggleBlock.js";
 import { JarvisBridge } from "./bridge.js";
@@ -100,7 +88,6 @@ export const App: React.FC<AppProps> = ({
   const [currentThinking, setCurrentThinking] = useState("");
   const [currentTools, setCurrentTools] = useState<ToolInfo[]>([]);
   const [isStreaming, setIsStreaming] = useState(false);
-  const [statusText, setStatusText] = useState("");
   const [latency, setLatency] = useState("");
   const [tokenCount, setTokenCount] = useState(0);
   const [cost, setCost] = useState(0);
@@ -110,21 +97,19 @@ export const App: React.FC<AppProps> = ({
   const [lastThinking, setLastThinking] = useState("");
   const [lastToolsList, setLastToolsList] = useState<ToolInfo[]>([]);
   const [connected, setConnected] = useState(false);
-  const [scrollOffset, setScrollOffset] = useState(0);
 
-  // Track seen tool IDs to avoid duplicates
   const seenToolIds = useRef<Set<string>>(new Set());
   const turnStartTime = useRef<number>(0);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
-  // Refs for accumulated streaming state — always current, never stale
+  // Refs for accumulated streaming state
   const answerAccum = useRef("");
   const thinkingAccum = useRef("");
   const toolsAccum = useRef<ToolInfo[]>([]);
   const hadToolCall = useRef(false);
   const hadReasoning = useRef(false);
 
-  // ── Streaming timer — updates latency every second ──────────────
+  // ── Streaming timer ────────────────────────────────────────────
 
   useEffect(() => {
     if (isStreaming) {
@@ -149,16 +134,14 @@ export const App: React.FC<AppProps> = ({
     };
   }, [isStreaming]);
 
-  // ── Initialize bridge ───────────────────────────────────────────
+  // ── Initialize bridge ─────────────────────────────────────────
 
   useEffect(() => {
     const b = new JarvisBridge();
     bridge.current = b;
 
     b.on("init", (ev: PythonEvent) => {
-      if (ev.type === "init") {
-        setConnected(true);
-      }
+      if (ev.type === "init") setConnected(true);
     });
 
     b.on("chunk", (ev: PythonEvent) => {
@@ -168,7 +151,7 @@ export const App: React.FC<AppProps> = ({
 
     b.on("done", (ev: PythonEvent) => {
       if (ev.type !== "done") return;
-      handleDone(ev.token_count, ev.cost);
+      handleDone(ev.finish_reason, ev.token_count, ev.cost);
     });
 
     b.on("ask_user", (_ev: PythonEvent) => {
@@ -202,7 +185,7 @@ export const App: React.FC<AppProps> = ({
     };
   }, []);
 
-  // ── Chunk handling ─────────────────────────────────────────────
+  // ── Chunk handling ───────────────────────────────────────────
 
   const handleChunk = useCallback((chunk: ModelChunk) => {
     switch (chunk.kind) {
@@ -249,24 +232,44 @@ export const App: React.FC<AppProps> = ({
         break;
       }
       case "done": {
-        handleDone();
+        handleDone(chunk.finish_reason);
         break;
       }
     }
   }, []);
 
-  // ── Done handling ───────────────────────────────────────────────
+  // ── Done handling ─────────────────────────────────────────────
 
-  const handleDone = useCallback((tokenCountFromBackend?: number, costFromBackend?: number) => {
+  const handleDone = useCallback((finishReason?: string, tokenCountFromBackend?: number, costFromBackend?: number) => {
     const answer = answerAccum.current.trim();
     let thinking = thinkingAccum.current.trim();
     const tools = [...toolsAccum.current];
 
-    // Track token count and cost from backend
     if (tokenCountFromBackend != null) setTokenCount(tokenCountFromBackend);
     if (costFromBackend != null) setCost(costFromBackend);
 
-    if (!hadToolCall.current && thinking && !answer) {
+    const isFailure = finishReason && finishReason !== "stop" && finishReason !== "completed";
+
+    if (isFailure && !answer) {
+      // Don't leak raw thinking as the answer on failure.
+      // Show a clean status message instead.
+      const reasonLabel = finishReason === "timeout" ? "Turn timed out"
+        : finishReason === "max_steps" ? "Reached max steps"
+        : finishReason === "error" ? "Agent error"
+        : `Stopped: ${finishReason}`;
+      setMessages((prev) => [
+        ...prev,
+        {
+          id: nextId(),
+          role: "system",
+          content: `[${reasonLabel}]`,
+          thinking: thinking || undefined,
+          tools: tools.length > 0 ? tools : undefined,
+          timestamp: Date.now(),
+        },
+      ]);
+      thinking = "";
+    } else if (!hadToolCall.current && thinking && !answer) {
       setMessages((prev) => [
         ...prev,
         {
@@ -294,7 +297,6 @@ export const App: React.FC<AppProps> = ({
     setLastThinking(thinking);
     setLastToolsList(tools);
 
-    // Reset streaming state
     answerAccum.current = "";
     thinkingAccum.current = "";
     toolsAccum.current = [];
@@ -313,7 +315,7 @@ export const App: React.FC<AppProps> = ({
     }
   }, []);
 
-  // ── Input handling ──────────────────────────────────────────────
+  // ── Input handling ────────────────────────────────────────────
 
   const handleSubmit = useCallback(
     (text: string) => {
@@ -328,7 +330,6 @@ export const App: React.FC<AppProps> = ({
       setThinkingExpanded(false);
       setToolsExpanded(false);
       setIsStreaming(true);
-      setStatusText("Thinking...");
       setLatency("");
       turnStartTime.current = Date.now();
       seenToolIds.current.clear();
@@ -350,7 +351,7 @@ export const App: React.FC<AppProps> = ({
     [],
   );
 
-  // ── Keyboard shortcuts ──────────────────────────────────────────
+  // ── Keyboard shortcuts ────────────────────────────────────────
 
   useInput((input, key) => {
     if (key.ctrl && input === "c") {
@@ -372,18 +373,31 @@ export const App: React.FC<AppProps> = ({
       const idx = modes.indexOf(mode);
       setMode(modes[(idx + 1) % modes.length]);
     }
-    if (key.pageUp) {
-      setScrollOffset((prev) => prev + 5);
-    }
-    if (key.pageDown) {
-      setScrollOffset((prev) => Math.max(0, prev - 5));
-    }
   });
 
-  // ── Render ──────────────────────────────────────────────────────
+  // ── Render ────────────────────────────────────────────────────
+
+  // Completed messages go into <Static> — they accumulate in the
+  // terminal scrollback like regular command output. The terminal's
+  // native scrollback handles scrolling; no virtual scrolling needed.
+  const staticItems = messages.map((msg) => ({ key: msg.id, ...msg }));
 
   return (
     <Box flexDirection="column">
+      {/* Completed messages — permanent in terminal scrollback */}
+      <Static items={staticItems}>
+        {(msg: Message) => (
+          <Box key={msg.id} flexDirection="column" marginBottom={1}>
+            {msg.role === "user" ? (
+              <Text dimColor>❯ {msg.content}</Text>
+            ) : (
+              <MarkdownRenderer content={msg.content} />
+            )}
+          </Box>
+        )}
+      </Static>
+
+      {/* Dynamic frame: status + streaming + input */}
       <StatusBar
         version={version}
         modelName={modelName}
@@ -397,14 +411,11 @@ export const App: React.FC<AppProps> = ({
       />
 
       <MessageList
-        messages={messages}
         currentAnswer={currentAnswer}
         currentThinking={currentThinking}
         currentTools={currentTools}
         thinkingExpanded={thinkingExpanded}
         toolsExpanded={toolsExpanded}
-        scrollOffset={scrollOffset}
-        setScrollOffset={setScrollOffset}
       />
 
       <ToggleBlock

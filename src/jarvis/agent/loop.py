@@ -52,8 +52,8 @@ class AgentLoop:
         replan_policy: ReplanPolicy | None = None,
         error_classifier: ErrorClassifier | None = None,
         max_steps: int = 20,
-        timeout_s: int = 90,
-        tool_timeout_s: int = 30,
+        timeout_s: int = 300,
+        tool_timeout_s: int = 60,
         permission_mode: str = "workspace_write",
         auto_approve: bool = False,
         user_prompt: Any = None,
@@ -93,10 +93,20 @@ class AgentLoop:
         model_name = str(self.model_info.get("model_name") or "")
         self._context_window = get_context_window(model_name)
         self._model_name = model_name
+        compaction_threshold = 12000
+        try:
+            from ..config.manager import get_config
+            cfg = get_config()
+            ct = cfg.get("llm.compaction_threshold")
+            if ct and int(ct) > 0:
+                compaction_threshold = int(ct)
+        except Exception:
+            pass
+
         self.context_builder = context_builder or ContextBuilder(
             session_store=self.store,
             memory_store=self.memory_store,
-            compactor=ContextCompactorAdapter(max_tokens=12000, model_name=model_name),
+            compactor=ContextCompactorAdapter(max_tokens=compaction_threshold, model_name=model_name),
             skill_registry=self.tool_registry.skill_registry,
             context_store=self.context_store,
             model_info=self.model_info,
@@ -502,6 +512,7 @@ class AgentLoop:
                                 break
 
                         messages.append({"role": "tool", "tool_call_id": call.id, "content": self._observation_text(result)})
+                        self._persist_tool_message(session_id, turn_id, call.id, result.name, self._observation_text(result))
                         self._emit(events, turn_id, "observation_added", {"step": step, "tool_name": result.name})
                         continue
                     canonical_key = (call.name, self._tool_args_frozen(call))
@@ -513,6 +524,7 @@ class AgentLoop:
                         self.store.append_tool_result(session_id, turn_id, reused_result)
                         prev_obs = self._observation_text(ToolResult(**reused_result))
                         messages.append({"role": "tool", "tool_call_id": call.id, "content": prev_obs})
+                        self._persist_tool_message(session_id, turn_id, call.id, call.name, prev_obs)
                         self._emit(events, turn_id, "tool_call_deduped", {"step": step, "tool_name": call.name})
                         self._emit(events, turn_id, "observation_reused", {"step": step, "tool_name": call.name})
                         failure_tracker.record_success(call.name)
@@ -587,8 +599,10 @@ class AgentLoop:
                                 "tool_call_id": call.id,
                                 "content": skill_tool_msg,
                             })
+                            self._persist_tool_message(session_id, turn_id, call.id, call.name, skill_tool_msg)
                         else:
                             messages.append({"role": "tool", "tool_call_id": call.id, "content": self._observation_text(result)})
+                            self._persist_tool_message(session_id, turn_id, call.id, result.name, self._observation_text(result))
                         self._emit(events, turn_id, "observation_added", {"step": step, "tool_name": result.name})
                         continue
 
@@ -607,6 +621,7 @@ class AgentLoop:
                     should_stop, stop_msg = failure_tracker.should_stop()
                     if should_stop:
                         messages.append({"role": "tool", "tool_call_id": call.id, "content": obs_text})
+                        self._persist_tool_message(session_id, turn_id, call.id, result.name, obs_text)
                         stop_reason = "consecutive_failures"
                         output_type = "error"
                         final_answer = stop_msg
@@ -635,6 +650,7 @@ class AgentLoop:
                         if retry_result.ok:
                             failure_tracker.record_success(retry_result.name)
                             messages.append({"role": "tool", "tool_call_id": call.id, "content": self._observation_text(retry_result)})
+                            self._persist_tool_message(session_id, turn_id, call.id, retry_result.name, self._observation_text(retry_result))
                             self._emit(events, turn_id, "observation_added", {"step": step, "tool_name": retry_result.name})
                             continue
                         # Retry also failed — show both results + stop guidance
@@ -647,7 +663,9 @@ class AgentLoop:
                         )
                         should_stop2, stop_msg2 = failure_tracker.should_stop()
                         if should_stop2:
-                            messages.append({"role": "tool", "tool_call_id": call.id, "content": f"{obs_text}\n\n[Retry also failed]\n{self._observation_text(retry_result)}"})
+                            retry_obs = f"{obs_text}\n\n[Retry also failed]\n{self._observation_text(retry_result)}"
+                            messages.append({"role": "tool", "tool_call_id": call.id, "content": retry_obs})
+                            self._persist_tool_message(session_id, turn_id, call.id, result.name, retry_obs)
                             stop_reason = "consecutive_failures"
                             output_type = "error"
                             final_answer = stop_msg2
@@ -658,6 +676,7 @@ class AgentLoop:
 
                     # Feed the failure to the model so it can adapt
                     messages.append({"role": "tool", "tool_call_id": call.id, "content": obs_text})
+                    self._persist_tool_message(session_id, turn_id, call.id, result.name, obs_text)
                     self._emit(events, turn_id, "observation_added", {"step": step, "tool_name": result.name})
                     continue
 
@@ -715,12 +734,17 @@ class AgentLoop:
                 skills_used=skills_used,
                 skill_calls_count=len(skill_results_log),
                 skill_results=skill_results_log,
+                previous_summaries=self.store.load_summaries(session_id, limit=5),
             )
             self.store.save_summary(session_id, turn_id, summary)
             _UNCLEAN_STOP_REASONS = {"max_steps", "timeout", "no_progress", "consecutive_failures",
                                      "retry_with_tool_instruction", "provider_network_error", "length"}
             if final_answer and stop_reason not in _UNCLEAN_STOP_REASONS:
                 self.store.save_final_answer(session_id, turn_id, final_answer)
+            elif final_answer:
+                # Unclean stop: save_final_answer is skipped, so persist
+                # the assistant message manually for cross-turn continuity.
+                self.store.append_message(session_id, turn_id, "assistant", final_answer)
 
             status = "completed" if final_answer and stop_reason == "completed" else "partial"
             if not final_answer:
@@ -783,6 +807,7 @@ class AgentLoop:
                 available_skills=available_skills,
                 loaded_skills=loaded_skills,
                 skill_loads_count=len(loaded_skills),
+                previous_summaries=self.store.load_summaries(session_id, limit=5),
             )
             self.store.save_summary(session_id, turn_id, summary)
             self.store.save_final_answer(session_id, turn_id, final_answer)
@@ -844,6 +869,7 @@ class AgentLoop:
             available_skills=available_skills,
             loaded_skills=loaded_skills,
             skill_loads_count=len(loaded_skills),
+            previous_summaries=self.store.load_summaries(session_id, limit=5),
         )
         self.store.save_summary(session_id, turn_id, summary)
         self.store.save_final_answer(session_id, turn_id, final_answer)
@@ -878,6 +904,32 @@ class AgentLoop:
         event = AgentEvent.new(turn_id=turn_id, event_type=event_type, payload=payload)
         self._event_sink.emit(event)
         collector.append(event.to_dict())
+
+    def _persist_tool_message(
+        self, session_id: str, turn_id: str, call_id: str,
+        tool_name: str, content: str,
+    ) -> None:
+        """Persist a tool result as a message so it appears in cross-turn history."""
+        self.store.append_message(
+            session_id, turn_id, "tool", content,
+            tool_call_id=call_id,
+            metadata={"tool_name": tool_name},
+        )
+
+    def _persist_stream_turn_result(
+        self, session_id: str, turn_id: str,
+        final_answer: str, stop_reason: str,
+    ) -> None:
+        """Save assistant message and summary at the end of a streaming turn."""
+        if final_answer.strip():
+            self.store.save_final_answer(session_id, turn_id, final_answer)
+        summary = self.summary_composer.compose(
+            final_answer=final_answer,
+            tool_results=[],
+            stop_reason=stop_reason,
+            previous_summaries=self.store.load_summaries(session_id, limit=5),
+        )
+        self.store.save_summary(session_id, turn_id, summary)
 
     def _append_skill_events(self, collector: list[dict[str, Any]], skill_events: list[AgentEvent]) -> None:
         for event in skill_events:
@@ -1115,15 +1167,20 @@ class AgentLoop:
                         messages = list(compacted)
                         continue
                     # Final answer — no tool calls in this step
+                    stream_final_parts: list[str] = []
                     for c in step_chunks:
                         if c.kind == "text_delta":
                             text = c.text_delta or ""
                             if text.strip():
+                                stream_final_parts.append(text)
                                 yield ModelChunk(kind="text_delta", text_delta=text)
                         elif c.kind == "reasoning_delta":
                             text = c.reasoning_delta or ""
                             if text.strip():
                                 yield ModelChunk(kind="reasoning_delta", reasoning_delta=text)
+                    stream_final_answer = "".join(stream_final_parts).strip()
+                    if stream_final_answer:
+                        self._persist_stream_turn_result(session_id, turn_id, stream_final_answer, "completed")
                     yield ModelChunk(kind="done", finish_reason="stop")
                     return
 
@@ -1210,15 +1267,17 @@ class AgentLoop:
                     if call.name == "skill.load":
                         skill_name = str(call.arguments.get("name") or "").strip()
                         if skill_name and skill_name in stream_loaded_skills:
+                            dedup_content = (
+                                f"Skill `{skill_name}` is already loaded in this turn. "
+                                f"Use the instructions from the earlier skill.load result above. "
+                                f"Do NOT load it again — proceed with answering the user."
+                            )
                             messages.append({
                                 "role": "tool",
                                 "tool_call_id": call.id,
-                                "content": (
-                                    f"Skill `{skill_name}` is already loaded in this turn. "
-                                    f"Use the instructions from the earlier skill.load result above. "
-                                    f"Do NOT load it again — proceed with answering the user."
-                                ),
+                                "content": dedup_content,
                             })
+                            self._persist_tool_message(session_id, turn_id, call.id, call.name, dedup_content)
                             yield ModelChunk(kind="text_delta",
                                              text_delta=f"\n[skill.load `{skill_name}`: already loaded, skipped]")
                             any_ok = True
@@ -1229,11 +1288,13 @@ class AgentLoop:
                     # — Dedup: general tool calls — same args = same result
                     reused_result = self._find_seen_result(stream_seen_calls, call)
                     if reused_result is not None:
+                        dedup_text = json.dumps(reused_result.get('content', ''), ensure_ascii=False)[:50000]
                         messages.append({
                             "role": "tool",
                             "tool_call_id": call.id,
-                            "content": json.dumps(reused_result.get('content', ''), ensure_ascii=False)[:50000],
+                            "content": dedup_text,
                         })
+                        self._persist_tool_message(session_id, turn_id, call.id, call.name, dedup_text)
                         yield ModelChunk(kind="text_delta",
                                          text_delta=f"\n[Tool `{call.name}`: deduplicated]")
                         # Count dedup as progress — we have a valid cached result
@@ -1262,6 +1323,7 @@ class AgentLoop:
                             )
                         yield ModelChunk(kind="text_delta", text_delta=obs_text)
                         messages.append({"role": "tool", "tool_call_id": call.id, "content": obs_text})
+                        self._persist_tool_message(session_id, turn_id, call.id, call.name, obs_text)
                     else:
                         result = self.tool_executor.execute(
                             call,
@@ -1324,12 +1386,15 @@ class AgentLoop:
                                 "tool_call_id": call.id,
                                 "content": skill_tool_msg,
                             })
+                            self._persist_tool_message(session_id, turn_id, call.id, call.name, skill_tool_msg)
                         else:
+                            truncated = obs_text[:24000]
                             messages.append({
                                 "role": "tool",
                                 "tool_call_id": call.id,
-                                "content": obs_text[:24000],
+                                "content": truncated,
                             })
+                            self._persist_tool_message(session_id, turn_id, call.id, result.name, truncated)
 
                 # Mid-turn auto-compaction: prevent context overflow during long turns
                 stream_estimator = TokenEstimator(self._model_name)
@@ -1361,6 +1426,7 @@ class AgentLoop:
                         if stream_last_good_content:
                             yield ModelChunk(kind="text_delta",
                                              text_delta=f"\n{stream_last_good_content}")
+                            self._persist_stream_turn_result(session_id, turn_id, stream_last_good_content, "no_progress")
                         yield ModelChunk(kind="done", finish_reason="stop")
                         return
                 else:
@@ -1377,10 +1443,12 @@ class AgentLoop:
                     if stream_last_good_content:
                         yield ModelChunk(kind="text_delta",
                                          text_delta=f"\n{stream_last_good_content}")
+                        self._persist_stream_turn_result(session_id, turn_id, stream_last_good_content, "no_progress")
                     yield ModelChunk(kind="done", finish_reason="stop")
                     return
 
             # Max steps exhausted — signal end
+            self._persist_stream_turn_result(session_id, turn_id, stream_last_good_content or "", "max_steps")
             yield ModelChunk(kind="done", finish_reason="max_steps")
 
         except Exception as exc:

@@ -220,7 +220,7 @@ class LLMConfigSchema(ConfigSchema):
         self.add_field(Field(
             name="timeout_seconds",
             field_type=FieldType.FLOAT,
-            default=60.0,
+            default=300.0,
             env_var="JARVIS_LLM_TIMEOUT_SECONDS",
             description="API request timeout in seconds",
             required=False,
@@ -228,9 +228,17 @@ class LLMConfigSchema(ConfigSchema):
         self.add_field(Field(
             name="max_tokens",
             field_type=FieldType.INTEGER,
-            default=16384,
+            default=32768,
             env_var="JARVIS_LLM_MAX_TOKENS",
             description="Maximum output tokens per request",
+            required=False,
+        ))
+        self.add_field(Field(
+            name="compaction_threshold",
+            field_type=FieldType.INTEGER,
+            default=12000,
+            env_var="JARVIS_LLM_COMPACTION_THRESHOLD",
+            description="Token threshold that triggers auto-compaction of conversation context",
             required=False,
         ))
 

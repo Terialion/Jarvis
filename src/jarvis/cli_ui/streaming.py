@@ -370,26 +370,32 @@ class StreamingDisplay:
     def finish(self, answer: str) -> None:
         """Collapse thinking panel, render final answer, stop live.
 
-        Thinking text is preserved in ``self.thinking_text`` for post-stream
-        toggle via Ctrl+T.
+        Stop the live display FIRST to avoid line-count mismatch between
+        the incremental plain-text render and the final markdown render.
+        Then write the markdown answer directly to the console.
         """
         self._finished = True
         self._thinking_collapsed = True
-        body = answer.strip()
-        if body:
-            try:
-                normalized = _normalize_markdown(body)
-                md = Markdown(normalized, code_theme="material-darker")
-                self._live.update(md)
-            except (UnicodeEncodeError, Exception):
-                try:
-                    self._live.update(Text(body))
-                except Exception:
-                    pass
+        # Stop live before rendering final answer — avoids overlap artifacts
+        # when the markdown render has fewer lines than the raw text render.
         try:
             self._live.stop()
         except Exception:
             pass
+
+        body = answer.strip()
+        if body:
+            try:
+                from .tui_utils import rich_to_ansi
+                normalized = _normalize_markdown(body)
+                md = Markdown(normalized, code_theme="material-darker")
+                ansi = rich_to_ansi(md, width=100)
+                if ansi:
+                    import sys
+                    sys.stdout.write(ansi)
+                    sys.stdout.flush()
+            except Exception:
+                pass
 
     @staticmethod
     def render_thinking(
@@ -489,10 +495,8 @@ class StreamingDisplay:
                 line.append(f"  → {t['result'][:200]}", style="muted")
             parts.append(line)
 
-        # — Answer text (below tools) —
-        body = "".join(self._text_parts)
-        if body:
-            parts.append(Text(body))
+        # Answer text is NOT rendered here — it is shown once by finish()
+        # after the live display stops. Rendering it here would duplicate it.
 
         # — Spinner status line —
         self._spinner_frame = (self._spinner_frame + 1) % len(SPINNER_FRAMES)
@@ -547,10 +551,7 @@ class StreamingDisplay:
                 line.append(f"  -> {safe_result}", style="muted")
             parts.append(line)
 
-        body = "".join(self._text_parts)
-        if body:
-            safe_body = body.encode("ascii", errors="replace").decode("ascii")
-            parts.append(Text(safe_body))
+        # Answer text is NOT rendered here — shown once by finish()
 
         # Spinner status line (ASCII-safe)
         self._spinner_frame = (self._spinner_frame + 1) % len(SPINNER_FRAMES)

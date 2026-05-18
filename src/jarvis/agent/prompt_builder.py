@@ -224,10 +224,25 @@ class PromptBuilder:
         for msg in recent[-40:]:
             role = str(msg.get("role") or "").strip()
             content = str(msg.get("content") or "")
-            if role and content:
-                # Native role — no <historical> wrapping. The model sees
-                # history in the same format as the current conversation.
-                messages.append({"role": role, "content": content})
+            if not role or not content:
+                continue
+            tc_id = msg.get("tool_call_id")
+            if role == "tool":
+                # Tool messages from previous turns must be converted to
+                # user/system format because the paired assistant tool_calls
+                # are not persisted (only the final answer is).  Passing bare
+                # tool messages with tool_call_id without the corresponding
+                # assistant tool_calls breaks OpenAI-protocol APIs.
+                tool_name = str((msg.get("metadata") or {}).get("tool_name") or tc_id or "unknown")
+                entry: dict[str, Any] = {
+                    "role": "user",
+                    "content": f"[Previous tool result — {tool_name}]: {content[:3000]}",
+                }
+            else:
+                entry = {"role": role, "content": content}
+                if tc_id:
+                    entry["tool_call_id"] = tc_id
+            messages.append(entry)
 
         # Soft turn boundary (replaces the old hard boundary).
         # Marks where history ends and the current request begins, but

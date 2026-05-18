@@ -50,6 +50,17 @@ def _normalize_markdown(content: str) -> str:
       when the preceding line is paragraph text (not another block element).
     """
     content = _HEADING_NO_SPACE.sub(r'\1 \2', content)
+    # Ensure spaces around **bold** adjacent to CJK characters.
+    # CommonMark requires word boundaries around emphasis markers; CJK
+    # characters are not "word" characters, so **bold**中文 breaks.
+    # Insert a thin space (U+200A) to create a visual word boundary
+    # without adding visible gaps.
+    _CJK = r'[一-鿿㐀-䶿豈-﫿]'
+    content = re.sub(f'({_CJK})[*][*]', r'\1 **', content)  # 中文**bold**
+    content = re.sub(f'[*][*]({_CJK})', r'** \1', content)  # **bold**中文
+    # Same for __italic__
+    content = re.sub(f'({_CJK})__', r'\1 __', content)
+    content = re.sub(f'__({_CJK})', r'__ \1', content)
     # **bold**-listitem → **bold**\n\n- listitem (DeepSeek concatenates header+list)
     content = re.sub(r'(\*\*[^*]+\*\*)-(\s?[一-鿿\w])', r'\1\n\n- \2', content)
     # Emoji/CJK header followed by -CJK list item on same line

@@ -56,6 +56,12 @@ def run_bridge() -> int:
     """Main entry point for the TUI bridge process."""
     cwd = str(Path.cwd())
 
+    # Stable session ID scoped to the project directory.
+    # All turns within one TUI launch reuse the same session file,
+    # and restarting the TUI in the same project resumes it.
+    project_slug = Path(cwd).resolve().name.replace(" ", "_")
+    session_id = f"tui_{project_slug}"
+
     # Send init event so TUI knows we're ready
     _send_event({
         "type": "init",
@@ -72,7 +78,7 @@ def run_bridge() -> int:
             permission_mode="workspace_write",
             auto_approve=True,
             max_steps=20,
-            timeout_s=90,
+            timeout_s=300,
         )
     except Exception as exc:
         _send_event({
@@ -91,7 +97,7 @@ def run_bridge() -> int:
         req_type = req.get("type", "")
 
         if req_type == "input":
-            _handle_input(loop, req["text"], cwd)
+            _handle_input(loop, req["text"], cwd, session_id)
 
         elif req_type == "cancel":
             pass
@@ -105,12 +111,12 @@ def run_bridge() -> int:
     return 0
 
 
-def _handle_input(loop: AgentLoop, text: str, cwd: str) -> None:
+def _handle_input(loop: AgentLoop, text: str, cwd: str, session_id: str) -> None:
     """Run one agent turn and stream chunks to the TUI."""
     chat_input = ChatInput(
         text=text,
         cwd=cwd,
-        session_id=None,
+        session_id=session_id,
         metadata={"source": "jarvis.tui", "mode": "tui_ink"},
     )
 

@@ -40,7 +40,7 @@ class AgentThreadBridge:
         permission_mode: str = "workspace_write",
         auto_approve: bool = True,
         max_steps: int = 20,
-        timeout_s: int = 90,
+        timeout_s: int = 300,
     ) -> None:
         self.permission_mode = permission_mode
         self.auto_approve = auto_approve

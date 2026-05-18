@@ -45,6 +45,7 @@ class ContextCompactorAdapter:
     """Compatibility wrapper that delegates to the 5-stage compaction pipeline."""
 
     def __init__(self, *, max_tokens: int = 12000, model_name: str | None = None) -> None:
+        # 12000 = canonical default from llm.compaction_threshold schema
         self.max_tokens = max_tokens
         self.model_name = model_name
 
@@ -316,15 +317,37 @@ class ContextBuilder:
             if "<skill-context" in content:
                 continue
             recent_messages.append({"role": role, "content": content})
-        summaries = self.session_store.load_summaries(session_id=session_id, limit=1)
+        summaries = self.session_store.load_summaries(session_id=session_id, limit=5)
         compacted_summary = None
         if summaries:
-            last_summary = dict(summaries[-1].get("summary") or {})
-            human = str(last_summary.get("human") or "").strip()
-            machine = dict(last_summary.get("machine") or {})
-            compacted_summary = human or str(machine.get("handoff_summary") or "").strip() or None
-            if compacted_summary:
-                compacted_summary = build_compaction_summary_prefix(compacted_summary)
+            parts: list[str] = []
+            for i, s in enumerate(reversed(summaries)):
+                summary_data = dict(s.get("summary") or {})
+                machine = dict(summary_data.get("machine") or {})
+                if i == 0:
+                    # Most recent summary — full display with handoff prefix.
+                    human = str(summary_data.get("human") or "").strip()
+                    text = human or str(machine.get("handoff_summary") or "").strip() or None
+                    if text:
+                        parts.append(text)
+                else:
+                    # Older summaries — compressed key points only.
+                    key_points: list[str] = []
+                    ho = machine.get("handoff_summary") or {}
+                    if isinstance(ho, dict):
+                        goal = str(ho.get("user_goal") or "").strip()
+                        if goal:
+                            key_points.append(f"Goal: {goal[:120]}")
+                        files = (ho.get("modified_files") or [])[:3]
+                        if files:
+                            key_points.append(f"Files: {', '.join(str(f) for f in files)}")
+                    for fact in machine.get("accumulated_context") or []:
+                        if isinstance(fact, dict):
+                            key_points.append(f"{fact.get('kind', '')}: {str(fact.get('text', ''))[:120]}")
+                    if key_points:
+                        parts.append("[Earlier turn: " + " | ".join(key_points[:4]) + "]")
+            if parts:
+                compacted_summary = build_compaction_summary_prefix("\n\n".join(parts))
         return ConversationContext(
             thread_id=session_id,
             turn_id=turn_id,

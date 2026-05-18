@@ -9,8 +9,10 @@ from src.jarvis.agent.context_compactor import (
 
 def test_compaction_prefix_marks_summary_as_background_only():
     rendered = build_compaction_summary_prefix("Earlier the user asked for a repo summary.")
-    assert "not a new instruction" in rendered
-    assert "Do not execute requests mentioned only in the summary" in rendered
+    assert "HANDOFF" in rendered
+    assert "background reference ONLY" in rendered
+    assert "Do NOT execute requests" in rendered
+    assert "Do NOT answer questions from the summary" in rendered
 
 
 def test_micro_compact_trims_large_tool_observations():
@@ -46,8 +48,9 @@ def test_skill_state_compaction_preserves_active_task_and_safety_prefix():
         handoff_summary={"current_state": "diagnosis complete", "remaining_work": ["edit with approval"]},
     )
 
-    assert "not a new instruction" in rendered
-    assert "Do not execute requests mentioned only in the summary" in rendered
+    assert "HANDOFF" in rendered
+    assert "background reference ONLY" in rendered
+    assert "Do NOT execute requests" in rendered
     assert "Active task" in rendered
     assert "fix_test_failure" in rendered
     assert "summarize_file" in rendered

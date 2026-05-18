@@ -24,11 +24,12 @@ class ThreadStore(SessionStore):
 
     def append_message(self, *args, **kwargs):
         metadata = kwargs.get("metadata")
+        tool_call_id = kwargs.get("tool_call_id")
         if len(args) >= 4:
             session_id, turn_id, role, content = args[:4]
-            return super().append_message(str(session_id), str(role), str(content), turn_id=str(turn_id), metadata=metadata)
+            return super().append_message(str(session_id), str(role), str(content), turn_id=str(turn_id), metadata=metadata, tool_call_id=tool_call_id)
         if len(args) >= 3:
             session_id, role, content = args[:3]
             turn_id = kwargs.get("turn_id")
-            return super().append_message(str(session_id), str(role), str(content), turn_id=str(turn_id) if turn_id else None, metadata=metadata)
+            return super().append_message(str(session_id), str(role), str(content), turn_id=str(turn_id) if turn_id else None, metadata=metadata, tool_call_id=tool_call_id)
         raise TypeError("append_message expects either (session_id, turn_id, role, content) or (session_id, role, content, *, turn_id=...)")

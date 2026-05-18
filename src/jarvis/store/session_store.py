@@ -308,6 +308,7 @@ class SessionStore:
         *args: Any,
         turn_id: str | None = None,
         metadata: dict[str, Any] | None = None,
+        tool_call_id: str | None = None,
     ) -> dict[str, Any]:
         # Handle both calling conventions:
         # (session_id, turn_id, role, content) — 4 positional (legacy loop.py)
@@ -319,7 +320,7 @@ class SessionStore:
             session_id, role, content = args[:3]
         else:
             raise TypeError("append_message expects at least 3 positional args: (session_id, role, content) or (session_id, turn_id, role, content)")
-        msg = {
+        msg: dict[str, Any] = {
             "type": "message",
             "message_id": _uid("msg_"),
             "role": role,
@@ -327,6 +328,8 @@ class SessionStore:
             "turn_id": turn_id,
             "metadata": dict(redact_for_persistence(metadata or {})),
         }
+        if tool_call_id:
+            msg["tool_call_id"] = tool_call_id
         self._append_line(session_id, msg)
         self._touch_sidecar(session_id)
         return msg
@@ -343,6 +346,7 @@ class SessionStore:
                 "role": m.get("role", ""),
                 "content": m.get("content", ""),
                 "metadata": m.get("metadata", {}),
+                "tool_call_id": m.get("tool_call_id"),
             }
             for m in recent
         ]
