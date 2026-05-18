@@ -1,12 +1,13 @@
 /**
- * MessageList — scrollable message area with flexGrow:1 to fill space
- * between the status bar and input area.
+ * MessageList — message area with flexGrow:1 to fill space between the
+ * status bar and input area.
  *
- * Messages that are finalized render statically. The currently-streaming
- * message updates incrementally (Ink handles the diffing).
+ * Completed messages render via Ink's <Static> component — they accumulate
+ * in the terminal's scrollback buffer (like normal terminal output). Only
+ * the currently-streaming content participates in Yoga's dynamic layout.
  */
 import React from "react";
-import { Box, Text } from "ink";
+import { Box, Text, Static } from "ink";
 import type { Message, ToolInfo } from "../types.js";
 import { MarkdownRenderer } from "./MarkdownRenderer.js";
 
@@ -17,6 +18,23 @@ interface MessageListProps {
   currentTools: ToolInfo[];
   thinkingExpanded: boolean;
   toolsExpanded: boolean;
+}
+
+function renderMessage(msg: Message, _index: number): React.ReactNode {
+  return (
+    <Box key={msg.id} flexDirection="column" marginBottom={1}>
+      {msg.role === "user" ? (
+        <Text dimColor>❯ {msg.content}</Text>
+      ) : (
+        <MarkdownRenderer content={msg.content} />
+      )}
+      {msg.thinking && (
+        <Text dimColor color="gray">
+          {"  ".repeat(2)}{msg.thinking}
+        </Text>
+      )}
+    </Box>
+  );
 }
 
 export const MessageList: React.FC<MessageListProps> = ({
@@ -31,23 +49,10 @@ export const MessageList: React.FC<MessageListProps> = ({
 
   return (
     <Box flexDirection="column" flexGrow={1} paddingX={1} overflow="hidden">
-      {/* Rendered (complete) messages */}
-      {messages.map((msg) => (
-        <Box key={msg.id} flexDirection="column" marginBottom={1}>
-          {msg.role === "user" ? (
-            <Text dimColor>❯ {msg.content}</Text>
-          ) : (
-            <MarkdownRenderer content={msg.content} />
-          )}
-          {msg.thinking && (
-            <Text dimColor color="gray">
-              {"  ".repeat(2)}{msg.thinking}
-            </Text>
-          )}
-        </Box>
-      ))}
+      {/* Completed messages — rendered once, persist in terminal scrollback */}
+      <Static items={messages}>{renderMessage}</Static>
 
-      {/* Currently-streaming message */}
+      {/* Currently-streaming message — dynamic, updates in place */}
       {hasStreaming && (
         <Box flexDirection="column">
           {currentThinking && thinkingExpanded && (
