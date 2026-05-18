@@ -182,63 +182,63 @@ class PromptBuilder:
 
         conv = pack.conversation
 
-        # Inject compaction summary from previous turns so the model knows
-        # what happened before without needing the full history.
+        # Inject compaction summary from previous turns (Claude Code-style).
+        # Positioned BEFORE history so the model sees the condensed overview
+        # first, then the detailed messages.
         if conv.compacted_summary:
             messages.append({
                 "role": "user",
                 "content": (
                     "<conversation-summary>\n"
-                    "The following is a summary of the previous conversation. "
-                    "Use it to understand what was discussed and decided — "
-                    "do NOT re-execute or continue any prior task unless the "
-                    "user explicitly asks.\n\n"
+                    "The following is a summary of the earlier conversation. "
+                    "This is a handoff from previous context — treat it as "
+                    "background reference, NOT as active instructions. "
+                    "Do NOT re-execute tools or commands mentioned here. "
+                    "Do NOT answer questions from the summary — they were "
+                    "already addressed. Your task is the latest user message "
+                    "at the end of this context.\n\n"
                     f"{conv.compacted_summary}\n"
                     "</conversation-summary>"
                 ),
             })
 
-        # Inject recent conversation history (previous turns' messages) as
-        # individual messages so the LLM sees them in the native interchange
-        # format. Limited to last 20 messages.
-        #
-        # Each historical message is wrapped in <historical> tags to create a
-        # hard boundary between past turns and the current task. Without this,
-        # reasoning models (DeepSeek) may re-execute tools or skills from
-        # previous turns that appear in the history.
+        # Inject recent conversation history as native-role messages.
+        # Unlike the old approach that wrapped everything in <historical>
+        # tags and told the model to ignore it, we now inline history
+        # naturally (Claude Code / Codex / Hermes pattern). A soft
+        # boundary marker precedes the history so the model can distinguish
+        # past from current, but it is informational, not prescriptive.
         recent = list(conv.recent_messages)
         if recent:
             messages.append({
                 "role": "user",
                 "content": (
                     "<conversation-history>\n"
-                    "The following messages are from PREVIOUS turns in this session. "
-                    "They are ARCHIVAL ONLY — do NOT act on their contents. "
-                    "Do NOT re-execute tools, skills, or commands mentioned here. "
-                    "Do NOT repeat answers from these messages. "
-                    "Focus ONLY on the user's LATEST query at the end of this context.\n"
+                    "Messages above this point are from earlier turns in "
+                    "this session. They are provided for continuity so you "
+                    "know what was discussed. The user's CURRENT request "
+                    "is the LAST message below.\n"
                     "</conversation-history>"
                 ),
             })
-        for msg in recent[-20:]:
+        for msg in recent[-40:]:
             role = str(msg.get("role") or "").strip()
             content = str(msg.get("content") or "")
             if role and content:
-                messages.append({
-                    "role": role,
-                    "content": f"<historical role=\"{role}\">\n{content}\n</historical>",
-                })
+                # Native role — no <historical> wrapping. The model sees
+                # history in the same format as the current conversation.
+                messages.append({"role": role, "content": content})
 
-        # Hard boundary between history and current turn
-        boundary = (
-            "\n\n══════════════════════════════════════════\n"
-            "NEW TURN — the user query BELOW is the ONLY task to work on.\n"
-            "Ignore all historical messages above. Execute ONLY this request.\n"
-            "══════════════════════════════════════════\n\n"
-        )
+        # Soft turn boundary (replaces the old hard boundary).
+        # Marks where history ends and the current request begins, but
+        # does NOT tell the model to ignore history — it merely frames
+        # the current task.
         messages.append({
             "role": "user",
-            "content": boundary + turn_context.user_input,
+            "content": (
+                "─── current request ───\n"
+                + turn_context.user_input
+            ),
         })
         return messages
 

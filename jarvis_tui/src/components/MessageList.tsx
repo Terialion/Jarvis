@@ -1,10 +1,9 @@
 /**
  * MessageList — renders messages between the status bar and input area.
  *
- * Virtual scrolling: calculates which messages fit in the available space
- * (accounting for the current streaming content height). PgUp/PgDn navigate
- * through history. justifyContent: "flex-end" keeps the latest content
- * right above the input area.
+ * Height follows content naturally. When total rows exceed the terminal's
+ * available space, the container locks to a fixed viewport with overflow hidden
+ * and virtual scrolling kicks in.
  */
 import React, { useEffect } from "react";
 import { Box, Text } from "ink";
@@ -22,15 +21,13 @@ interface MessageListProps {
   setScrollOffset: React.Dispatch<React.SetStateAction<number>>;
 }
 
-/** Estimate how many terminal rows a completed message occupies. */
 function estimateMsgRows(msg: Message): number {
   let rows = msg.content.split("\n").length;
   if (msg.thinking) rows += msg.thinking.split("\n").length;
   if (msg.tools) rows += msg.tools.length;
-  return rows + 1; // +1 for margin
+  return rows + 1;
 }
 
-/** Estimate how many rows the streaming content occupies. */
 function estimateStreamingRows(
   answer: string,
   thinking: string,
@@ -72,12 +69,12 @@ export const MessageList: React.FC<MessageListProps> = ({
     );
   }
 
-  const availableRows = Math.max(8, (process.stdout.rows ?? 50) - 8);
+  // Available rows: terminal height minus chrome (status 1 + toggle 1 + input 3 + footer 1 + safety)
+  const availableRows = Math.max(6, (process.stdout.rows ?? 50) - 8);
   const maxOffset = Math.max(0, totalRows - availableRows);
   const clampedOffset = Math.min(scrollOffset, maxOffset);
 
-  // Walk backwards from end to find visible completed messages.
-  // Streaming content is always visible at the bottom.
+  // Walk backwards from end to determine which messages are visible
   let rowsFromBottom = hasStreaming
     ? estimateStreamingRows(
         currentAnswer, currentThinking, currentTools,
@@ -94,16 +91,22 @@ export const MessageList: React.FC<MessageListProps> = ({
   }
 
   const hiddenAbove = messages.length - visibleMessages.length;
+  const needsScroll = totalRows > availableRows;
 
   return (
-    <Box flexDirection="column" flexGrow={1} paddingX={1} overflow="hidden" justifyContent="flex-end">
+    <Box
+      flexDirection="column"
+      height={needsScroll ? availableRows : undefined}
+      paddingX={1}
+      overflow="hidden"
+      justifyContent="flex-end"
+    >
       {hiddenAbove > 0 && (
         <Text dimColor>
           ↑ {hiddenAbove} earlier messages (PgUp/PgDn to scroll)
         </Text>
       )}
 
-      {/* Completed messages */}
       {visibleMessages.map((msg) => (
         <Box key={msg.id} flexDirection="column" marginBottom={1}>
           {msg.role === "user" ? (

@@ -43,7 +43,7 @@ export const TextInput: React.FC<TextInputProps> = ({
       // Filter ALL Ctrl-modified keys — prevents shortcut leakage
       if (key.ctrl) return;
       if (key.meta) return;
-      if (key.tab || key.shift) return;
+      if (key.tab) return;
 
       if (key.return) {
         onSubmit?.(originalValue);

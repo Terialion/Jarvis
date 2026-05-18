@@ -89,7 +89,7 @@ class ContextBuilder:
         context_store: Any | None = None,
         model_info: dict[str, Any] | None = None,
         permission_mode: str = "workspace_write",
-        max_history_messages: int = 40,
+        max_history_messages: int = 60,
     ) -> None:
         self.session_store = session_store
         self.memory_store = memory_store or MemoryStore()
@@ -314,8 +314,6 @@ class ContextBuilder:
             # These are turn-scoped instruction blocks and must NOT leak into the
             # next turn's conversation history.
             if "<skill-context" in content:
-                continue
-            if role == "tool" and content.startswith("skill.load:"):
                 continue
             recent_messages.append({"role": role, "content": content})
         summaries = self.session_store.load_summaries(session_id=session_id, limit=1)

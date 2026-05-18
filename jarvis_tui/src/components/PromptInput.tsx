@@ -32,7 +32,7 @@ export const PromptInput: React.FC<PromptInputProps> = ({
 
   return (
     <Box
-      height={2}
+      height={3}
       flexShrink={0}
       borderStyle="round"
       borderColor={isStreaming ? "yellow" : "green"}

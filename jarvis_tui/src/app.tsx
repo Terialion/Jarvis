@@ -78,6 +78,7 @@ interface AppProps {
   gitBranch: string;
   permissionMode: string;
   initialPrompt?: string;
+  version: string;
 }
 
 export const App: React.FC<AppProps> = ({
@@ -87,6 +88,7 @@ export const App: React.FC<AppProps> = ({
   gitBranch,
   permissionMode,
   initialPrompt,
+  version,
 }) => {
   const { exit } = useApp();
   const bridge = useRef<JarvisBridge | null>(null);
@@ -380,11 +382,10 @@ export const App: React.FC<AppProps> = ({
 
   // ── Render ──────────────────────────────────────────────────────
 
-  const hasContent = messages.length > 0 || !!(currentAnswer || currentThinking || currentTools.length > 0);
-
   return (
-    <Box flexDirection="column" height={hasContent ? Math.max(10, (process.stdout.rows ?? 50) - 1) : undefined}>
+    <Box flexDirection="column">
       <StatusBar
+        version={version}
         modelName={modelName}
         projectRoot={projectRoot}
         gitBranch={gitBranch}

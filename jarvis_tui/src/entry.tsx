@@ -35,6 +35,15 @@ if (!branch) {
   }
 }
 
+// Read version from package.json
+let version = "0.0.0";
+try {
+  const pkg = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf-8"));
+  version = pkg.version ?? "0.0.0";
+} catch {
+  // Fallback
+}
+
 const { waitUntilExit } = render(
   <App
     pythonPath={values.python}
@@ -43,6 +52,7 @@ const { waitUntilExit } = render(
     gitBranch={branch}
     permissionMode={values.mode}
     initialPrompt={values.prompt}
+    version={version}
   />,
 );
 

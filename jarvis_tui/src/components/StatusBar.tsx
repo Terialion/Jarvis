@@ -4,19 +4,6 @@
  */
 import React from "react";
 import { Box, Text } from "ink";
-import { readFileSync } from "node:fs";
-
-let _version = "";
-function getVersion(): string {
-  if (_version) return _version;
-  try {
-    const pkg = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf-8"));
-    _version = pkg.version ?? "0.0.0";
-  } catch {
-    _version = "0.0.0";
-  }
-  return _version;
-}
 
 function formatTokens(n: number): string {
   if (n >= 1000) return `${(n / 1000).toFixed(1)}k`;
@@ -24,6 +11,7 @@ function formatTokens(n: number): string {
 }
 
 interface StatusBarProps {
+  version: string;
   modelName: string;
   projectRoot: string;
   gitBranch: string;
@@ -35,6 +23,7 @@ interface StatusBarProps {
 }
 
 export const StatusBar: React.FC<StatusBarProps> = ({
+  version,
   modelName,
   projectRoot,
   gitBranch,
@@ -44,7 +33,6 @@ export const StatusBar: React.FC<StatusBarProps> = ({
   permissionMode,
   isStreaming,
 }) => {
-  const version = getVersion();
 
   // Build runtime info segment (shown during/after streaming)
   const runtime: string[] = [];

@@ -83,6 +83,21 @@ class ResponseComposer:
             "- 如果是 partial/failed，先修复 stop_reason 对应问题后重试。"
         )
 
+        built_handoff: dict[str, Any] = {
+            "user_goal": conclusion[:160],
+            "current_state": outcome,
+            "last_action": ", ".join(tools_used[-3:]) if tools_used else "no tools called",
+            "modified_files": list(dict.fromkeys(files_changed))[:10],
+            "completed_work": [f"Called {t}" for t in tools_used] if tools_used else [],
+            "remaining_work": [],
+            "context_to_keep": list(dict.fromkeys(files_changed))[:5],
+            "risks": risks,
+        }
+        if handoff_summary and isinstance(handoff_summary, dict):
+            for k, v in handoff_summary.items():
+                if v:
+                    built_handoff[k] = v
+
         machine = {
             "outcome": outcome,
             "output_type": output_type,
@@ -102,7 +117,7 @@ class ResponseComposer:
             "skill_results": list(skill_results or []),
             "context_reuse": bool(context_reuse),
             "active_task": dict(active_task or {}),
-            "handoff_summary": dict(handoff_summary or {"user_goal": conclusion[:160], "current_state": outcome, "completed_work": [], "remaining_work": [], "context_to_keep": [], "risks": risks}),
+            "handoff_summary": built_handoff,
             "skill_observations": list(skill_observations or []),
             "research_observations": list(research_observations or []),
             "web_search_runs_count": int(web_search_runs_count or 0),
