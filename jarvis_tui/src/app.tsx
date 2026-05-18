@@ -350,10 +350,13 @@ export const App: React.FC<AppProps> = ({
 
   // ── Render ──────────────────────────────────────────────────────
 
+  const hasContent = messages.length > 0 || currentAnswer || currentThinking || currentTools.length > 0;
+
   return (
-    <Box flexDirection="column" height={Math.max(10, (process.stdout.rows ?? 50) - 1)}>
+    <Box flexDirection="column" height={hasContent ? Math.max(10, (process.stdout.rows ?? 50) - 1) : undefined}>
       <StatusBar
         modelName={modelName}
+        projectRoot={projectRoot}
         gitBranch={gitBranch}
         latency={latency}
         tokenCount={tokenCount}
