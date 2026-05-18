@@ -81,12 +81,6 @@ function parseTableRow(line: string): string[] {
     .map((c) => c.trim());
 }
 
-function padToWidth(val: string, targetWidth: number): string {
-  const w = displayWidth(val);
-  const pad = targetWidth - w;
-  return pad > 0 ? val + " ".repeat(pad) : val;
-}
-
 function renderTable(lines: string[], startKey: number): { elements: React.ReactNode[]; consumed: number } {
   if (lines.length < 2) return { elements: [], consumed: 0 };
 
@@ -120,38 +114,44 @@ function renderTable(lines: string[], startKey: number): { elements: React.React
   const elements: React.ReactNode[] = [];
   let key = startKey;
 
-  function padCell(val: string, targetWidth: number): string {
-    const w = displayWidth(val);
-    const pad = targetWidth - w;
-    return pad > 0 ? val + " ".repeat(pad) : val;
+  // Helper: fixed-width cell using Yoga layout
+  function renderCell(content: string, width: number, header: boolean): React.ReactNode {
+    return (
+      <Box key={key++} width={width}>
+        {header ? <Text bold>{content}</Text> : <Text>{content}</Text>}
+      </Box>
+    );
   }
 
-  // Header row
-  const headerCells: React.ReactNode[] = [];
-  header.forEach((h, i) => {
-    const padded = padCell(h, colWidths[i]);
-    headerCells.push(<Text key={key++} bold>{padded}</Text>);
-    if (i < colCount - 1) headerCells.push(<Text key={key++} dimColor> │ </Text>);
-  });
+  // Helper: column separator
+  function renderSep(i: number): React.ReactNode {
+    return i < colCount - 1 ? <Text key={key++} dimColor> │ </Text> : null;
+  }
+
+  // Top border
   elements.push(
     <Box key={key++}>
-      <Text dimColor>┌</Text>
+      <Text dimColor>┌─</Text>
       {colWidths.map((w, i) => (
         <React.Fragment key={i}>
-          <Text dimColor>{"─".repeat(Math.max(w, 3))}</Text>
+          <Text dimColor>{"─".repeat(Math.max(w, 1))}</Text>
           {i < colCount - 1 ? <Text dimColor>─┬─</Text> : null}
         </React.Fragment>
       ))}
-      <Text dimColor>┐</Text>
+      <Text dimColor>─┐</Text>
     </Box>
   );
 
-  // Simplified: render header and rows as plain aligned text
-  // (avoiding complex box layout issues)
+  // Header row
   elements.push(
     <Box key={key++}>
       <Text dimColor>│ </Text>
-      {headerCells}
+      {header.map((h, i) => (
+        <React.Fragment key={i}>
+          {renderCell(h, colWidths[i], true)}
+          {renderSep(i)}
+        </React.Fragment>
+      ))}
       <Text dimColor> │</Text>
     </Box>
   );
@@ -159,30 +159,31 @@ function renderTable(lines: string[], startKey: number): { elements: React.React
   // Separator
   elements.push(
     <Box key={key++}>
-      <Text dimColor>├</Text>
+      <Text dimColor>├─</Text>
       {colWidths.map((w, i) => (
         <React.Fragment key={i}>
-          <Text dimColor>{"─".repeat(Math.max(w, 3))}</Text>
+          <Text dimColor>{"─".repeat(Math.max(w, 1))}</Text>
           {i < colCount - 1 ? <Text dimColor>─┼─</Text> : null}
         </React.Fragment>
       ))}
-      <Text dimColor>┤</Text>
+      <Text dimColor>─┤</Text>
     </Box>
   );
 
   // Data rows
   for (const row of dataRows) {
-    const cells: React.ReactNode[] = [];
-    row.forEach((cell, i) => {
-      if (i >= colCount) return;
-      const padded = padCell(cell, colWidths[i]);
-      cells.push(<Text key={key++}>{padded}</Text>);
-      if (i < colCount - 1) cells.push(<Text key={key++} dimColor> │ </Text>);
-    });
     elements.push(
       <Box key={key++}>
         <Text dimColor>│ </Text>
-        {cells}
+        {row.map((cell, i) => {
+          if (i >= colCount) return null;
+          return (
+            <React.Fragment key={i}>
+              {renderCell(cell, colWidths[i], false)}
+              {renderSep(i)}
+            </React.Fragment>
+          );
+        })}
         <Text dimColor> │</Text>
       </Box>
     );
@@ -191,14 +192,14 @@ function renderTable(lines: string[], startKey: number): { elements: React.React
   // Bottom border
   elements.push(
     <Box key={key++}>
-      <Text dimColor>└</Text>
+      <Text dimColor>└─</Text>
       {colWidths.map((w, i) => (
         <React.Fragment key={i}>
-          <Text dimColor>{"─".repeat(Math.max(w, 3))}</Text>
+          <Text dimColor>{"─".repeat(Math.max(w, 1))}</Text>
           {i < colCount - 1 ? <Text dimColor>─┴─</Text> : null}
         </React.Fragment>
       ))}
-      <Text dimColor>┘</Text>
+      <Text dimColor>─┘</Text>
     </Box>
   );
 
