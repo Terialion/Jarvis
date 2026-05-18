@@ -2,12 +2,12 @@
  * MessageList — message area with flexGrow:1 to fill space between the
  * status bar and input area.
  *
- * Completed messages render via Ink's <Static> component — they accumulate
- * in the terminal's scrollback buffer (like normal terminal output). Only
- * the currently-streaming content participates in Yoga's dynamic layout.
+ * Uses justifyContent: "flex-end" so the latest messages sit right above
+ * the input area with no gap. Messages that overflow the top are clipped;
+ * PgUp/PgDn scroll through history.
  */
-import React from "react";
-import { Box, Text, Static } from "ink";
+import React, { useEffect } from "react";
+import { Box, Text } from "ink";
 import type { Message, ToolInfo } from "../types.js";
 import { MarkdownRenderer } from "./MarkdownRenderer.js";
 
@@ -18,9 +18,19 @@ interface MessageListProps {
   currentTools: ToolInfo[];
   thinkingExpanded: boolean;
   toolsExpanded: boolean;
+  scrollOffset: number;
+  setScrollOffset: React.Dispatch<React.SetStateAction<number>>;
 }
 
-function renderMessage(msg: Message, _index: number): React.ReactNode {
+/** Estimate how many rows a message occupies. */
+function estimateMsgRows(msg: Message): number {
+  let rows = (msg.content.match(/\n/g) || []).length + 1; // content lines
+  if (msg.thinking) rows += (msg.thinking.match(/\n/g) || []).length + 1;
+  if (msg.tools) rows += msg.tools.length;
+  return rows + 1; // +1 for margin
+}
+
+function renderMessage(msg: Message): React.ReactNode {
   return (
     <Box key={msg.id} flexDirection="column" marginBottom={1}>
       {msg.role === "user" ? (
@@ -44,15 +54,54 @@ export const MessageList: React.FC<MessageListProps> = ({
   currentTools,
   thinkingExpanded,
   toolsExpanded,
+  scrollOffset,
+  setScrollOffset,
 }) => {
   const hasStreaming = currentAnswer || currentThinking || currentTools.length > 0;
 
-  return (
-    <Box flexDirection="column" flexGrow={1} paddingX={1} overflow="hidden">
-      {/* Completed messages — rendered once, persist in terminal scrollback */}
-      <Static items={messages}>{renderMessage}</Static>
+  // Auto-scroll to bottom when new messages arrive or streaming starts
+  useEffect(() => {
+    setScrollOffset(0);
+  }, [messages.length, hasStreaming]);
 
-      {/* Currently-streaming message — dynamic, updates in place */}
+  // Manage scroll via global keyboard — handled in App via props
+  // (PgUp/PgDn are dispatched by App.useInput and passed as custom events)
+
+  // Calculate visible message window
+  const availableRows = Math.max(8, (process.stdout.rows ?? 50) - 10);
+  let totalRows = 0;
+  for (const msg of messages) totalRows += estimateMsgRows(msg);
+  if (hasStreaming) totalRows += 3; // streaming content estimate
+
+  // scrollOffset = how many rows scrolled above the bottom
+  const maxOffset = Math.max(0, totalRows - availableRows);
+  const clampedOffset = Math.min(scrollOffset, maxOffset);
+
+  // Walk backwards from the end to find visible messages
+  const visible: Message[] = [];
+  let rowsFromBottom = 0;
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const r = estimateMsgRows(messages[i]);
+    if (rowsFromBottom + r > availableRows + clampedOffset) break;
+    rowsFromBottom += r;
+    visible.unshift(messages[i]);
+  }
+
+  const hiddenAbove = messages.length - visible.length;
+
+  return (
+    <Box flexDirection="column" flexGrow={1} paddingX={1} overflow="hidden" justifyContent="flex-end">
+      {/* Scroll-to-top indicator */}
+      {hiddenAbove > 0 && (
+        <Text dimColor>
+          ↑ {hiddenAbove} earlier messages (PgUp/PgDn to scroll)
+        </Text>
+      )}
+
+      {/* Completed messages — rendered in Yoga flow, aligned to bottom */}
+      {visible.map(renderMessage)}
+
+      {/* Currently-streaming message */}
       {hasStreaming && (
         <Box flexDirection="column">
           {currentThinking && thinkingExpanded && (
@@ -71,6 +120,11 @@ export const MessageList: React.FC<MessageListProps> = ({
           )}
           {currentAnswer && <Text>{currentAnswer}</Text>}
         </Box>
+      )}
+
+      {/* Scroll indicator when scrolled up */}
+      {clampedOffset > 0 && (
+        <Text dimColor>↓ scrolled up — PgDn to return to latest</Text>
       )}
     </Box>
   );

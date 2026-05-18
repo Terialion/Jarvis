@@ -111,6 +111,7 @@ export const App: React.FC<AppProps> = ({
   const [lastThinking, setLastThinking] = useState("");
   const [lastToolsList, setLastToolsList] = useState<ToolInfo[]>([]);
   const [connected, setConnected] = useState(false);
+  const [scrollOffset, setScrollOffset] = useState(0);
 
   // Track seen tool IDs to avoid duplicates
   const seenToolIds = useRef<Set<string>>(new Set());
@@ -350,6 +351,13 @@ export const App: React.FC<AppProps> = ({
       const idx = modes.indexOf(mode);
       setMode(modes[(idx + 1) % modes.length]);
     }
+    // Message list scrolling
+    if (key.pageUp) {
+      setScrollOffset((prev) => prev + 8);
+    }
+    if (key.pageDown) {
+      setScrollOffset((prev) => Math.max(0, prev - 8));
+    }
   });
 
   // ── Render ──────────────────────────────────────────────────────
@@ -375,6 +383,8 @@ export const App: React.FC<AppProps> = ({
         currentTools={currentTools}
         thinkingExpanded={thinkingExpanded}
         toolsExpanded={toolsExpanded}
+        scrollOffset={scrollOffset}
+        setScrollOffset={setScrollOffset}
       />
 
       {/* Toggle hints */}
