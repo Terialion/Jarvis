@@ -43,6 +43,14 @@ function parseToolArgs(name: string, args: string): string {
   return firstLine.slice(0, maxLen) + "…";
 }
 
+// Tool-result text lines injected by AgentLoop as text_delta.
+// Filter these out so the answer area stays clean.
+const TOOL_TEXT_RE = /^\n?\[(?:Tool `[^`]+`|skill\.load `[^`]+`):\s/;
+
+function isToolResultText(text: string): boolean {
+  return TOOL_TEXT_RE.test(text);
+}
+
 function mapToolDisplay(name: string): string {
   const display: Record<string, string> = {
     bash: "Bash",
@@ -180,6 +188,8 @@ export const App: React.FC<AppProps> = ({
       case "text_delta": {
         const text = chunk.text_delta ?? "";
         if (!text) break;
+        // Filter out tool-result text injected by AgentLoop
+        if (isToolResultText(text)) break;
         if (hadToolCall.current) {
           // Text after tool calls → real answer
           answerAccum.current += text;
