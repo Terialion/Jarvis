@@ -35,6 +35,34 @@ function renderInline(text: string, keyOffset = 0): React.ReactNode[] {
   return nodes.length > 0 ? nodes : [<Text key={keyOffset}>{text}</Text>];
 }
 
+// ── Unicode display width ──────────────────────────────────────────
+
+function displayWidth(s: string): number {
+  let w = 0;
+  for (const ch of s) {
+    const cp = ch.codePointAt(0) ?? 0;
+    // East Asian Wide / Fullwidth
+    if ((cp >= 0x1100 && cp <= 0x115f) ||  // Hangul Jamo
+        (cp >= 0x2e80 && cp <= 0xa4cf) ||  // CJK Radials .. Yi
+        (cp >= 0xac00 && cp <= 0xd7a3) ||  // Hangul Syllables
+        (cp >= 0xf900 && cp <= 0xfaff) ||  // CJK Compatibility
+        (cp >= 0xfe30 && cp <= 0xfe6f) ||  // CJK Compatibility Forms
+        (cp >= 0xff01 && cp <= 0xff60) ||  // Fullwidth Forms
+        (cp >= 0xffe0 && cp <= 0xffe6) ||  // Fullwidth Signs
+        (cp >= 0x1f300 && cp <= 0x1f9ff) || // Emoji / pictographs (wide in terminal)
+        (cp >= 0x1fa00 && cp <= 0x1fa6f) || // Chess Symbols etc
+        (cp >= 0x20000 && cp <= 0x2fffd) || // CJK Extension B+
+        (cp >= 0x30000 && cp <= 0x3fffd)) { // CJK Extension G+
+      w += 2;
+    } else if (cp < 0x20 || (cp >= 0x7f && cp <= 0x9f)) {
+      // Control chars: zero width
+    } else {
+      w += 1;
+    }
+  }
+  return w;
+}
+
 // ── Table rendering ────────────────────────────────────────────────
 
 function isTableRow(line: string): boolean {
@@ -53,10 +81,15 @@ function parseTableRow(line: string): string[] {
     .map((c) => c.trim());
 }
 
+function padToWidth(val: string, targetWidth: number): string {
+  const w = displayWidth(val);
+  const pad = targetWidth - w;
+  return pad > 0 ? val + " ".repeat(pad) : val;
+}
+
 function renderTable(lines: string[], startKey: number): { elements: React.ReactNode[]; consumed: number } {
   if (lines.length < 2) return { elements: [], consumed: 0 };
 
-  // First line must be header
   if (!isTableRow(lines[0]) || !isTableSep(lines[1])) {
     return { elements: [], consumed: 0 };
   }
@@ -66,34 +99,30 @@ function renderTable(lines: string[], startKey: number): { elements: React.React
 
   // Collect data rows
   const dataRows: string[][] = [];
-  let consumed = 2; // header + separator
+  let consumed = 2;
   while (consumed < lines.length && isTableRow(lines[consumed])) {
     const cells = parseTableRow(lines[consumed]);
-    // Pad to match header column count
     while (cells.length < colCount) cells.push("");
     dataRows.push(cells.slice(0, colCount));
     consumed++;
   }
 
-  // Calculate column widths
+  // Calculate column widths using displayWidth
   const colWidths = header.map((h, i) => {
-    let w = h.length;
+    let w = displayWidth(h);
     for (const row of dataRows) {
-      // Approximate width: CJK chars count as 2
-      const cellW = [...row[i] ?? ""].reduce((acc, ch) => acc + (ch.charCodeAt(0) > 0x7f ? 2 : 1), 0);
-      w = Math.max(w, cellW);
+      w = Math.max(w, displayWidth(row[i] ?? ""));
     }
-    return Math.min(w, 30); // cap column width
+    return Math.min(w, 36);
   });
 
   // Build table elements
   const elements: React.ReactNode[] = [];
   let key = startKey;
 
-  // Render helper: pad a string value to a target display width
   function padCell(val: string, targetWidth: number): string {
-    const displayWidth = [...val].reduce((acc, ch) => acc + (ch.charCodeAt(0) > 0x7f ? 2 : 1), 0);
-    const pad = targetWidth - displayWidth;
+    const w = displayWidth(val);
+    const pad = targetWidth - w;
     return pad > 0 ? val + " ".repeat(pad) : val;
   }
 
