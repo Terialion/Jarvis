@@ -20,13 +20,14 @@
  * - PromptInput has flexShrink=0 (stays at intrinsic height)
  */
 import React, { useState, useEffect, useCallback, useRef } from "react";
-import { Box, Text, useInput, useApp } from "ink";
+import { Box, Text, Static, useInput, useApp } from "ink";
 import { StatusBar } from "./components/StatusBar.js";
 import { MessageList } from "./components/MessageList.js";
+import { MessageItem } from "./components/MessageItem.js";
 import { PromptInput } from "./components/PromptInput.js";
 import { ToggleBlock } from "./components/ToggleBlock.js";
 import { JarvisBridge } from "./bridge.js";
-import type { PythonEvent, Message, ToolInfo, AskUserEvent, ModelChunk } from "./types.js";
+import type { PythonEvent, Message, ToolInfo, ModelChunk } from "./types.js";
 
 // ── Helpers ────────────────────────────────────────────────────────
 
@@ -111,7 +112,6 @@ export const App: React.FC<AppProps> = ({
   const [lastThinking, setLastThinking] = useState("");
   const [lastToolsList, setLastToolsList] = useState<ToolInfo[]>([]);
   const [connected, setConnected] = useState(false);
-  const [scrollOffset, setScrollOffset] = useState(0);
 
   // Track seen tool IDs to avoid duplicates
   const seenToolIds = useRef<Set<string>>(new Set());
@@ -346,85 +346,83 @@ export const App: React.FC<AppProps> = ({
       } else {
         exit();
       }
-      return true;
     }
     if (key.ctrl && input === "t") {
       if (lastThinking) setThinkingExpanded((prev) => !prev);
-      return true;
     }
     if (key.ctrl && input === "o") {
       if (lastToolsList.length > 0) setToolsExpanded((prev) => !prev);
-      return true;
     }
     if (key.shift && key.tab) {
       const modes = ["default", "plan", "accept_edits"];
       const idx = modes.indexOf(mode);
       setMode(modes[(idx + 1) % modes.length]);
-      return true;
-    }
-    // Message list scrolling
-    if (key.pageUp) {
-      setScrollOffset((prev) => prev + 8);
-      return true;
-    }
-    if (key.pageDown) {
-      setScrollOffset((prev) => Math.max(0, prev - 8));
-      return true;
     }
   });
 
   // ── Render ──────────────────────────────────────────────────────
 
   return (
-    <Box flexDirection="column" height={process.stdout.rows}>
-      {/* Fixed top: status bar */}
-      <StatusBar
-        modelName={modelName}
-        gitBranch={gitBranch}
-        latency={latency}
-        tokenCount={tokenCount}
-        cost={cost}
-        permissionMode={mode}
-        isStreaming={isStreaming}
-      />
+    <>
+      {/* Completed messages → Static permanent output */}
+      <Static items={messages}>
+        {(msg) => (
+          <MessageItem
+            msg={msg}
+            thinkingExpanded={thinkingExpanded}
+            toolsExpanded={toolsExpanded}
+          />
+        )}
+      </Static>
 
-      {/* Flexible middle: messages (flexGrow=1 fills remaining space) */}
-      <MessageList
-        messages={messages}
-        currentAnswer={currentAnswer}
-        currentThinking={currentThinking}
-        currentTools={currentTools}
-        thinkingExpanded={thinkingExpanded}
-        toolsExpanded={toolsExpanded}
-        scrollOffset={scrollOffset}
-        setScrollOffset={setScrollOffset}
-      />
+      {/* Dynamic bottom chrome (input + streaming + hints) */}
+      <Box flexDirection="column" height={Math.max(10, (process.stdout.rows ?? 50) - 1)}>
+        {/* Fixed top: status bar */}
+        <StatusBar
+          modelName={modelName}
+          gitBranch={gitBranch}
+          latency={latency}
+          tokenCount={tokenCount}
+          cost={cost}
+          permissionMode={mode}
+          isStreaming={isStreaming}
+        />
 
-      {/* Toggle hints */}
-      <ToggleBlock
-        hasThinking={!!lastThinking}
-        hasTools={lastToolsList.length > 0}
-        thinkingExpanded={thinkingExpanded}
-        toolsExpanded={toolsExpanded}
-      />
+        {/* Flexible middle: only streaming content */}
+        <MessageList
+          currentAnswer={currentAnswer}
+          currentThinking={currentThinking}
+          currentTools={currentTools}
+          thinkingExpanded={thinkingExpanded}
+          toolsExpanded={toolsExpanded}
+        />
 
-      {/* Fixed bottom: input bar */}
-      <PromptInput
-        onSubmit={handleSubmit}
-        isStreaming={isStreaming}
-      />
+        {/* Toggle hints */}
+        <ToggleBlock
+          hasThinking={!!lastThinking}
+          hasTools={lastToolsList.length > 0}
+          thinkingExpanded={thinkingExpanded}
+          toolsExpanded={toolsExpanded}
+        />
 
-      {/* Footer keybindings hint */}
-      <Box height={1} flexShrink={0}>
-        <Text dimColor>
-          {"  "}
-          {connected ? "●" : "○"} {connected ? "Ready" : "Connecting..."}
-          {" · "}Ctrl+C {isStreaming ? "cancel" : "exit"}
-          {" · "}Ctrl+T thinking
-          {" · "}Ctrl+O tools
-          {" · "}Shift+Tab mode
-        </Text>
+        {/* Fixed bottom: input bar */}
+        <PromptInput
+          onSubmit={handleSubmit}
+          isStreaming={isStreaming}
+        />
+
+        {/* Footer keybindings hint */}
+        <Box height={1} flexShrink={0}>
+          <Text dimColor>
+            {"  "}
+            {connected ? "●" : "○"} {connected ? "Ready" : "Connecting..."}
+            {" · "}Ctrl+C {isStreaming ? "cancel" : "exit"}
+            {" · "}Ctrl+T thinking
+            {" · "}Ctrl+O tools
+            {" · "}Shift+Tab mode
+          </Text>
+        </Box>
       </Box>
-    </Box>
+    </>
   );
 };
