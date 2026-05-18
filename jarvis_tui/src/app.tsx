@@ -20,10 +20,9 @@
  * - PromptInput has flexShrink=0 (stays at intrinsic height)
  */
 import React, { useState, useEffect, useCallback, useRef } from "react";
-import { Box, Text, Static, useInput, useApp } from "ink";
+import { Box, Text, useInput, useApp } from "ink";
 import { StatusBar } from "./components/StatusBar.js";
 import { MessageList } from "./components/MessageList.js";
-import { MessageItem } from "./components/MessageItem.js";
 import { PromptInput } from "./components/PromptInput.js";
 import { ToggleBlock } from "./components/ToggleBlock.js";
 import { JarvisBridge } from "./bridge.js";
@@ -37,15 +36,12 @@ function nextId(): string {
 }
 
 function parseToolArgs(name: string, args: string): string {
-  // Show first line only, truncate at 80 chars
   const firstLine = args.split("\n")[0];
   const maxLen = 80;
   if (firstLine.length <= maxLen) return firstLine;
   return firstLine.slice(0, maxLen) + "…";
 }
 
-// Tool-result text lines injected by AgentLoop as text_delta.
-// Filter these out so the answer area stays clean.
 const TOOL_TEXT_RE = /^\n?\[(?:Tool `[^`]+`|skill\.load `[^`]+`):\s/;
 
 function isToolResultText(text: string): boolean {
@@ -112,6 +108,7 @@ export const App: React.FC<AppProps> = ({
   const [lastThinking, setLastThinking] = useState("");
   const [lastToolsList, setLastToolsList] = useState<ToolInfo[]>([]);
   const [connected, setConnected] = useState(false);
+  const [scrollOffset, setScrollOffset] = useState(0);
 
   // Track seen tool IDs to avoid duplicates
   const seenToolIds = useRef<Set<string>>(new Set());
@@ -130,10 +127,8 @@ export const App: React.FC<AppProps> = ({
     const b = new JarvisBridge();
     bridge.current = b;
 
-    // Wire up event handlers
     b.on("init", (ev: PythonEvent) => {
       if (ev.type === "init") {
-        // Update model/git info from backend
         setConnected(true);
       }
     });
@@ -149,8 +144,6 @@ export const App: React.FC<AppProps> = ({
     });
 
     b.on("ask_user", (_ev: PythonEvent) => {
-      // TODO: render a modal for user interaction
-      // For now, auto-approve
       b.send({ type: "ask_user_response", answers: {} });
     });
 
@@ -169,11 +162,9 @@ export const App: React.FC<AppProps> = ({
       }
     });
 
-    // Start the Python backend
     b.start(pythonPath, projectRoot);
     setConnected(true);
 
-    // If there's an initial prompt, send it
     if (initialPrompt) {
       handleSubmit(initialPrompt);
     }
@@ -192,15 +183,12 @@ export const App: React.FC<AppProps> = ({
         if (!text) break;
         if (isToolResultText(text)) break;
         if (hadToolCall.current) {
-          // Text after tool calls → real answer
           answerAccum.current += text;
           setCurrentAnswer((prev) => prev + text);
         } else if (hadReasoning.current) {
-          // Reasoning already handled → this is the answer content
           answerAccum.current += text;
           setCurrentAnswer((prev) => prev + text);
         } else {
-          // Text before any tool call or reasoning → likely thinking/planning
           thinkingAccum.current += text;
           setCurrentThinking((prev) => prev + text);
         }
@@ -246,7 +234,6 @@ export const App: React.FC<AppProps> = ({
     let thinking = thinkingAccum.current.trim();
     const tools = [...toolsAccum.current];
 
-    // If no tools were used, the "thinking" text is the actual answer
     if (!hadToolCall.current && thinking && !answer) {
       setMessages((prev) => [
         ...prev,
@@ -272,7 +259,6 @@ export const App: React.FC<AppProps> = ({
       ]);
     }
 
-    // Save toggle data for the last turn
     setLastThinking(thinking);
     setLastToolsList(tools);
 
@@ -288,7 +274,6 @@ export const App: React.FC<AppProps> = ({
     setIsStreaming(false);
     seenToolIds.current.clear();
 
-    // Compute latency
     if (turnStartTime.current > 0) {
       const elapsed = (Date.now() - turnStartTime.current) / 1000;
       setLatency(`${elapsed.toFixed(1)}s`);
@@ -302,7 +287,6 @@ export const App: React.FC<AppProps> = ({
     (text: string) => {
       if (!bridge.current?.running) return;
 
-      // Reset streaming state for new turn
       answerAccum.current = "";
       thinkingAccum.current = "";
       toolsAccum.current = [];
@@ -319,7 +303,6 @@ export const App: React.FC<AppProps> = ({
       hadToolCall.current = false;
       hadReasoning.current = false;
 
-      // Add user message
       setMessages((prev) => [
         ...prev,
         {
@@ -330,7 +313,6 @@ export const App: React.FC<AppProps> = ({
         },
       ]);
 
-      // Send to backend
       bridge.current.send({ type: "input", text });
     },
     [],
@@ -358,71 +340,61 @@ export const App: React.FC<AppProps> = ({
       const idx = modes.indexOf(mode);
       setMode(modes[(idx + 1) % modes.length]);
     }
+    if (key.pageUp) {
+      setScrollOffset((prev) => prev + 5);
+    }
+    if (key.pageDown) {
+      setScrollOffset((prev) => Math.max(0, prev - 5));
+    }
   });
 
   // ── Render ──────────────────────────────────────────────────────
 
   return (
-    <>
-      {/* Completed messages → Static permanent output */}
-      <Static items={messages}>
-        {(msg) => (
-          <MessageItem
-            msg={msg}
-            thinkingExpanded={thinkingExpanded}
-            toolsExpanded={toolsExpanded}
-          />
-        )}
-      </Static>
+    <Box flexDirection="column" height={Math.max(10, (process.stdout.rows ?? 50) - 1)}>
+      <StatusBar
+        modelName={modelName}
+        gitBranch={gitBranch}
+        latency={latency}
+        tokenCount={tokenCount}
+        cost={cost}
+        permissionMode={mode}
+        isStreaming={isStreaming}
+      />
 
-      {/* Dynamic bottom chrome (input + streaming + hints) */}
-      <Box flexDirection="column" height={Math.max(10, (process.stdout.rows ?? 50) - 1)}>
-        {/* Fixed top: status bar */}
-        <StatusBar
-          modelName={modelName}
-          gitBranch={gitBranch}
-          latency={latency}
-          tokenCount={tokenCount}
-          cost={cost}
-          permissionMode={mode}
-          isStreaming={isStreaming}
-        />
+      <MessageList
+        messages={messages}
+        currentAnswer={currentAnswer}
+        currentThinking={currentThinking}
+        currentTools={currentTools}
+        thinkingExpanded={thinkingExpanded}
+        toolsExpanded={toolsExpanded}
+        scrollOffset={scrollOffset}
+        setScrollOffset={setScrollOffset}
+      />
 
-        {/* Flexible middle: only streaming content */}
-        <MessageList
-          currentAnswer={currentAnswer}
-          currentThinking={currentThinking}
-          currentTools={currentTools}
-          thinkingExpanded={thinkingExpanded}
-          toolsExpanded={toolsExpanded}
-        />
+      <ToggleBlock
+        hasThinking={!!lastThinking}
+        hasTools={lastToolsList.length > 0}
+        thinkingExpanded={thinkingExpanded}
+        toolsExpanded={toolsExpanded}
+      />
 
-        {/* Toggle hints */}
-        <ToggleBlock
-          hasThinking={!!lastThinking}
-          hasTools={lastToolsList.length > 0}
-          thinkingExpanded={thinkingExpanded}
-          toolsExpanded={toolsExpanded}
-        />
+      <PromptInput
+        onSubmit={handleSubmit}
+        isStreaming={isStreaming}
+      />
 
-        {/* Fixed bottom: input bar */}
-        <PromptInput
-          onSubmit={handleSubmit}
-          isStreaming={isStreaming}
-        />
-
-        {/* Footer keybindings hint */}
-        <Box height={1} flexShrink={0}>
-          <Text dimColor>
-            {"  "}
-            {connected ? "●" : "○"} {connected ? "Ready" : "Connecting..."}
-            {" · "}Ctrl+C {isStreaming ? "cancel" : "exit"}
-            {" · "}Ctrl+T thinking
-            {" · "}Ctrl+O tools
-            {" · "}Shift+Tab mode
-          </Text>
-        </Box>
+      <Box height={1} flexShrink={0}>
+        <Text dimColor>
+          {"  "}
+          {connected ? "●" : "○"} {connected ? "Ready" : "Connecting..."}
+          {" · "}Ctrl+C {isStreaming ? "cancel" : "exit"}
+          {" · "}Ctrl+T thinking
+          {" · "}Ctrl+O tools
+          {" · "}Shift+Tab mode
+        </Text>
       </Box>
-    </>
+    </Box>
   );
 };
