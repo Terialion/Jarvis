@@ -113,6 +113,7 @@ export const App: React.FC<AppProps> = ({
   // Track seen tool IDs to avoid duplicates
   const seenToolIds = useRef<Set<string>>(new Set());
   const turnStartTime = useRef<number>(0);
+  const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   // Refs for accumulated streaming state — always current, never stale
   const answerAccum = useRef("");
@@ -120,6 +121,31 @@ export const App: React.FC<AppProps> = ({
   const toolsAccum = useRef<ToolInfo[]>([]);
   const hadToolCall = useRef(false);
   const hadReasoning = useRef(false);
+
+  // ── Streaming timer — updates latency every second ──────────────
+
+  useEffect(() => {
+    if (isStreaming) {
+      timerRef.current = setInterval(() => {
+        if (turnStartTime.current > 0) {
+          const elapsed = (Date.now() - turnStartTime.current) / 1000;
+          if (elapsed >= 60) {
+            const min = Math.floor(elapsed / 60);
+            const sec = Math.floor(elapsed % 60);
+            setLatency(`${min}m ${sec}s`);
+          } else {
+            setLatency(`${elapsed.toFixed(0)}s`);
+          }
+        }
+      }, 250);
+    }
+    return () => {
+      if (timerRef.current) {
+        clearInterval(timerRef.current);
+        timerRef.current = null;
+      }
+    };
+  }, [isStreaming]);
 
   // ── Initialize bridge ───────────────────────────────────────────
 
@@ -140,7 +166,7 @@ export const App: React.FC<AppProps> = ({
 
     b.on("done", (ev: PythonEvent) => {
       if (ev.type !== "done") return;
-      handleDone();
+      handleDone(ev.token_count, ev.cost);
     });
 
     b.on("ask_user", (_ev: PythonEvent) => {
@@ -229,10 +255,14 @@ export const App: React.FC<AppProps> = ({
 
   // ── Done handling ───────────────────────────────────────────────
 
-  const handleDone = useCallback(() => {
+  const handleDone = useCallback((tokenCountFromBackend?: number, costFromBackend?: number) => {
     const answer = answerAccum.current.trim();
     let thinking = thinkingAccum.current.trim();
     const tools = [...toolsAccum.current];
+
+    // Track token count and cost from backend
+    if (tokenCountFromBackend != null) setTokenCount(tokenCountFromBackend);
+    if (costFromBackend != null) setCost(costFromBackend);
 
     if (!hadToolCall.current && thinking && !answer) {
       setMessages((prev) => [

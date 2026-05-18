@@ -1,12 +1,11 @@
 /**
  * StatusBar — top bar showing Jarvis version, model, working directory,
- * plus runtime info (latency, cost, permission mode) during streaming.
+ * plus runtime info (latency, token count, cost, permission mode).
  */
 import React from "react";
 import { Box, Text } from "ink";
 import { readFileSync } from "node:fs";
 
-// Lazy-load version from package.json
 let _version = "";
 function getVersion(): string {
   if (_version) return _version;
@@ -17,6 +16,11 @@ function getVersion(): string {
     _version = "0.0.0";
   }
   return _version;
+}
+
+function formatTokens(n: number): string {
+  if (n >= 1000) return `${(n / 1000).toFixed(1)}k`;
+  return String(n);
 }
 
 interface StatusBarProps {
@@ -41,28 +45,34 @@ export const StatusBar: React.FC<StatusBarProps> = ({
   isStreaming,
 }) => {
   const version = getVersion();
-  const parts: string[] = [];
-  parts.push(modelName);
-  parts.push(projectRoot);
 
+  // Build runtime info segment (shown during/after streaming)
+  const runtime: string[] = [];
   if (isStreaming && latency) {
-    parts.push(`● ${latency}`);
+    runtime.push(`Thinking… (${latency}`);
+    if (tokenCount > 0) runtime.push(`↓ ${formatTokens(tokenCount)} tokens`);
+    runtime.push(")");
   } else if (latency) {
-    parts.push(latency);
+    runtime.push(latency);
+    if (tokenCount > 0) runtime.push(`↓ ${formatTokens(tokenCount)} tokens`);
   }
-
   if (permissionMode && permissionMode !== "default") {
-    parts.push(`[${permissionMode}]`);
+    runtime.push(`[${permissionMode}]`);
+  }
+  if (cost > 0) {
+    runtime.push(`$${cost.toFixed(4)}`);
   }
 
-  if (cost > 0) {
-    parts.push(`$${cost.toFixed(4)}`);
-  }
+  const line = [
+    modelName,
+    projectRoot,
+    ...runtime,
+  ].filter(Boolean).join(" · ");
 
   return (
     <Box height={1} flexShrink={0}>
       <Text dimColor>
-        {"─".repeat(4)} Jarvis v{version} · {parts.join(" · ")}
+        {"─".repeat(4)} Jarvis v{version} · {line}
       </Text>
     </Box>
   );
