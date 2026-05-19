@@ -32,6 +32,7 @@ class ChunkRendererState:
     started_at: float = 0.0
     token_count: int = 0
     current_tool_started_at: float | None = None
+    tool_phase_active: bool = False
     _done: bool = False
 
 
@@ -96,7 +97,7 @@ class ChunkRenderer:
 
     @property
     def has_tools(self) -> bool:
-        return bool(self.state.tools_collected)
+        return self.state.tool_phase_active and bool(self.state.tools_collected)
 
     # ── Handlers ────────────────────────────────────────────────────────────
 
@@ -124,6 +125,9 @@ class ChunkRenderer:
 
     def _handle_progress_delta(self, chunk: ModelChunk) -> None:
         text = (chunk.progress_delta or "") if hasattr(chunk, "progress_delta") else chunk.get("progress_delta", "")
+        if text == "__phase_thinking__":
+            self.state.tool_phase_active = False
+            return
         if text.strip():
             self.state.thinking_blocks.append(text)
 
@@ -137,6 +141,7 @@ class ChunkRenderer:
         if call_id:
             self.state.seen_tool_ids.add(call_id)
         self.state.current_tool_started_at = time.monotonic()
+        self.state.tool_phase_active = True
 
         display = _TOOL_DISPLAY.get(name, name.rsplit(".", 1)[-1] if "." in name else name)
         args = (chunk.tool_arguments_delta or "") if hasattr(chunk, "tool_arguments_delta") else chunk.get("tool_arguments_delta", "")

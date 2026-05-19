@@ -60,9 +60,9 @@ export const StatusBar: React.FC<StatusBarProps> = ({
             <ShimmerText text="Working" />
             {suffix ? <Text dimColor> · {suffix}</Text> : null}
           </>
-        ) : suffix ? (
-          <Text dimColor>{suffix}</Text>
-        ) : null}
+        ) : (
+          <Text dimColor>{suffix || " "}</Text>
+        )}
       </Box>
       <Text dimColor>
         {modelName}

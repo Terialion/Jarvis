@@ -2582,10 +2582,10 @@ class ToolCallExecutor:
         if spec.handler is None:
             core_result = CoreToolResult(tool_name=call.name, ok=False, error=f"no_handler:{call.name}")
         else:
+            pool = concurrent.futures.ThreadPoolExecutor(max_workers=1)
             try:
-                with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
-                    future = pool.submit(spec.handler, core_call.arguments, tool_context)
-                    core_result = cast(CoreToolResult, future.result(timeout=self.tool_timeout_s))
+                future = pool.submit(spec.handler, core_call.arguments, tool_context)
+                core_result = cast(CoreToolResult, future.result(timeout=self.tool_timeout_s))
             except concurrent.futures.TimeoutError:
                 core_result = CoreToolResult(
                     tool_name=call.name, ok=False,
@@ -2594,6 +2594,8 @@ class ToolCallExecutor:
                 )
             except Exception as exc:
                 core_result = CoreToolResult(tool_name=call.name, ok=False, error=f"handler_error:{type(exc).__name__}:{exc}", metadata={})
+            finally:
+                pool.shutdown(wait=False)
         duration_s = round(time.perf_counter() - t0, 3)
         if not core_result.metadata:
             core_result.metadata = {}

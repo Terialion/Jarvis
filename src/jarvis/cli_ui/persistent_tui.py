@@ -458,18 +458,20 @@ class PersistentTUI:
             try:
                 renderer.handle_chunk(chunk)
             except Exception:
+                if _dbg:
+                    debug_log("tui", "handle_chunk failed, skipping chunk")
                 continue
 
     def _render_spinner_status(self, state: dict) -> None:
         """Show spinner status line on the current terminal line."""
         renderer = state["renderer"]
         elapsed = renderer.elapsed
-        if renderer.has_thinking:
-            text = f"\x1b[2m  ● Thinking ({_format_elapsed(elapsed)})...\x1b[0m"
-        elif renderer.has_tools:
+        if renderer.has_tools:
             text = f"\x1b[2m  ● Running tools ({_format_elapsed(elapsed)})...\x1b[0m"
+        elif renderer.has_thinking:
+            text = f"\x1b[2m  ● Thinking ({_format_elapsed(elapsed)})...\x1b[0m"
         else:
-            text = f"\x1b[2m  ● {_format_elapsed(elapsed)} ...\x1b[0m"
+            text = f"\x1b[2m  ● Thinking ({_format_elapsed(elapsed)})...\x1b[0m"
         prev_len = state["_last_status_len"]
         if len(text) < prev_len:
             text = text + " " * (prev_len - len(text))

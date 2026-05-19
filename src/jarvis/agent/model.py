@@ -7,6 +7,8 @@ from json import JSONDecoder
 from typing import Any, Iterator, Protocol
 
 from ..core.llm.config import load_llm_config
+import time
+
 from ..core.llm.runtime_provider import LLMProviderConfig, OpenAICompatibleProvider, build_runtime_llm_provider
 from .types import ModelChunk, ModelResponse, ToolCall, ToolSpec
 
@@ -223,7 +225,15 @@ class RuntimeModelClient:
             tool_acc: dict[int, dict[str, Any]] = {}  # index -> {id, name, arguments}
             finish_reason = "stop"
             acc_usage: dict | None = None
+            _sse_last_at = time.perf_counter()
             for chunk in chunks:
+                # Per-chunk timing: log gaps > 60s for stall diagnosis
+                _sse_now = time.perf_counter()
+                _sse_gap = _sse_now - _sse_last_at
+                if _sse_gap > 60:
+                    from ..core.debug_log import debug_log as _dbg
+                    _dbg("model", f"SSE gap: {_sse_gap:.0f}s between chunks")
+                _sse_last_at = _sse_now
                 # Capture usage from trailing chunks (some providers send usage
                 # in a final chunk without choices)
                 raw_usage = chunk.get("usage")

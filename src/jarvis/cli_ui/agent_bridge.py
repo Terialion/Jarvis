@@ -146,6 +146,8 @@ class AgentThreadBridge:
                 try:
                     self.chunk_queue.put(chunk)
                 except Exception:
+                    if _dbg:
+                        debug_log("bridge", "chunk_queue.put failed (queue likely closed)")
                     pass  # Queue closed, TUI exited
             if _dbg:
                 debug_log("bridge", f"run_turn_stream done: {chunk_count} chunks")

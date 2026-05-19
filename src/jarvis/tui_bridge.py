@@ -108,10 +108,12 @@ def run_bridge() -> int:
             _handle_input(loop, req["text"], cwd, session_id)
 
         elif req_type == "cancel":
-            pass
+            from .core.debug_log import debug_log as _dbg
+            _dbg("tui_bridge", "cancel requested (stub)")
 
         elif req_type == "ask_user_response":
-            pass
+            from .core.debug_log import debug_log as _dbg
+            _dbg("tui_bridge", "ask_user_response received (stub)")
 
         elif req_type == "exit":
             break

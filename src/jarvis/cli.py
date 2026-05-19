@@ -4432,6 +4432,8 @@ def _run_agent_streaming(loop: Any, prompt: str, state: ShellState) -> Any:
                 try:
                     if chunk.kind == "progress_delta":
                         text = (chunk.progress_delta or "")
+                        if text == "__phase_thinking__":
+                            continue
                         for tok in _BOS_TOKENS:
                             text = text.replace(tok, "")
                         if text.strip():

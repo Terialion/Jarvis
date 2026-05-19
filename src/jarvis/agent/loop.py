@@ -1096,6 +1096,7 @@ class AgentLoop:
             stream_last_tool_names: frozenset[str] = frozenset()
             stream_retry_with_length_count = 0
             stream_retry_tool_intent_count = 0
+            stream_retry_reasoning_only_count = 0
             stream_any_tool_called = False
             stream_seen_calls: dict[str, list[tuple[frozenset[tuple[str, Any]], dict[str, Any]]]] = {}
             stream_loaded_skills: list[str] = []
@@ -1140,6 +1141,7 @@ class AgentLoop:
                 _t0 = time.perf_counter()
                 if _dbg:
                     _dbg_log("loop", f"step {step}: LLM call starting, {len(messages)} messages")
+                yield ModelChunk(kind="progress_delta", progress_delta="__phase_thinking__")
                 stream = self.model_client.complete_stream(messages, tools=tool_specs)
                 if _dbg:
                     _dbg_log("loop", f"step {step}: LLM stream obtained in {time.perf_counter()-_t0:.1f}s")
@@ -1232,6 +1234,26 @@ class AgentLoop:
                     stream_final_answer = "".join(stream_final_parts).strip()
                     if stream_final_answer:
                         self._persist_stream_turn_result(session_id, turn_id, stream_final_answer, "completed")
+                        yield ModelChunk(kind="done", finish_reason="stop")
+                        return
+
+                    # Model produced reasoning but no text answer — retry once
+                    has_reasoning = any(
+                        c.kind == "reasoning_delta" and (c.reasoning_delta or "").strip()
+                        for c in step_chunks
+                    )
+                    if has_reasoning and stream_retry_reasoning_only_count < 1:
+                        stream_retry_reasoning_only_count += 1
+                        messages.append({
+                            "role": "user",
+                            "content": (
+                                "You provided reasoning but no final answer. "
+                                "Please restate your conclusion as a direct text response "
+                                "— do not use reasoning blocks, just output the answer."
+                            ),
+                        })
+                        continue
+
                     yield ModelChunk(kind="done", finish_reason="stop")
                     return
 

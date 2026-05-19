@@ -252,6 +252,18 @@ export const App: React.FC<AppProps> = ({
       case "reasoning_delta":
       case "progress_delta": {
         const text = (chunk.reasoning_delta ?? chunk.progress_delta ?? "");
+        if (text === "__phase_thinking__") {
+          // Transition from tool-execution to LLM-thinking phase.
+          // Move current tools to completed so the TUI shows "Thinking..."
+          // instead of stale tool names during LLM wait.
+          if (toolsAccum.current.length > 0) {
+            setLastToolsList([...toolsAccum.current]);
+          }
+          toolsAccum.current = [];
+          setCurrentTools([]);
+          setActiveTool("");
+          break;
+        }
         if (text) {
           const isFirstReasoning = !hadReasoning.current;
           hadReasoning.current = true;
@@ -289,7 +301,7 @@ export const App: React.FC<AppProps> = ({
   // ── Done handling ─────────────────────────────────────────────
 
   const handleDone = useCallback((finishReason?: string, tokenCountFromBackend?: number, costFromBackend?: number) => {
-    turnActive.current = false;  // stop timer first to prevent duplicate latency line
+    turnActive.current = false;
     const answer = answerAccum.current.trim();
     let thinking = thinkingAccum.current.trim();
     const tools = [...toolsAccum.current];
@@ -297,11 +309,24 @@ export const App: React.FC<AppProps> = ({
     if (tokenCountFromBackend != null) setTokenCount(tokenCountFromBackend);
     if (costFromBackend != null) setCost(costFromBackend);
 
+    // Clear streaming state BEFORE adding to Static messages.
+    // This prevents Ink from rendering the same answer in both
+    // MessageList (streaming) and Static (completed) simultaneously.
+    answerAccum.current = "";
+    thinkingAccum.current = "";
+    toolsAccum.current = [];
+    hadToolCall.current = false;
+    hadReasoning.current = false;
+    setCurrentAnswer("");
+    setCurrentThinking("");
+    setCurrentTools([]);
+    setActiveTool("");
+    setIsStreaming(false);
+    seenToolIds.current.clear();
+
     const isFailure = finishReason && finishReason !== "stop" && finishReason !== "completed";
 
     if (isFailure && !answer) {
-      // Don't leak raw thinking as the answer on failure.
-      // Show a clean status message instead.
       const reasonLabel = finishReason === "timeout" ? "Turn timed out"
         : finishReason === "max_steps" ? "Reached max steps"
         : finishReason === "error" ? "Agent error"
@@ -331,10 +356,6 @@ export const App: React.FC<AppProps> = ({
         },
       ]);
     } else if (thinking) {
-      // Thinking-only output (e.g. reasoning model used all tokens on
-      // reasoning). Show as a system notice — do NOT promote to answer.
-      // Matches Codex CLI's ReasoningItem vs AgentMessageItem separation
-      // and Hermes's "Model used all output tokens on reasoning" pattern.
       setMessages((prev) => [
         ...prev,
         {
@@ -349,18 +370,6 @@ export const App: React.FC<AppProps> = ({
 
     setLastThinking(thinking);
     setLastToolsList(tools);
-
-    answerAccum.current = "";
-    thinkingAccum.current = "";
-    toolsAccum.current = [];
-    hadToolCall.current = false;
-    hadReasoning.current = false;
-    setCurrentAnswer("");
-    setCurrentThinking("");
-    setCurrentTools([]);
-    setActiveTool("");
-    setIsStreaming(false);
-    seenToolIds.current.clear();
 
     if (turnStartTime.current > 0) {
       const elapsed = (Date.now() - turnStartTime.current) / 1000;
