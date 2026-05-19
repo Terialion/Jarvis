@@ -110,6 +110,7 @@ export const App: React.FC<AppProps> = ({
 
   const seenToolIds = useRef<Set<string>>(new Set());
   const turnStartTime = useRef<number>(0);
+  const turnActive = useRef(false);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   // Refs for accumulated streaming state
@@ -124,6 +125,7 @@ export const App: React.FC<AppProps> = ({
   useEffect(() => {
     if (isStreaming === true) {
       timerRef.current = setInterval(() => {
+        if (!turnActive.current) return;
         if (turnStartTime.current > 0) {
           const elapsed = (Date.now() - turnStartTime.current) / 1000;
           if (elapsed >= 3600) {
@@ -287,6 +289,7 @@ export const App: React.FC<AppProps> = ({
   // ── Done handling ─────────────────────────────────────────────
 
   const handleDone = useCallback((finishReason?: string, tokenCountFromBackend?: number, costFromBackend?: number) => {
+    turnActive.current = false;  // stop timer first to prevent duplicate latency line
     const answer = answerAccum.current.trim();
     let thinking = thinkingAccum.current.trim();
     const tools = [...toolsAccum.current];
@@ -394,6 +397,7 @@ export const App: React.FC<AppProps> = ({
       setToolsExpanded(false);
       setIsStreaming(true);
       setLatency("");
+      turnActive.current = true;
       turnStartTime.current = Date.now();
       seenToolIds.current.clear();
       hadToolCall.current = false;
