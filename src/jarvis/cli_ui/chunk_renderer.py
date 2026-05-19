@@ -80,9 +80,9 @@ class ChunkRenderer:
         full_thinking = "".join(s.thinking_blocks)
         full_thinking = strip_artifacts(full_thinking)
 
-        # If model put everything in reasoning, use thinking as answer
-        if not full_answer.strip() and full_thinking.strip():
-            full_answer = full_thinking
+        # Thinking and answer are strictly separate — matching Codex CLI's
+        # ReasoningItem vs AgentMessageItem separation and Hermes's approach
+        # of detecting (not silently promoting) reasoning-only output.
 
         return full_answer, full_thinking, list(s.tools_collected)
 

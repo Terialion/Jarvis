@@ -4415,8 +4415,10 @@ def _run_agent_streaming(loop: Any, prompt: str, state: ShellState) -> Any:
         metadata={"source": "jarvis.cli", "mode": "streaming"},
     )
     _BOS_TOKENS = ("<｜begin▁of▁sentence｜>", "<｜begin_of_sentence｜>", "<｜end▁of▁sentence｜>", "<｜end_of_sentence｜>")
-    # Pattern: \n[Tool `name`: result] — injected by loop.py after tool execution
-    _TOOL_RESULT_RE = re.compile(r'^\n?\[Tool `([^`]+)`:\s*(.*?)\]$', re.DOTALL)
+    # Pattern: \n[Tool `name`: result] — injected by loop.py after tool execution.
+    # Greedy .* matches to the LAST ] then $ anchors end-of-string — more
+    # efficient than .*? when content contains embedded ] (e.g. [DRY-RUN]).
+    _TOOL_RESULT_RE = re.compile(r'^\n?\[Tool `([^`]+)`:\s*(.*)\]$', re.DOTALL)
 
     collected_answer: list[str] = []
     tool_events: list[dict[str, Any]] = []

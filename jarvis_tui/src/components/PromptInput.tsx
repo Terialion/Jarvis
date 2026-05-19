@@ -1,6 +1,11 @@
 /**
- * PromptInput — fixed bottom input bar with slash-completion, history, and
- * smart Enter key (submit at end, newline mid-input).
+ * PromptInput — Claude Code / Codex style input line.
+ *
+ * Format:
+ *   ❯ input text here
+ *
+ * No border, no nested box — clean single-line input with ❯ prefix.
+ * Placeholder follows Codex's "Ask Codex to do anything" pattern.
  */
 import React, { useState, useCallback } from "react";
 import { Box, Text } from "ink";
@@ -15,7 +20,7 @@ interface PromptInputProps {
 export const PromptInput: React.FC<PromptInputProps> = ({
   onSubmit,
   isStreaming,
-  placeholder = "Ask Jarvis... (Enter=submit, Alt+Enter=newline)",
+  placeholder = "Ask Jarvis...",
 }) => {
   const [value, setValue] = useState("");
 
@@ -31,13 +36,7 @@ export const PromptInput: React.FC<PromptInputProps> = ({
   );
 
   return (
-    <Box
-      height={3}
-      flexShrink={0}
-      borderStyle="round"
-      borderColor={isStreaming ? "yellow" : "green"}
-      paddingLeft={1}
-    >
+    <Box height={1} flexShrink={0}>
       <Text bold color="cyan">
         ❯{" "}
       </Text>

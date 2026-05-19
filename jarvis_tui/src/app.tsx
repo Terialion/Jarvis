@@ -30,10 +30,10 @@ function parseToolArgs(name: string, args: string): string {
   return firstLine.slice(0, maxLen) + "…";
 }
 
-const TOOL_TEXT_RE = /^\n?\[(?:Tool `[^`]+`|skill\.load `[^`]+`):\s/;
+const TOOL_RESULT_RE = /^\n?\[(?:Tool `([^`]+)`|skill\.load `([^`]+)`):\s*(.*)\]$/s;
 
 function isToolResultText(text: string): boolean {
-  return TOOL_TEXT_RE.test(text);
+  return /^\n?\[(?:Tool `[^`]+`|skill\.load `[^`]+`):\s/.test(text);
 }
 
 function mapToolDisplay(name: string): string {
@@ -192,7 +192,27 @@ export const App: React.FC<AppProps> = ({
       case "text_delta": {
         const text = chunk.text_delta ?? "";
         if (!text) break;
-        if (isToolResultText(text)) break;
+        // Tool result — update the corresponding tool entry with result + status
+        if (isToolResultText(text)) {
+          const m = text.match(TOOL_RESULT_RE);
+          if (m) {
+            const toolName = m[1] || m[2] || "";
+            const result = (m[3] || "").trim();
+            setCurrentTools((prev) =>
+              prev.map((t) =>
+                t.name === toolName || t.display === toolName
+                  ? { ...t, status: "ok" as const, result: result.slice(0, 500) }
+                  : t
+              )
+            );
+            toolsAccum.current = toolsAccum.current.map((t) =>
+              t.name === toolName || t.display === toolName
+                ? { ...t, status: "ok" as const, result: result.slice(0, 500) }
+                : t
+            );
+          }
+          break;
+        }
         if (hadToolCall.current) {
           answerAccum.current += text;
           setCurrentAnswer((prev) => prev + text);
@@ -212,6 +232,7 @@ export const App: React.FC<AppProps> = ({
           hadReasoning.current = true;
           thinkingAccum.current += text;
           setCurrentThinking((prev) => prev + text);
+          setThinkingExpanded(true);
         }
         break;
       }
@@ -269,26 +290,30 @@ export const App: React.FC<AppProps> = ({
         },
       ]);
       thinking = "";
-    } else if (!hadToolCall.current && thinking && !answer) {
+    } else if (answer) {
       setMessages((prev) => [
         ...prev,
         {
           id: nextId(),
           role: "assistant",
-          content: thinking,
+          content: answer,
+          thinking: thinking || undefined,
+          tools: tools.length > 0 ? tools : undefined,
           timestamp: Date.now(),
         },
       ]);
-      thinking = "";
-    } else if (answer || thinking) {
+    } else if (thinking) {
+      // Thinking-only output (e.g. reasoning model used all tokens on
+      // reasoning). Show as a system notice — do NOT promote to answer.
+      // Matches Codex CLI's ReasoningItem vs AgentMessageItem separation
+      // and Hermes's "Model used all output tokens on reasoning" pattern.
       setMessages((prev) => [
         ...prev,
         {
           id: nextId(),
-          role: "assistant",
-          content: answer || thinking,
-          thinking: thinking || undefined,
-          tools: tools.length > 0 ? tools : undefined,
+          role: "system",
+          content: "[Model produced reasoning but no answer — try lowering reasoning effort or increasing max_tokens]",
+          thinking: thinking,
           timestamp: Date.now(),
         },
       ]);
@@ -363,10 +388,10 @@ export const App: React.FC<AppProps> = ({
       }
     }
     if (key.ctrl && input === "t") {
-      if (lastThinking) setThinkingExpanded((prev) => !prev);
+      if (currentThinking || lastThinking) setThinkingExpanded((prev) => !prev);
     }
     if (key.ctrl && input === "o") {
-      if (lastToolsList.length > 0) setToolsExpanded((prev) => !prev);
+      if (currentTools.length > 0 || lastToolsList.length > 0) setToolsExpanded((prev) => !prev);
     }
     if (key.shift && key.tab) {
       const modes = ["default", "plan", "accept_edits"];
@@ -416,6 +441,7 @@ export const App: React.FC<AppProps> = ({
         currentTools={currentTools}
         thinkingExpanded={thinkingExpanded}
         toolsExpanded={toolsExpanded}
+        isStreaming={isStreaming}
       />
 
       <ToggleBlock
@@ -430,14 +456,18 @@ export const App: React.FC<AppProps> = ({
         isStreaming={isStreaming}
       />
 
-      <Box height={1} flexShrink={0}>
+      {/* Footer — Codex style: left hints, right status */}
+      <Box height={1} flexShrink={0} justifyContent="space-between">
         <Text dimColor>
           {"  "}
-          {connected ? "●" : "○"} {connected ? "Ready" : "Connecting..."}
-          {" · "}Ctrl+C {isStreaming ? "cancel" : "exit"}
+          {connected ? "●" : "○"}{" "}
+          Ctrl+C {isStreaming ? "cancel" : "exit"}
           {" · "}Ctrl+T thinking
           {" · "}Ctrl+O tools
-          {" · "}Shift+Tab mode
+          {" · "}Shift+Tab {mode}
+        </Text>
+        <Text dimColor>
+          {modelName}{"  "}
         </Text>
       </Box>
     </Box>

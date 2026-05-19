@@ -6,13 +6,13 @@
 
 **Just A Rather Very Intelligent System**
 
-[![Version](https://img.shields.io/badge/version-3.3-blue)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-3.4-blue)](CHANGELOG.md)
 [![Python](https://img.shields.io/badge/python-3.10+-green)](https://www.python.org/downloads/)
 [![License](https://img.shields.io/badge/license-MIT-red)](LICENSE)
 [![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20Linux%20%7C%20macOS-lightgrey)](#)
 
 A local-first AI coding agent that runs in your terminal.  
-File system access · 33 built-in tools · 117 skills · multi-provider LLM support.
+File system access · 42 built-in tools · 107 skills · multi-provider LLM support.
 
 [Quick Start](#quick-start) ·
 [Features](#features) ·
@@ -104,11 +104,15 @@ Jarvis implements a full ReAct (Reasoning → Action → Observation) loop with 
 |-----------|-------------|
 | **Streaming output** | Real-time token streaming with tool call progress indicators |
 | **Thinking panel** | Reasoning text rendered in a collapsible panel, togglable with `Ctrl+T` |
-| **Context compaction** | Automatic conversation summarization to stay within token limits |
+| **Context compaction** | Multi-stage auto-compaction with iterative summary accumulation |
 | **Checkpoint/rollback** | Save task state and file snapshots, roll back on failure |
 | **Sub-agent delegation** | Fork sub-agents for parallel or isolated work |
+| **Team collaboration** | Multi-agent teams with inbox messaging and plan review |
+| **Worktree isolation** | Git worktree per task for safe parallel execution |
+| **Background tasks** | Fire-and-forget tasks with status polling |
+| **Persistent memory** | ChromaDB-backed semantic memory with cross-session recall |
 
-### 33 built-in tools
+### 42 built-in tools
 
 Every tool goes through permission evaluation, pre/post security hooks, and approval gating.
 
@@ -125,6 +129,8 @@ Every tool goes through permission evaluation, pre/post security hooks, and appr
 | **Skills** | `skill.load`, `skill.run` |
 | **MCP** | `mcp.list_servers`, `mcp.call` |
 | **Interaction** | `agent.ask_user` |
+| **Team** | `team.spawn`, `team.message`, `team.inbox`, `team.plan_review`, `team.shutdown` |
+| **Worktree** | `worktree.create`, `worktree.run`, `worktree.list`, `worktree.cleanup` |
 
 ### 9 LLM providers
 
@@ -143,7 +149,7 @@ Configure once, switch anytime. All providers use a unified OpenAI-compatible ch
 
 Models that lack native tool calling (e.g. Qwen reasoner) work through Jarvis's automatic tool-description injection into the system prompt — the model outputs `tool_plan` JSON that Jarvis parses and executes.
 
-### 117 community skills
+### 107 community skills
 
 Skills are self-contained markdown packages that teach Jarvis how to perform specific tasks. The skill system auto-discovers skills from `skills/`, `~/.jarvis/skills/`, and `JARVIS_SKILL_DIRS`.
 
@@ -175,8 +181,9 @@ Each skill declares its allowed tools and risk level. Jarvis infers missing risk
 | `JARVIS_LLM_MODEL` | Model name override | provider default |
 | `JARVIS_LLM_BASE_URL` | Custom API base URL | provider default |
 | `JARVIS_LLM_TEMPERATURE` | Sampling temperature | `0.2` |
-| `JARVIS_LLM_MAX_TOKENS` | Max completion tokens | `16384` |
-| `JARVIS_LLM_TIMEOUT_SECONDS` | HTTP timeout | `60` |
+| `JARVIS_LLM_MAX_TOKENS` | Max completion tokens | `32768` |
+| `JARVIS_LLM_TIMEOUT_SECONDS` | HTTP timeout | `300` |
+| `JARVIS_LLM_COMPACTION_THRESHOLD` | Token threshold for auto-compaction | `12000` |
 | `JARVIS_SKILL_DIRS` | Extra skill directories (`:`-separated) | — |
 | `JARVIS_LLM_DEBUG` | Write provider debug logs to `temp/` | `false` |
 

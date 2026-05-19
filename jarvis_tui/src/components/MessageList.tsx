@@ -1,8 +1,8 @@
 /**
  * MessageList — renders streaming content between status bar and input area.
  *
- * Completed messages go into <Static> in app.tsx (terminal scrollback).
- * This component only shows current-turn streaming: thinking, tools, answer.
+ * Codex-style: tool calls shown as inline cells with status icons,
+ * thinking text in dimmed/italic block, answer as markdown.
  */
 import React from "react";
 import { Box, Text } from "ink";
@@ -15,6 +15,21 @@ interface MessageListProps {
   currentTools: ToolInfo[];
   thinkingExpanded: boolean;
   toolsExpanded: boolean;
+  isStreaming: boolean;
+}
+
+/** Map status to icon + style — matches Codex's bullet convention. */
+function toolIcon(status: string): string {
+  switch (status) {
+    case "running":
+      return "●";
+    case "ok":
+      return "○";
+    case "error":
+      return "✗";
+    default:
+      return "○";
+  }
 }
 
 export const MessageList: React.FC<MessageListProps> = ({
@@ -23,6 +38,7 @@ export const MessageList: React.FC<MessageListProps> = ({
   currentTools,
   thinkingExpanded,
   toolsExpanded,
+  isStreaming,
 }) => {
   const hasStreaming = !!(currentAnswer || currentThinking || currentTools.length > 0);
 
@@ -30,21 +46,40 @@ export const MessageList: React.FC<MessageListProps> = ({
 
   return (
     <Box flexDirection="column" paddingX={1}>
+      {/* Thinking — dimmed block, Codex's reasoning summary style */}
       {currentThinking && thinkingExpanded && (
-        <Text dimColor color="gray">
-          {"  ".repeat(2)}💭 {currentThinking}
-        </Text>
+        <Box flexDirection="column" marginBottom={1}>
+          <Text dimColor color="gray">
+            {"  "}💭{" "}
+            {currentThinking.length > 500
+              ? currentThinking.slice(-500)
+              : currentThinking}
+          </Text>
+        </Box>
       )}
+
+      {/* Tool calls — Codex-style: one line per tool + result on │ prefix */}
       {currentTools.length > 0 && toolsExpanded && (
         <Box flexDirection="column" marginBottom={1}>
           {currentTools.map((t, i) => (
-            <Text key={i} dimColor>
-              {"  ".repeat(2)}● {t.display} {t.args}
-            </Text>
+            <Box key={i} flexDirection="column">
+              <Text dimColor={t.status === "ok"}>
+                {"  "}{toolIcon(t.status)}{" "}
+                {t.display}
+                {t.args ? ` ${t.args}` : ""}
+              </Text>
+              {t.result ? (
+                <Text dimColor>
+                  {"    "}│ {t.result.slice(0, 200)}
+                </Text>
+              ) : null}
+            </Box>
           ))}
         </Box>
       )}
-      {currentAnswer && <MarkdownRenderer content={currentAnswer} />}
+
+      {/* Answer — only show while streaming; after done, it moves to <Static> */}
+      {currentAnswer && isStreaming && <MarkdownRenderer content={currentAnswer} />}
     </Box>
   );
 };

@@ -78,6 +78,7 @@ export interface ToolInfo {
   display: string;
   args: string;
   status: "ok" | "error" | "running";
+  result?: string;
 }
 
 export interface TurnState {

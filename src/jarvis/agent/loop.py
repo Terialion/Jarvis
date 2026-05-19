@@ -1495,7 +1495,10 @@ class AgentLoop:
         limit = cls._MAX_OBSERVATION_LEN
 
         if isinstance(content, dict):
-            # Command output (stdout/stderr/exit_code) — show cleanly
+            # Command output (stdout/stderr/exit_code) — show only what matters.
+            # Claude Code style: exit code + stdout + stderr. No verbose JSON
+            # metadata (command, cwd, duration_ms) that the model already knows
+            # and would only repeat verbatim in its answer.
             if any(k in content for k in ("stdout", "stderr", "exit_code")):
                 parts = []
                 ec = content.get("exit_code")
@@ -1509,10 +1512,6 @@ class AgentLoop:
                     parts.append(str(err)[:limit])
                 if not out and not err:
                     parts.append("(empty output)")
-                extra = {k: v for k, v in content.items()
-                         if k not in ("stdout", "stderr", "exit_code")}
-                if extra:
-                    parts.append(json.dumps(extra, ensure_ascii=False)[:4000])
                 return "\n".join(parts) if parts else "(empty)"
             # Tree result — just the tree text
             tree = content.get("tree")
