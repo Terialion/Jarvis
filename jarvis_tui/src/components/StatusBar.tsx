@@ -7,6 +7,7 @@
 import React from "react";
 import { Box, Text } from "ink";
 import { Spinner } from "./Spinner.js";
+import { ShimmerText } from "./ShimmerText.js";
 
 function formatTokens(n: number): string {
   if (n >= 1000) return `${(n / 1000).toFixed(1)}k`;
@@ -32,18 +33,18 @@ export const StatusBar: React.FC<StatusBarProps> = ({
   activeTool,
   activeAgents = 0,
 }) => {
-  const segments: string[] = [];
-
+  // Build suffix segments (everything after "Working")
+  const suffixParts: string[] = [];
   if (isStreaming) {
-    segments.push("Working");
-    if (activeTool) segments.push(activeTool);
-    segments.push(latency || "...");
-    if (tokenCount > 0) segments.push(`↓ ${formatTokens(tokenCount)} tokens`);
-    if (activeAgents > 0) segments.push(`${activeAgents} agents`);
+    if (activeTool) suffixParts.push(activeTool);
+    suffixParts.push(latency || "...");
+    if (tokenCount > 0) suffixParts.push(`↓ ${formatTokens(tokenCount)} tokens`);
+    if (activeAgents > 0) suffixParts.push(`${activeAgents} agents`);
   } else if (latency) {
-    segments.push(latency);
-    if (tokenCount > 0) segments.push(`↓ ${formatTokens(tokenCount)} tokens`);
+    suffixParts.push(latency);
+    if (tokenCount > 0) suffixParts.push(`↓ ${formatTokens(tokenCount)} tokens`);
   }
+  const suffix = suffixParts.join(" · ");
 
   return (
     <Box height={1} flexShrink={0} justifyContent="space-between">
@@ -51,12 +52,12 @@ export const StatusBar: React.FC<StatusBarProps> = ({
         {isStreaming ? (
           <>
             <Spinner visible />
-            <Text> </Text>
+            <ShimmerText text="Working" />
+            {suffix ? <Text dimColor> · {suffix}</Text> : null}
           </>
-        ) : (
-          <Text> </Text>
-        )}
-        <Text dimColor>{segments.join(" · ")}</Text>
+        ) : suffix ? (
+          <Text dimColor>{suffix}</Text>
+        ) : null}
       </Box>
       <Text dimColor>
         {modelName}

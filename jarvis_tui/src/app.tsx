@@ -54,6 +54,10 @@ function mapToolDisplay(name: string): string {
     "skill_loader.run": "Skill",
     "web_search.search": "Search",
     "web_fetch.fetch": "Fetch",
+    spawn_agent: "Spawn",
+    wait_agent: "Wait",
+    list_agents: "ListAgents",
+    close_agent: "Close",
   };
   return display[name] ?? name.split(".").pop() ?? name;
 }
@@ -120,10 +124,15 @@ export const App: React.FC<AppProps> = ({
       timerRef.current = setInterval(() => {
         if (turnStartTime.current > 0) {
           const elapsed = (Date.now() - turnStartTime.current) / 1000;
-          if (elapsed >= 60) {
+          if (elapsed >= 3600) {
+            const h = Math.floor(elapsed / 3600);
+            const m = Math.floor((elapsed % 3600) / 60);
+            const s = Math.floor(elapsed % 60);
+            setLatency(`${h}h ${String(m).padStart(2, "0")}m ${String(s).padStart(2, "0")}s`);
+          } else if (elapsed >= 60) {
             const min = Math.floor(elapsed / 60);
             const sec = Math.floor(elapsed % 60);
-            setLatency(`${min}m ${sec}s`);
+            setLatency(`${min}m ${String(sec).padStart(2, "0")}s`);
           } else {
             setLatency(`${elapsed.toFixed(0)}s`);
           }
@@ -250,7 +259,7 @@ export const App: React.FC<AppProps> = ({
 
         const display = mapToolDisplay(name);
         const args = parseToolArgs(name, chunk.tool_arguments_delta ?? "");
-        const tool: ToolInfo = { name, display, args, status: "ok" as const };
+        const tool: ToolInfo = { name, display, args, status: "running" as const };
         const isFirstToolCall = !hadToolCall.current;
         toolsAccum.current = [...toolsAccum.current, tool];
         setCurrentTools((prev) => [...prev, tool]);
@@ -343,7 +352,18 @@ export const App: React.FC<AppProps> = ({
 
     if (turnStartTime.current > 0) {
       const elapsed = (Date.now() - turnStartTime.current) / 1000;
-      setLatency(`${elapsed.toFixed(1)}s`);
+      if (elapsed >= 3600) {
+        const h = Math.floor(elapsed / 3600);
+        const m = Math.floor((elapsed % 3600) / 60);
+        const s = Math.floor(elapsed % 60);
+        setLatency(`${h}h ${String(m).padStart(2, "0")}m ${String(s).padStart(2, "0")}s`);
+      } else if (elapsed >= 60) {
+        const min = Math.floor(elapsed / 60);
+        const sec = Math.floor(elapsed % 60);
+        setLatency(`${min}m ${String(sec).padStart(2, "0")}s`);
+      } else {
+        setLatency(`${elapsed.toFixed(1)}s`);
+      }
       turnStartTime.current = 0;
     }
   }, []);
