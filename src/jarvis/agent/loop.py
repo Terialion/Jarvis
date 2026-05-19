@@ -258,6 +258,16 @@ class AgentLoop:
         retry_with_tool_instruction_count = 0
         retry_with_length_count = 0
 
+        # Provide model_client to subagent runner if not already set
+        if self.tool_registry is not None:
+            from ..core.subagents.runner import SubagentRunner
+            _runner = SubagentRunner(
+                project_root=self.project_root,
+                model_client=self.model_client,
+                tool_registry=self.tool_registry,
+            )
+            self.tool_registry.subagent_pool.set_runner(_runner.run)
+
         try:
             for step in range(1, self.max_steps + 1):
                 final_answer = ""  # Reset per-step — stale value from previous step is not valid
@@ -288,6 +298,20 @@ class AgentLoop:
                             "content": f"<team-inbox>{json.dumps(team_inbox, ensure_ascii=False)}</team-inbox>",
                         })
                         self._emit(events, turn_id, "team_inbox_injected", {"count": len(team_inbox)})
+
+                    # Inject completed subagent results
+                    subagent_notifs = self.tool_registry.subagent_pool.drain_notifications()
+                    if subagent_notifs:
+                        notif_lines = "\n".join(
+                            f"[{n['agent_id']}] ({n['agent_type']}) {n['status']}: "
+                            f"{n.get('result') or n.get('error') or ''}"
+                            for n in subagent_notifs
+                        )
+                        messages.append({
+                            "role": "user",
+                            "content": f"<subagent-results>\n{notif_lines}\n</subagent-results>",
+                        })
+                        self._emit(events, turn_id, "subagent_notifications_injected", {"count": len(subagent_notifs)})
 
                 self._emit(events, turn_id, "model_call_started", {"step": step})
                 model_resp = self._call_model_with_retry(
@@ -1083,6 +1107,20 @@ class AgentLoop:
                             "content": f"<background-results>\n{notif_lines}\n</background-results>",
                         })
                         yield ModelChunk(kind="progress_delta", text="bg_notifications_injected")
+
+                    # Inject completed subagent results
+                    subagent_notifs = self.tool_registry.subagent_pool.drain_notifications()
+                    if subagent_notifs:
+                        notif_lines = "\n".join(
+                            f"[{n['agent_id']}] ({n['agent_type']}) {n['status']}: "
+                            f"{n.get('result') or n.get('error') or ''}"
+                            for n in subagent_notifs
+                        )
+                        messages.append({
+                            "role": "user",
+                            "content": f"<subagent-results>\n{notif_lines}\n</subagent-results>",
+                        })
+                        yield ModelChunk(kind="progress_delta", text="subagent_notifications_injected")
 
                 from ..core.debug_log import debug_log as _dbg_log, is_debug_enabled as _dbg_on
                 _dbg = _dbg_on()

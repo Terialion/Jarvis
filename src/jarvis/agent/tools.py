@@ -13,6 +13,13 @@ from typing import Any
 from typing import Callable
 
 from ..core.background import BackgroundTaskManager
+from ..core.subagents.pool import SubagentPool
+from ..core.subagents.tools import (
+    handle_close_agent,
+    handle_list_agents,
+    handle_spawn_agent,
+    handle_wait_agent,
+)
 from ..core.checkpoint_manager import CheckpointManager
 from ..core.command_runner import CommandRunner
 from ..core.failure_analyzer import FailureAnalyzer
@@ -70,6 +77,7 @@ class ToolRegistryAdapter:
         self.checkpoint_manager = checkpoint_manager
         self.thread_store = thread_store
         self.bg_task_manager = bg_task_manager or BackgroundTaskManager(max_workers=4)
+        self.subagent_pool = SubagentPool(max_workers=4, max_depth=2)
         self._mcp_client = mcp_client  # lazy-init: use _get_mcp_client()
         self.user_prompt = user_prompt  # callback for agent.ask_user
 
@@ -116,6 +124,16 @@ class ToolRegistryAdapter:
         self._register_team_tool_specs()
         self._register_worktree_tool_specs()
         self._register_mcp_tool_specs()
+        self._register_subagent_tool_specs()
+
+        # Wire subagent pool runner (model_client set later by AgentLoop)
+        from ..core.subagents.runner import SubagentRunner
+        _runner = SubagentRunner(
+            project_root=self.project_root,
+            model_client=None,
+            tool_registry=self,
+        )
+        self.subagent_pool.set_runner(_runner.run)
 
     def list_tool_specs(self) -> list[ToolSpec]:
         specs: list[ToolSpec] = []
@@ -1253,6 +1271,95 @@ class ToolRegistryAdapter:
                 requires_approval=False,
                 permissions={"repo_read"},
                 handler=self._handle_task_bind_worktree,
+            )
+        )
+
+    # ── Subagent tools ──────────────────────────────────────────────────
+
+    def _register_subagent_tool_specs(self) -> None:
+        pool = self.subagent_pool
+
+        self.core_registry.register(
+            CoreToolSpec(
+                name="spawn_agent",
+                description=(
+                    "Spawn a subagent that runs asynchronously in parallel. "
+                    "Use agent_type='Explore' for search/read tasks, 'Plan' for planning, "
+                    "'general-purpose' for full capabilities. Returns immediately with agent_id. "
+                    "Use list_agents to check progress, wait_agent to block until completion."
+                ),
+                input_schema={
+                    "type": "object",
+                    "properties": {
+                        "task": {"type": "string", "description": "Task description for the subagent."},
+                        "agent_type": {
+                            "type": "string",
+                            "description": "Agent type: Explore (read-only search), Plan (read-only + task planning), general-purpose (all tools).",
+                            "enum": ["Explore", "Plan", "general-purpose"],
+                        },
+                        "budget_steps": {"type": "integer", "description": "Max steps (default 10)."},
+                        "depth": {"type": "integer", "description": "Nesting depth (0=top-level, 1=child, 2=grandchild)."},
+                    },
+                    "required": ["task"],
+                },
+                output_schema={"type": "object"},
+                risk_level="medium",
+                requires_approval=False,
+                permissions={"repo_read", "shell"},
+                handler=lambda args, ctx: handle_spawn_agent(args, ctx, pool),
+            )
+        )
+        self.core_registry.register(
+            CoreToolSpec(
+                name="wait_agent",
+                description="Block until a specific subagent completes. Returns the agent's result.",
+                input_schema={
+                    "type": "object",
+                    "properties": {
+                        "agent_id": {"type": "string", "description": "The agent_id returned by spawn_agent."},
+                        "timeout": {"type": "number", "description": "Max seconds to wait (default 60)."},
+                    },
+                    "required": ["agent_id"],
+                },
+                output_schema={"type": "object"},
+                risk_level="low",
+                requires_approval=False,
+                permissions={"repo_read"},
+                handler=lambda args, ctx: handle_wait_agent(args, ctx, pool),
+            )
+        )
+        self.core_registry.register(
+            CoreToolSpec(
+                name="list_agents",
+                description="List all subagents with their status (running/completed/failed) and progress.",
+                input_schema={
+                    "type": "object",
+                    "properties": {},
+                    "required": [],
+                },
+                output_schema={"type": "object"},
+                risk_level="low",
+                requires_approval=False,
+                permissions={"repo_read"},
+                handler=lambda args, ctx: handle_list_agents(args, ctx, pool),
+            )
+        )
+        self.core_registry.register(
+            CoreToolSpec(
+                name="close_agent",
+                description="Cancel a running subagent by agent_id.",
+                input_schema={
+                    "type": "object",
+                    "properties": {
+                        "agent_id": {"type": "string", "description": "The agent_id to cancel."},
+                    },
+                    "required": ["agent_id"],
+                },
+                output_schema={"type": "object"},
+                risk_level="low",
+                requires_approval=False,
+                permissions={"repo_read"},
+                handler=lambda args, ctx: handle_close_agent(args, ctx, pool),
             )
         )
 
