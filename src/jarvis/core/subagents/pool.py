@@ -59,14 +59,12 @@ class SubagentPool:
             depth=config.depth,
         )
 
-        with self._lock:
-            self._agents[config.agent_id] = handle
-            self.spawn_count += 1
-            self.max_depth_reached = max(self.max_depth_reached, config.depth)
-
         future = self._executor.submit(self._run_wrapped, config, handle)
         with self._lock:
+            self._agents[config.agent_id] = handle
             self._futures[config.agent_id] = future
+            self.spawn_count += 1
+            self.max_depth_reached = max(self.max_depth_reached, config.depth)
 
         return handle
 
@@ -122,10 +120,13 @@ class SubagentPool:
         with self._lock:
             handle = self._agents.get(agent_id)
             future = self._futures.get(agent_id)
-        if handle is None:
-            return {"agent_id": agent_id, "status": "not_found"}
-        if handle.status in (SubagentStatus.COMPLETED, SubagentStatus.FAILED, SubagentStatus.CANCELLED):
-            return {"agent_id": agent_id, "status": handle.status.value, "result": handle.result, "error": handle.error}
+            if handle is None:
+                return {"agent_id": agent_id, "status": "not_found"}
+            status = handle.status
+            result = handle.result
+            error = handle.error
+        if status in (SubagentStatus.COMPLETED, SubagentStatus.FAILED, SubagentStatus.CANCELLED):
+            return {"agent_id": agent_id, "status": status.value, "result": result, "error": error}
         if future is not None:
             try:
                 future.result(timeout=timeout)
@@ -133,18 +134,19 @@ class SubagentPool:
                 pass
         with self._lock:
             h = self._agents.get(agent_id)
-        if h is None:
-            return {"agent_id": agent_id, "status": "not_found"}
-        return {"agent_id": agent_id, "status": h.status.value, "result": h.result, "error": h.error}
+            if h is None:
+                return {"agent_id": agent_id, "status": "not_found"}
+            return {"agent_id": agent_id, "status": h.status.value, "result": h.result, "error": h.error}
 
     def close_agent(self, agent_id: str) -> bool:
         """Cancel a running agent. Returns True if cancelled."""
         with self._lock:
             handle = self._agents.get(agent_id)
             future = self._futures.get(agent_id)
-        if handle is None:
-            return False
-        if handle.status != SubagentStatus.RUNNING:
+            if handle is None:
+                return False
+            status = handle.status
+        if status != SubagentStatus.RUNNING:
             return False
         cancelled = False
         if future is not None and not future.done():
