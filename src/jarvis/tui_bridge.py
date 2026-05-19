@@ -84,7 +84,7 @@ def run_bridge() -> int:
         _original_emit = loop._event_sink.fallback.emit
         def _context_interceptor(event: object) -> None:
             _original_emit(event)
-            if hasattr(event, "event_type") and getattr(event, "event_type") == "context_window_usage":
+            if getattr(event, "type", None) == "context_window_usage":
                 payload = getattr(event, "payload", {})
                 _send_event({"type": "context_usage", "data": payload})
         loop._event_sink.fallback.emit = _context_interceptor  # type: ignore[method-assign]

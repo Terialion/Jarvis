@@ -56,6 +56,7 @@ export const StatusBar: React.FC<StatusBarProps> = ({
         {isStreaming ? (
           <>
             <Spinner visible />
+            <Text> </Text>
             <ShimmerText text="Working" />
             {suffix ? <Text dimColor> · {suffix}</Text> : null}
           </>
@@ -66,7 +67,6 @@ export const StatusBar: React.FC<StatusBarProps> = ({
       <Text dimColor>
         {modelName}
         {contextWindow > 0 ? ` · ${formatTokens(contextUsed)}/${formatTokens(contextWindow)}` : ""}
-        {cost > 0 ? ` · $${cost.toFixed(4)}` : ""}
       </Text>
     </Box>
   );
