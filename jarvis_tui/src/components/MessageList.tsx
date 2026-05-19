@@ -4,7 +4,7 @@
  * Codex-style: tool calls shown as inline cells with status icons,
  * thinking text in dimmed/italic block, answer as markdown.
  */
-import React from "react";
+import React, { useState } from "react";
 import { Box, Text } from "ink";
 import type { ToolInfo } from "../types.js";
 import { MarkdownRenderer } from "./MarkdownRenderer.js";
@@ -41,6 +41,7 @@ export const MessageList: React.FC<MessageListProps> = ({
   isStreaming,
 }) => {
   const hasStreaming = !!(currentAnswer || currentThinking || currentTools.length > 0);
+  const [expandedTools, setExpandedTools] = useState<Record<number, boolean>>({});
 
   if (!hasStreaming) return null;
 
@@ -69,9 +70,36 @@ export const MessageList: React.FC<MessageListProps> = ({
                 {t.args ? ` ${t.args}` : ""}
               </Text>
               {t.result ? (
-                <Text dimColor>
-                  {"    "}│ {t.result.slice(0, 200)}
-                </Text>
+                <Box flexDirection="column">
+                  {(() => {
+                    const shouldCollapse =
+                      t.result.length > 500 || /\<subagent-results\>/.test(t.result);
+                    if (shouldCollapse && !expandedTools[i]) {
+                      return (
+                        <>
+                          <Text dimColor>
+                            {"    "}│ {t.result.slice(0, 200)}
+                          </Text>
+                          <Text dimColor>
+                            {"    "}  (Show full output — {t.result.length} chars)
+                          </Text>
+                        </>
+                      );
+                    }
+                    return (
+                      <>
+                        <Text dimColor>
+                          {"    "}│ {t.result}
+                        </Text>
+                        {shouldCollapse && (
+                          <Text dimColor>
+                            {"    "}  (Collapse)
+                          </Text>
+                        )}
+                      </>
+                    );
+                  })()}
+                </Box>
               ) : null}
             </Box>
           ))}

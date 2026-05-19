@@ -104,3 +104,14 @@ export interface Message {
   tools?: ToolInfo[];
   timestamp: number;
 }
+
+export interface SubagentInfo {
+  agent_id: string;
+  agent_type: string;
+  status: "pending" | "running" | "completed" | "failed" | "cancelled";
+  steps: number;
+  max_steps: number;
+  depth: number;
+  result?: string;
+  error?: string;
+}

@@ -14,7 +14,8 @@ import { MarkdownRenderer } from "./components/MarkdownRenderer.js";
 import { PromptInput } from "./components/PromptInput.js";
 import { ToggleBlock } from "./components/ToggleBlock.js";
 import { JarvisBridge } from "./bridge.js";
-import type { PythonEvent, Message, ToolInfo, ModelChunk } from "./types.js";
+import { AgentPanel } from "./components/AgentPanel.js";
+import type { PythonEvent, Message, ToolInfo, ModelChunk, SubagentInfo } from "./types.js";
 
 // ── Helpers ────────────────────────────────────────────────────────
 
@@ -97,6 +98,8 @@ export const App: React.FC<AppProps> = ({
   const [lastThinking, setLastThinking] = useState("");
   const [lastToolsList, setLastToolsList] = useState<ToolInfo[]>([]);
   const [connected, setConnected] = useState(false);
+  const [agentPanelVisible, setAgentPanelVisible] = useState(false);
+  const [subagents, setSubagents] = useState<SubagentInfo[]>([]);
 
   const seenToolIds = useRef<Set<string>>(new Set());
   const turnStartTime = useRef<number>(0);
@@ -112,7 +115,7 @@ export const App: React.FC<AppProps> = ({
   // ── Streaming timer ────────────────────────────────────────────
 
   useEffect(() => {
-    if (isStreaming) {
+    if (isStreaming === true) {
       timerRef.current = setInterval(() => {
         if (turnStartTime.current > 0) {
           const elapsed = (Date.now() - turnStartTime.current) / 1000;
@@ -393,6 +396,9 @@ export const App: React.FC<AppProps> = ({
     if (key.ctrl && input === "o") {
       if (currentTools.length > 0 || lastToolsList.length > 0) setToolsExpanded((prev) => !prev);
     }
+    if (key.ctrl && input === "a") {
+      setAgentPanelVisible((prev) => !prev);
+    }
     if (key.shift && key.tab) {
       const modes = ["default", "plan", "accept_edits"];
       const idx = modes.indexOf(mode);
@@ -422,7 +428,7 @@ export const App: React.FC<AppProps> = ({
         )}
       </Static>
 
-      {/* Dynamic frame: status + streaming + input */}
+      {/* Dynamic frame: status + agent panel + streaming + input */}
       <StatusBar
         version={version}
         modelName={modelName}
@@ -434,6 +440,8 @@ export const App: React.FC<AppProps> = ({
         permissionMode={mode}
         isStreaming={isStreaming}
       />
+
+      <AgentPanel agents={subagents} visible={agentPanelVisible} />
 
       <MessageList
         currentAnswer={currentAnswer}
@@ -464,6 +472,7 @@ export const App: React.FC<AppProps> = ({
           Ctrl+C {isStreaming ? "cancel" : "exit"}
           {" · "}Ctrl+T thinking
           {" · "}Ctrl+O tools
+          {" · "}Ctrl+A agents
           {" · "}Shift+Tab {mode}
         </Text>
         <Text dimColor>
