@@ -40,56 +40,62 @@ Jarvis is a terminal-native coding agent inspired by Claude Code, OpenAI Codex, 
 ## Quick Start
 
 ### Prerequisites
-- Python 3.10+
+- Python 3.11+
+- Node.js 18+ (optional, for TUI mode)
 - An LLM API key (DeepSeek, OpenAI, or any compatible provider)
 
-### Install
+### One-command install
 
+**Linux / macOS:**
 ```bash
-# Clone
+curl -fsSL https://raw.githubusercontent.com/terialion/jarvis/main/scripts/install.sh | bash
+```
+
+**Windows (PowerShell):**
+```powershell
+irm https://raw.githubusercontent.com/terialion/jarvis/main/scripts/install.ps1 | iex
+```
+
+**Manual install:**
+```bash
 git clone https://github.com/terialion/jarvis.git
 cd jarvis
-
-# Create virtual environment
-python -m venv .venv
-source .venv/bin/activate   # Linux/macOS
-# .venv\Scripts\activate    # Windows
-
-# Install
-pip install -r requirements.txt
+bash scripts/install.sh    # or: .\scripts\install.ps1 on Windows
 ```
 
 ### Configure
 
-```bash
-# Set your API key (choose one)
-export JARVIS_LLM_API_KEY=sk-your-key-here
-export JARVIS_LLM_PROVIDER=deepseek    # deepseek | openai | gemini | ollama | qwen | custom
-```
-
-Or create a `.env` file:
+Add your API credentials to `.env` in the install directory (`~/.jarvis/.env`):
 
 ```bash
 JARVIS_LLM_API_KEY=sk-your-key-here
 JARVIS_LLM_PROVIDER=deepseek
+JARVIS_LLM_BASE_URL=https://api.llm.ustc.edu.cn    # custom endpoint (optional)
 JARVIS_LLM_MODEL=deepseek-v4-pro
+```
+
+Or export as environment variables:
+```bash
+export JARVIS_LLM_API_KEY=sk-your-key-here
+export JARVIS_LLM_PROVIDER=deepseek
 ```
 
 ### Run
 
 ```bash
-python -m jarvis.cli
+jarvis        # interactive TUI mode (Claude Code / Codex style)
+jarvis --tui  # force TUI mode
+jarvis -p "explain this codebase"  # one-shot mode
 ```
 
 ```
-> Welcome to Jarvis. What would you like to work on?
+❯ 帮我看看这个项目的结构
 
-> 帮我看看这个项目的结构
-  [Thinking ...]
-  ✓ List(src/) · depth 2
-  ✓ Read(README.md)
-  ...
-  ┄ Thinking (42 lines) — press Ctrl+T to toggle ┄
+⠹ Working · 5s · ↓ 1.2k tokens    deepseek-v4-pro · 12k/200k
+[Answer with markdown rendering, thinking panel (Ctrl+T), tools panel (Ctrl+O)]
+
+❯ Ask Jarvis...
+ ● Ctrl+C exit · Ctrl+T thinking · Ctrl+O tools · Ctrl+A agents · Shift+Tab default
 ```
 
 ---
