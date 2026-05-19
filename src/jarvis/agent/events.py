@@ -44,6 +44,7 @@ EVENT_TYPES = {
     "consecutive_failures_detected",
     "context_observation_reused",
     "context_updated",
+    "context_window_usage",
     "approval_required",
     "approval_created",
     "approval_approved",

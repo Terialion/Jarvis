@@ -80,6 +80,14 @@ def run_bridge() -> int:
             max_steps=20,
             timeout_s=300,
         )
+        # Intercept context_window_usage events and forward to TUI
+        _original_emit = loop._event_sink.fallback.emit
+        def _context_interceptor(event: object) -> None:
+            _original_emit(event)
+            if hasattr(event, "event_type") and getattr(event, "event_type") == "context_window_usage":
+                payload = getattr(event, "payload", {})
+                _send_event({"type": "context_usage", "data": payload})
+        loop._event_sink.fallback.emit = _context_interceptor  # type: ignore[method-assign]
     except Exception as exc:
         _send_event({
             "type": "chunk",

@@ -1073,6 +1073,19 @@ class AgentLoop:
         if _dbg2_on:
             _dbg2("loop", f"build_messages done in {time.perf_counter()-_t2:.1f}s, {len(messages)} messages")
 
+        # Emit context window usage so the TUI can track context budget
+        stream_estimator = TokenEstimator(self._model_name)
+        stream_context_used = stream_estimator.count_messages(messages)
+        stream_usage_pct = stream_context_used / self._context_window if self._context_window > 0 else 0.0
+        self._event_sink.emit(AgentEvent.new(
+            turn_id=turn_id, event_type="context_window_usage",
+            payload={
+                "used_tokens": stream_context_used,
+                "context_window": self._context_window,
+                "usage_pct": round(stream_usage_pct, 3),
+                "message_count": len(messages),
+            }))
+
         if _dbg2_on:
             _dbg2("loop", "entering step loop")
 

@@ -15,7 +15,7 @@ import { PromptInput } from "./components/PromptInput.js";
 import { ToggleBlock } from "./components/ToggleBlock.js";
 import { JarvisBridge } from "./bridge.js";
 import { AgentPanel } from "./components/AgentPanel.js";
-import type { PythonEvent, Message, ToolInfo, ModelChunk, SubagentInfo } from "./types.js";
+import type { PythonEvent, Message, ToolInfo, ModelChunk, SubagentInfo, ContextUsageEvent } from "./types.js";
 
 // ── Helpers ────────────────────────────────────────────────────────
 
@@ -105,6 +105,8 @@ export const App: React.FC<AppProps> = ({
   const [agentPanelVisible, setAgentPanelVisible] = useState(false);
   const [subagents, setSubagents] = useState<SubagentInfo[]>([]);
   const [activeTool, setActiveTool] = useState("");
+  const [contextUsed, setContextUsed] = useState(0);
+  const [contextWindow, setContextWindow] = useState(0);
 
   const seenToolIds = useRef<Set<string>>(new Set());
   const turnStartTime = useRef<number>(0);
@@ -165,6 +167,13 @@ export const App: React.FC<AppProps> = ({
     b.on("done", (ev: PythonEvent) => {
       if (ev.type !== "done") return;
       handleDone(ev.finish_reason, ev.token_count, ev.cost);
+    });
+
+    b.on("context_usage", (ev: PythonEvent) => {
+      if (ev.type === "context_usage") {
+        setContextUsed(ev.data.used_tokens);
+        setContextWindow(ev.data.context_window);
+      }
     });
 
     b.on("ask_user", (_ev: PythonEvent) => {
@@ -463,6 +472,8 @@ export const App: React.FC<AppProps> = ({
         isStreaming={isStreaming}
         activeTool={activeTool || undefined}
         activeAgents={subagents.filter(a => a.status === "running").length}
+        contextUsed={contextUsed}
+        contextWindow={contextWindow}
       />
 
       <AgentPanel agents={subagents} visible={agentPanelVisible} />

@@ -51,7 +51,17 @@ export interface AskUserOption {
   description: string;
 }
 
-export type PythonEvent = InitEvent | ChunkEvent | DoneEvent | AskUserEvent;
+export interface ContextUsageEvent {
+  type: "context_usage";
+  data: {
+    used_tokens: number;
+    context_window: number;
+    usage_pct: number;
+    message_count: number;
+  };
+}
+
+export type PythonEvent = InitEvent | ChunkEvent | DoneEvent | AskUserEvent | ContextUsageEvent;
 
 // ── TUI → Python requests ──────────────────────────────────────────
 

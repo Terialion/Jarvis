@@ -22,6 +22,8 @@ interface StatusBarProps {
   isStreaming: boolean;
   activeTool?: string;
   activeAgents?: number;
+  contextUsed?: number;
+  contextWindow?: number;
 }
 
 export const StatusBar: React.FC<StatusBarProps> = ({
@@ -32,6 +34,8 @@ export const StatusBar: React.FC<StatusBarProps> = ({
   isStreaming,
   activeTool,
   activeAgents = 0,
+  contextUsed = 0,
+  contextWindow = 0,
 }) => {
   // Build suffix segments (everything after "Working")
   const suffixParts: string[] = [];
@@ -61,6 +65,7 @@ export const StatusBar: React.FC<StatusBarProps> = ({
       </Box>
       <Text dimColor>
         {modelName}
+        {contextWindow > 0 ? ` · ${formatTokens(contextUsed)}/${formatTokens(contextWindow)}` : ""}
         {cost > 0 ? ` · $${cost.toFixed(4)}` : ""}
       </Text>
     </Box>
