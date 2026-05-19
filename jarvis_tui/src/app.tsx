@@ -100,6 +100,7 @@ export const App: React.FC<AppProps> = ({
   const [connected, setConnected] = useState(false);
   const [agentPanelVisible, setAgentPanelVisible] = useState(false);
   const [subagents, setSubagents] = useState<SubagentInfo[]>([]);
+  const [activeTool, setActiveTool] = useState("");
 
   const seenToolIds = useRef<Set<string>>(new Set());
   const turnStartTime = useRef<number>(0);
@@ -232,10 +233,11 @@ export const App: React.FC<AppProps> = ({
       case "progress_delta": {
         const text = (chunk.reasoning_delta ?? chunk.progress_delta ?? "");
         if (text) {
+          const isFirstReasoning = !hadReasoning.current;
           hadReasoning.current = true;
           thinkingAccum.current += text;
           setCurrentThinking((prev) => prev + text);
-          setThinkingExpanded(true);
+          if (isFirstReasoning) setThinkingExpanded(true);
         }
         break;
       }
@@ -249,10 +251,12 @@ export const App: React.FC<AppProps> = ({
         const display = mapToolDisplay(name);
         const args = parseToolArgs(name, chunk.tool_arguments_delta ?? "");
         const tool: ToolInfo = { name, display, args, status: "ok" as const };
+        const isFirstToolCall = !hadToolCall.current;
         toolsAccum.current = [...toolsAccum.current, tool];
         setCurrentTools((prev) => [...prev, tool]);
+        setActiveTool(display);
         hadToolCall.current = true;
-        setToolsExpanded(true);
+        if (isFirstToolCall) setToolsExpanded(true);
         break;
       }
       case "done": {
@@ -333,6 +337,7 @@ export const App: React.FC<AppProps> = ({
     setCurrentAnswer("");
     setCurrentThinking("");
     setCurrentTools([]);
+    setActiveTool("");
     setIsStreaming(false);
     seenToolIds.current.clear();
 
@@ -355,6 +360,7 @@ export const App: React.FC<AppProps> = ({
       setCurrentAnswer("");
       setCurrentThinking("");
       setCurrentTools([]);
+      setActiveTool("");
       setThinkingExpanded(false);
       setToolsExpanded(false);
       setIsStreaming(true);
@@ -430,15 +436,13 @@ export const App: React.FC<AppProps> = ({
 
       {/* Dynamic frame: status + agent panel + streaming + input */}
       <StatusBar
-        version={version}
         modelName={modelName}
-        projectRoot={projectRoot}
-        gitBranch={gitBranch}
         latency={latency}
         tokenCount={tokenCount}
         cost={cost}
-        permissionMode={mode}
         isStreaming={isStreaming}
+        activeTool={activeTool || undefined}
+        activeAgents={subagents.filter(a => a.status === "running").length}
       />
 
       <AgentPanel agents={subagents} visible={agentPanelVisible} />
@@ -464,19 +468,14 @@ export const App: React.FC<AppProps> = ({
         isStreaming={isStreaming}
       />
 
-      {/* Footer — Codex style: left hints, right status */}
-      <Box height={1} flexShrink={0} justifyContent="space-between">
+      {/* Footer — minimal hints */}
+      <Box height={1} flexShrink={0} paddingX={1}>
         <Text dimColor>
-          {"  "}
-          {connected ? "●" : "○"}{" "}
-          Ctrl+C {isStreaming ? "cancel" : "exit"}
+          {connected ? "●" : "○"} Ctrl+C {isStreaming ? "cancel" : "exit"}
           {" · "}Ctrl+T thinking
           {" · "}Ctrl+O tools
           {" · "}Ctrl+A agents
           {" · "}Shift+Tab {mode}
-        </Text>
-        <Text dimColor>
-          {modelName}{"  "}
         </Text>
       </Box>
     </Box>

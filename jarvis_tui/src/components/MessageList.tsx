@@ -1,13 +1,16 @@
 /**
  * MessageList — renders streaming content between status bar and input area.
  *
- * Codex-style: tool calls shown as inline cells with status icons,
- * thinking text in dimmed/italic block, answer as markdown.
+ * Pattern refs:
+ * - Codex ReasoningSummaryCell (history_cell.rs:391-452):
+ *   dimmed italic, bullet "• " prefix, markdown rendering
+ * - Codex UnifiedExecInteractionCell (history_cell.rs:594-651):
+ *   "↳ " dim prefix, command in bold, result on "  └ " nested lines
+ * - Codex chatwidget.rs: tool call cells with ●/○/✓/✗ status icons
  */
 import React, { useState } from "react";
 import { Box, Text } from "ink";
 import type { ToolInfo } from "../types.js";
-import { MarkdownRenderer } from "./MarkdownRenderer.js";
 
 interface MessageListProps {
   currentAnswer: string;
@@ -18,18 +21,22 @@ interface MessageListProps {
   isStreaming: boolean;
 }
 
-/** Map status to icon + style — matches Codex's bullet convention. */
-function toolIcon(status: string): string {
+function toolIcon(status: string): { icon: string; color: string } {
   switch (status) {
     case "running":
-      return "●";
+      return { icon: "●", color: "yellow" };
     case "ok":
-      return "○";
+      return { icon: "✓", color: "green" };
     case "error":
-      return "✗";
+      return { icon: "✗", color: "red" };
     default:
-      return "○";
+      return { icon: "○", color: "gray" };
   }
+}
+
+function truncateResult(result: string, maxLen: number = 500): string {
+  if (result.length <= maxLen) return result;
+  return result.slice(0, maxLen) + `… (${result.length} chars total)`;
 }
 
 export const MessageList: React.FC<MessageListProps> = ({
@@ -47,67 +54,77 @@ export const MessageList: React.FC<MessageListProps> = ({
 
   return (
     <Box flexDirection="column" paddingX={1}>
-      {/* Thinking — dimmed block, Codex's reasoning summary style */}
+      {/* Thinking — Codex ReasoningSummaryCell style: bullet prefix, dimmed italic */}
       {currentThinking && thinkingExpanded && (
         <Box flexDirection="column" marginBottom={1}>
-          <Text dimColor color="gray">
-            {"  "}💭{" "}
-            {currentThinking.length > 500
-              ? currentThinking.slice(-500)
-              : currentThinking}
-          </Text>
+          {currentThinking
+            .split("\n")
+            .filter((line) => line.trim())
+            .slice(-40) // show last 40 lines of thinking to avoid flooding
+            .map((line, i) => (
+              <Text key={i} dimColor italic>
+                • {line.length > 280 ? line.slice(-280) : line}
+              </Text>
+            ))}
+          {currentThinking.length > 500 && (
+            <Text dimColor>
+              {" "}  (showing last ~40 lines · {currentThinking.length} chars total · Ctrl+T to toggle)
+            </Text>
+          )}
         </Box>
       )}
 
-      {/* Tool calls — Codex-style: one line per tool + result on │ prefix */}
+      {/* Tool calls — Codex style: status icon + display name + args on one line,
+          result indented with │ prefix */}
       {currentTools.length > 0 && toolsExpanded && (
         <Box flexDirection="column" marginBottom={1}>
-          {currentTools.map((t, i) => (
-            <Box key={i} flexDirection="column">
-              <Text dimColor={t.status === "ok"}>
-                {"  "}{toolIcon(t.status)}{" "}
-                {t.display}
-                {t.args ? ` ${t.args}` : ""}
-              </Text>
-              {t.result ? (
-                <Box flexDirection="column">
-                  {(() => {
-                    const shouldCollapse =
-                      t.result.length > 500 || /\<subagent-results\>/.test(t.result);
-                    if (shouldCollapse && !expandedTools[i]) {
+          {currentTools.map((t, i) => {
+            const { icon, color } = toolIcon(t.status);
+            return (
+              <Box key={i} flexDirection="column">
+                <Box>
+                  <Text color={color}>{icon} </Text>
+                  <Text dimColor={t.status === "ok"}>{t.display}</Text>
+                  {t.args ? <Text dimColor> {t.args}</Text> : null}
+                </Box>
+                {t.result ? (
+                  <Box flexDirection="column" paddingLeft={2}>
+                    {(() => {
+                      const collapsed = t.result.length > 500 && !expandedTools[i];
+                      const display = collapsed
+                        ? t.result.slice(0, 200) + `… (${t.result.length} chars)`
+                        : t.result;
                       return (
                         <>
-                          <Text dimColor>
-                            {"    "}│ {t.result.slice(0, 200)}
-                          </Text>
-                          <Text dimColor>
-                            {"    "}  (Show full output — {t.result.length} chars)
-                          </Text>
+                          <Text dimColor>│ {display}</Text>
+                          {t.result.length > 500 && (
+                            <Text dimColor>
+                              │ {collapsed ? "(expand to view)" : "(collapsed)"}
+                            </Text>
+                          )}
                         </>
                       );
-                    }
-                    return (
-                      <>
-                        <Text dimColor>
-                          {"    "}│ {t.result}
-                        </Text>
-                        {shouldCollapse && (
-                          <Text dimColor>
-                            {"    "}  (Collapse)
-                          </Text>
-                        )}
-                      </>
-                    );
-                  })()}
-                </Box>
-              ) : null}
-            </Box>
+                    })()}
+                  </Box>
+                ) : t.status === "running" ? (
+                  <Box paddingLeft={2}>
+                    <Text dimColor>│ running…</Text>
+                  </Box>
+                ) : null}
+              </Box>
+            );
+          })}
+        </Box>
+      )}
+
+      {/* Answer — markdown streaming */}
+      {currentAnswer && isStreaming && (
+        <Box flexDirection="column">
+          {currentAnswer.split("\n").map((line, i) => (
+            <Text key={i}>{line}</Text>
           ))}
         </Box>
       )}
-
-      {/* Answer — only show while streaming; after done, it moves to <Static> */}
-      {currentAnswer && isStreaming && <MarkdownRenderer content={currentAnswer} />}
     </Box>
   );
 };

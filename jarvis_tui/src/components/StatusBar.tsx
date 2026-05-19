@@ -1,9 +1,12 @@
 /**
- * StatusBar — top bar showing Jarvis version, model, working directory,
- * plus runtime info (latency, token count, cost, permission mode).
+ * StatusBar — Claude Code style clean status row.
+ *
+ * Pattern: spinner + "Working · 32s · ↓ 1.2k tokens" (left) + model (right).
+ * No borders, no heavy separators.
  */
 import React from "react";
 import { Box, Text } from "ink";
+import { Spinner } from "./Spinner.js";
 
 function formatTokens(n: number): string {
   if (n >= 1000) return `${(n / 1000).toFixed(1)}k`;
@@ -11,56 +14,53 @@ function formatTokens(n: number): string {
 }
 
 interface StatusBarProps {
-  version: string;
   modelName: string;
-  projectRoot: string;
-  gitBranch: string;
   latency: string;
   tokenCount: number;
   cost: number;
-  permissionMode: string;
   isStreaming: boolean;
+  activeTool?: string;
+  activeAgents?: number;
 }
 
 export const StatusBar: React.FC<StatusBarProps> = ({
-  version,
   modelName,
-  projectRoot,
-  gitBranch,
   latency,
   tokenCount,
   cost,
-  permissionMode,
   isStreaming,
+  activeTool,
+  activeAgents = 0,
 }) => {
+  const segments: string[] = [];
 
-  // Build runtime info segment (shown during/after streaming)
-  const runtime: string[] = [];
-  if (isStreaming && latency) {
-    runtime.push(`Thinking… (${latency}`);
-    if (tokenCount > 0) runtime.push(`↓ ${formatTokens(tokenCount)} tokens`);
-    runtime.push(")");
+  if (isStreaming) {
+    segments.push("Working");
+    if (activeTool) segments.push(activeTool);
+    segments.push(latency || "...");
+    if (tokenCount > 0) segments.push(`↓ ${formatTokens(tokenCount)} tokens`);
+    if (activeAgents > 0) segments.push(`${activeAgents} agents`);
   } else if (latency) {
-    runtime.push(latency);
-    if (tokenCount > 0) runtime.push(`↓ ${formatTokens(tokenCount)} tokens`);
+    segments.push(latency);
+    if (tokenCount > 0) segments.push(`↓ ${formatTokens(tokenCount)} tokens`);
   }
-  if (permissionMode && permissionMode !== "default") {
-    runtime.push(`[${permissionMode}]`);
-  }
-  if (cost > 0) {
-    runtime.push(`$${cost.toFixed(4)}`);
-  }
-
-  const line = [
-    modelName,
-    projectRoot,
-    ...runtime,
-  ].filter(Boolean).join(" · ");
 
   return (
-    <Box height={1} flexShrink={0}>
+    <Box height={1} flexShrink={0} justifyContent="space-between">
+      <Box>
+        {isStreaming ? (
+          <>
+            <Spinner visible />
+            <Text> </Text>
+          </>
+        ) : (
+          <Text> </Text>
+        )}
+        <Text dimColor>{segments.join(" · ")}</Text>
+      </Box>
       <Text dimColor>
-        {"─".repeat(4)} Jarvis v{version} · {line}
+        {modelName}
+        {cost > 0 ? ` · $${cost.toFixed(4)}` : ""}
       </Text>
     </Box>
   );
