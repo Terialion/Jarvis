@@ -148,13 +148,11 @@ class SubagentPool:
             status = handle.status
         if status != SubagentStatus.RUNNING:
             return False
-        cancelled = False
         if future is not None and not future.done():
-            cancelled = future.cancel()
-        if cancelled:
-            with self._lock:
-                handle.status = SubagentStatus.CANCELLED
-        return cancelled
+            future.cancel()
+        with self._lock:
+            handle.status = SubagentStatus.CANCELLED
+        return True
 
     def active_count(self) -> int:
         with self._lock:
