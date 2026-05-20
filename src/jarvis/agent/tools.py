@@ -1758,30 +1758,35 @@ class ToolRegistryAdapter:
             created = (result.get("data") or {}).get("created", False)
             if created:
                 # New file — build diff with empty baseline
-                content = str(arguments.get("content") or "")
                 import difflib
-                diff_lines = list(difflib.unified_diff(
-                    [], content.splitlines(),
-                    fromfile=f"{path}:before", tofile=f"{path}:after", lineterm="",
-                ))
-                diff_text = "\n".join(diff_lines)
-                wrapped.metadata["auto_diff"] = {
-                    "path": path,
-                    "diff_text": diff_text,
-                    "added": content.count("\n") + (1 if content else 0),
-                    "removed": 0,
-                    "status": "created",
-                }
+                content = str(arguments.get("content") or "")
+                try:
+                    diff_lines = list(difflib.unified_diff(
+                        [], content.splitlines(),
+                        fromfile=f"{path}:before", tofile=f"{path}:after", lineterm="",
+                    ))
+                    diff_text = "\n".join(diff_lines)
+                    lines = diff_text.split("\n")
+                    wrapped.metadata["auto_diff"] = {
+                        "path": path,
+                        "diff_text": diff_text,
+                        "added": sum(1 for l in lines if l.startswith("+") and not l.startswith("+++")),
+                        "removed": sum(1 for l in lines if l.startswith("-") and not l.startswith("---")),
+                        "status": "created",
+                    }
+                except Exception:
+                    pass  # diff generation best-effort; metadata absent on failure
             else:
                 diff_result = self.file_editor.diff(path=path)
                 if diff_result.get("ok"):
                     data = diff_result.get("data", {})
                     diff_text = str(data.get("diff_text", ""))
+                    lines = diff_text.split("\n")
                     wrapped.metadata["auto_diff"] = {
                         "path": path,
                         "diff_text": diff_text,
-                        "added": sum(1 for l in diff_text.split("\n") if l.startswith("+") and not l.startswith("+++")),
-                        "removed": sum(1 for l in diff_text.split("\n") if l.startswith("-") and not l.startswith("---")),
+                        "added": sum(1 for l in lines if l.startswith("+") and not l.startswith("+++")),
+                        "removed": sum(1 for l in lines if l.startswith("-") and not l.startswith("---")),
                         "status": "modified",
                     }
         return wrapped
