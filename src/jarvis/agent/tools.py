@@ -1696,37 +1696,76 @@ class ToolRegistryAdapter:
         return results
 
     def _handle_replace_text(self, arguments: dict[str, Any], context: CoreToolContext) -> CoreToolResult:
+        path = str(arguments.get("path") or arguments.get("file_path") or "")
         result = self.file_editor.replace_text(
-            path=str(arguments.get("path") or arguments.get("file_path") or ""),
+            path=path,
             old=str(arguments.get("old") or arguments.get("old_string") or arguments.get("old_str") or ""),
             new=str(arguments.get("new") or arguments.get("new_string") or arguments.get("new_str") or ""),
         )
         wrapped = self._wrap_core_result("file_editor.replace_text", result)
         if wrapped.ok:
-            wrapped.metadata["changed_files"] = [str(arguments.get("path") or "")]
+            wrapped.metadata["changed_files"] = [path]
+            # Auto-generate diff
+            diff_result = self.file_editor.diff(path=path)
+            if diff_result.get("ok"):
+                data = diff_result.get("data", {})
+                diff_text = str(data.get("diff_text", ""))
+                wrapped.metadata["auto_diff"] = {
+                    "path": path,
+                    "diff_text": diff_text,
+                    "added": sum(1 for l in diff_text.split("\n") if l.startswith("+") and not l.startswith("+++")),
+                    "removed": sum(1 for l in diff_text.split("\n") if l.startswith("-") and not l.startswith("---")),
+                    "status": "modified",
+                }
         return wrapped
 
     def _handle_insert_text(self, arguments: dict[str, Any], context: CoreToolContext) -> CoreToolResult:
+        path = str(arguments.get("path") or arguments.get("file_path") or "")
         result = self.file_editor.insert_text(
-            path=str(arguments.get("path") or arguments.get("file_path") or ""),
+            path=path,
             anchor=str(arguments.get("anchor") or ""),
             content=str(arguments.get("content") or ""),
             position=str(arguments.get("position") or "after"),
         )
         wrapped = self._wrap_core_result("file_editor.insert_text", result)
         if wrapped.ok:
-            wrapped.metadata["changed_files"] = [str(arguments.get("path") or "")]
+            wrapped.metadata["changed_files"] = [path]
+            # Auto-generate diff
+            diff_result = self.file_editor.diff(path=path)
+            if diff_result.get("ok"):
+                data = diff_result.get("data", {})
+                diff_text = str(data.get("diff_text", ""))
+                wrapped.metadata["auto_diff"] = {
+                    "path": path,
+                    "diff_text": diff_text,
+                    "added": sum(1 for l in diff_text.split("\n") if l.startswith("+") and not l.startswith("+++")),
+                    "removed": sum(1 for l in diff_text.split("\n") if l.startswith("-") and not l.startswith("---")),
+                    "status": "modified",
+                }
         return wrapped
 
     def _handle_write_file(self, arguments: dict[str, Any], context: CoreToolContext) -> CoreToolResult:
+        path = str(arguments.get("path") or arguments.get("file_path") or "")
         result = self.file_editor.write_file(
-            path=str(arguments.get("path") or arguments.get("file_path") or ""),
+            path=path,
             content=str(arguments.get("content") or ""),
             create=bool(arguments.get("create", True)),
         )
         wrapped = self._wrap_core_result("file_editor.write_file", result)
         if wrapped.ok:
-            wrapped.metadata["changed_files"] = [str(arguments.get("path") or "")]
+            wrapped.metadata["changed_files"] = [path]
+            # Auto-generate diff after write
+            diff_result = self.file_editor.diff(path=path)
+            if diff_result.get("ok"):
+                data = diff_result.get("data", {})
+                diff_text = str(data.get("diff_text", ""))
+                wrapped.metadata["auto_diff"] = {
+                    "path": path,
+                    "diff_text": diff_text,
+                    "added": sum(1 for l in diff_text.split("\n") if l.startswith("+") and not l.startswith("+++")),
+                    "removed": sum(1 for l in diff_text.split("\n") if l.startswith("-") and not l.startswith("---")),
+                    "status": "created" if data.get("summary", "") == "file created" else "modified",
+                }
         return wrapped
 
     def _handle_diff(self, arguments: dict[str, Any], context: CoreToolContext) -> CoreToolResult:

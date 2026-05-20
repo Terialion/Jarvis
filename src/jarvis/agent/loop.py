@@ -1412,6 +1412,19 @@ class AgentLoop:
                         # Yield tool result for display
                         yield ModelChunk(kind="text_delta",
                                          text_delta=f"\n[Tool `{result.name}`: {obs_text[:16000]}]")
+                        # Emit file_change chunk if this tool modified a file
+                        if result.metadata.get("auto_diff"):
+                            fd = result.metadata["auto_diff"]
+                            yield ModelChunk(
+                                kind="file_change",
+                                file_change={
+                                    "path": fd["path"],
+                                    "diff_text": fd["diff_text"],
+                                    "added": fd["added"],
+                                    "removed": fd["removed"],
+                                    "status": fd["status"],
+                                },
+                            )
                         # Track failures and successes
                         if result.ok:
                             stream_failures.record_success(result.name)
