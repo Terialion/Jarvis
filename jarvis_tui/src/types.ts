@@ -36,7 +36,7 @@ export interface AskUserEvent {
 }
 
 export interface ModelChunk {
-  kind: "text_delta" | "reasoning_delta" | "progress_delta" | "tool_call_delta" | "done" | "event";
+  kind: "text_delta" | "reasoning_delta" | "progress_delta" | "tool_call_delta" | "done" | "event" | "file_change";
   text_delta?: string;
   reasoning_delta?: string;
   progress_delta?: string;
@@ -44,6 +44,7 @@ export interface ModelChunk {
   tool_name?: string;
   tool_arguments_delta?: string;
   finish_reason?: string;
+  file_change?: FileChange;
 }
 
 export interface AskUserOption {
@@ -124,4 +125,12 @@ export interface SubagentInfo {
   depth: number;
   result?: string;
   error?: string;
+}
+
+export interface FileChange {
+  path: string;
+  diffText: string;
+  added: number;
+  removed: number;
+  status: "created" | "modified" | "deleted";
 }
