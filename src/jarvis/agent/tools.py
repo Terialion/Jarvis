@@ -1755,17 +1755,35 @@ class ToolRegistryAdapter:
         if wrapped.ok:
             wrapped.metadata["changed_files"] = [path]
             # Auto-generate diff after write
-            diff_result = self.file_editor.diff(path=path)
-            if diff_result.get("ok"):
-                data = diff_result.get("data", {})
-                diff_text = str(data.get("diff_text", ""))
+            created = (result.get("data") or {}).get("created", False)
+            if created:
+                # New file — build diff with empty baseline
+                content = str(arguments.get("content") or "")
+                import difflib
+                diff_lines = list(difflib.unified_diff(
+                    [], content.splitlines(),
+                    fromfile=f"{path}:before", tofile=f"{path}:after", lineterm="",
+                ))
+                diff_text = "\n".join(diff_lines)
                 wrapped.metadata["auto_diff"] = {
                     "path": path,
                     "diff_text": diff_text,
-                    "added": sum(1 for l in diff_text.split("\n") if l.startswith("+") and not l.startswith("+++")),
-                    "removed": sum(1 for l in diff_text.split("\n") if l.startswith("-") and not l.startswith("---")),
-                    "status": "created" if data.get("summary", "") == "file created" else "modified",
+                    "added": content.count("\n") + (1 if content else 0),
+                    "removed": 0,
+                    "status": "created",
                 }
+            else:
+                diff_result = self.file_editor.diff(path=path)
+                if diff_result.get("ok"):
+                    data = diff_result.get("data", {})
+                    diff_text = str(data.get("diff_text", ""))
+                    wrapped.metadata["auto_diff"] = {
+                        "path": path,
+                        "diff_text": diff_text,
+                        "added": sum(1 for l in diff_text.split("\n") if l.startswith("+") and not l.startswith("+++")),
+                        "removed": sum(1 for l in diff_text.split("\n") if l.startswith("-") and not l.startswith("---")),
+                        "status": "modified",
+                    }
         return wrapped
 
     def _handle_diff(self, arguments: dict[str, Any], context: CoreToolContext) -> CoreToolResult:
