@@ -169,7 +169,38 @@ def _external_specs() -> List[CliCommandSpec]:
     ]
 
 
-_COMMAND_SPECS: List[CliCommandSpec] = _slash_specs() + _external_specs()
+def _plugin_command_specs() -> List[CliCommandSpec]:
+    """Load slash commands from plugin .claude-plugin/plugin.json manifests."""
+    specs: List[CliCommandSpec] = []
+    try:
+        from pathlib import Path
+        from jarvis.core.plugins.registry import PluginRegistry
+        project_root = Path.cwd()
+        reg = PluginRegistry(project_root=project_root)
+        reg.load_all()
+        for cmd in reg.list_commands():
+            name = str(cmd.get("name", "")).strip()
+            if not name:
+                continue
+            specs.append(
+                CliCommandSpec(
+                    name=f"/{name}",
+                    aliases=[],
+                    category="plugin",
+                    claude_equivalent=None,
+                    description=str(cmd.get("description", "")),
+                    status="implemented",
+                    safety="ask",
+                    handler="plugin_command",
+                    examples=[f"/{name}"],
+                )
+            )
+    except Exception:
+        pass  # Plugin system not available or broken — skip
+    return specs
+
+
+_COMMAND_SPECS: List[CliCommandSpec] = _slash_specs() + _external_specs() + _plugin_command_specs()
 
 
 def list_command_specs(category: Optional[str] = None) -> List[CliCommandSpec]:

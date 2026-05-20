@@ -133,6 +133,18 @@ class PersistentTUI:
         """Register commands for autocomplete."""
         self._slash_completer.register_commands(commands)
 
+    def load_builtin_commands(self) -> None:
+        """Populate slash completer from the command spec registry (including plugins)."""
+        try:
+            from ..cli_command_map import list_command_specs
+            commands: list[tuple[str, str, str, str]] = []
+            for spec in list_command_specs():
+                if spec.name.startswith("/") and spec.status == "implemented":
+                    commands.append((spec.name, spec.description, spec.category, spec.status))
+            self._slash_completer.register_commands(commands)
+        except Exception:
+            pass
+
     def set_handlers(
         self,
         slash_handler: Any,

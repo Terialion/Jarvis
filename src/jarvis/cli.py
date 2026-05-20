@@ -3942,6 +3942,11 @@ def _handle_slash_command(state: ShellState, raw: str, envelope: Optional[Any] =
     if cmd in handlers:
         return handlers[cmd]()
 
+    # Plugin commands — dispatch to agent as slash command prompt
+    spec = resolve_command(cmd)
+    if spec is not None and spec.handler == "plugin_command":
+        return f"Slash command: {cmd}\n{spec.description}"
+
     skill_route = route_skill_command(envelope)
     if skill_route.handled:
         if skill_route.response_mode == "skill_tool_dispatch":
