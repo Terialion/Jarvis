@@ -25,7 +25,7 @@ export const DiffBlock: React.FC<DiffBlockProps> = ({ change }) => {
       {/* Header: file path + stats */}
       <Box>
         <Text color="cyan" bold>
-          {change.status === "created" ? "Created" : "Modified"}:{" "}
+          {change.status === "created" ? "Created" : change.status === "deleted" ? "Deleted" : "Modified"}:{" "}
         </Text>
         <Text>{change.path}</Text>
         <Text dimColor>
