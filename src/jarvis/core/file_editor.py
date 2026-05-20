@@ -28,6 +28,10 @@ class FileEditor:
         self.safety_guard = safety_guard
         self._snapshots: dict[str, str] = {}
 
+    def _snapshot(self, path: str, content: str) -> None:
+        """Capture file content as diff baseline (convenience for tests)."""
+        self._snapshots[str(Path(path).resolve())] = content
+
     def replace_text(self, path: str, old: str, new: str) -> dict:
         started = perf_counter()
         validation = self._validate_write_target(path, create=False, started=started)
