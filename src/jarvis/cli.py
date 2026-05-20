@@ -1329,10 +1329,8 @@ def cmd_diff(_args) -> int:
         # Try generating a fresh diff from the filesystem
         try:
             from pathlib import Path
-            from .core.file_editor import FileEditor
             p = Path(path_str)
-            if p.exists():
-                editor = FileEditor()
+            if p.exists() and p.is_file():
                 # Read the file and generate a diff-like view
                 content = p.read_text(encoding="utf-8")
                 diff_lines = [
