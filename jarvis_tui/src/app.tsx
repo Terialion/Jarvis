@@ -293,8 +293,9 @@ export const App: React.FC<AppProps> = ({
         break;
       }
       case "file_change": {
-        if (chunk.file_change) {
-          setFileChanges((prev) => [...prev, chunk.file_change!]);
+        const fc = chunk.file_change;
+        if (fc) {
+          setFileChanges((prev) => [...prev, fc]);
         }
         break;
       }
@@ -327,6 +328,7 @@ export const App: React.FC<AppProps> = ({
     setCurrentAnswer("");
     setCurrentThinking("");
     setCurrentTools([]);
+    setFileChanges([]);
     setActiveTool("");
     setIsStreaming(false);
     seenToolIds.current.clear();
