@@ -13,7 +13,6 @@ import { MessageList } from "./components/MessageList.js";
 import { MarkdownRenderer } from "./components/MarkdownRenderer.js";
 import { PromptInput } from "./components/PromptInput.js";
 import { ToggleBlock } from "./components/ToggleBlock.js";
-import { DiffBlock } from "./components/DiffBlock.js";
 import { JarvisBridge } from "./bridge.js";
 import { AgentPanel } from "./components/AgentPanel.js";
 import type { PythonEvent, Message, ToolInfo, ModelChunk, SubagentInfo, ContextUsageEvent, FileChange } from "./types.js";
