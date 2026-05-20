@@ -36,32 +36,47 @@ class RepoReader:
             )
 
         try:
+            import os
             items: list[dict] = []
-            max_items = 500  # prevent context bloat
-            # Breadth-first ordering: shallow items first so top-level dirs
-            # (like workspace/) aren't buried under deep subtrees (like codex/).
-            for path in sorted(root.rglob("*"),
-                               key=lambda p: (len(p.relative_to(root).parts),
-                                              str(p.relative_to(root)).lower())):
-                relative = path.relative_to(root)
-                depth = len(relative.parts)
+            max_items = 500
+
+            # Breadth-first walk using os.scandir — avoids materializing
+            # 15K+ Path objects and sorting them (rglob+sorted would take 14s+).
+            # Level-order queue: (dir_path, relative_prefix, depth)
+            from collections import deque
+            queue: deque[tuple[Path, str, int]] = deque()
+            queue.append((root, "", 0))
+
+            while queue and len(items) < max_items:
+                dir_path, rel_prefix, depth = queue.popleft()
                 if depth > max_depth:
                     continue
-                # Skip noise directories at the top level
-                if depth >= 1 and relative.parts[0] in self._SKIP_TREE_DIRS:
+                try:
+                    entries = sorted(os.scandir(dir_path),
+                                     key=lambda e: (not e.is_dir(), e.name.lower()))
+                except (OSError, PermissionError):
                     continue
-                items.append(
-                    {
-                        "path": str(relative).replace("\\", "/"),
-                        "type": "dir" if path.is_dir() else "file",
+                for entry in entries:
+                    if len(items) >= max_items:
+                        break
+                    name = entry.name
+                    rel = f"{rel_prefix}{name}" if rel_prefix else name
+                    is_dir = entry.is_dir()
+                    # Skip noise dirs at any depth
+                    if is_dir and name in self._SKIP_TREE_DIRS:
+                        continue
+                    items.append({
+                        "path": rel.replace("\\", "/"),
+                        "type": "dir" if is_dir else "file",
                         "depth": depth,
-                    }
-                )
+                    })
+                    if is_dir and depth < max_depth:
+                        queue.append((Path(entry.path), f"{rel}/", depth + 1))
                 if len(items) >= max_items:
                     items.append({"path": "...", "type": "truncated", "depth": 1,
                                   "note": f"output truncated at {max_items} items"})
                     break
-            # Format as readable tree string (matching Claude Code output style)
+
             tree_text = self._format_tree(items)
             return ok_result(
                 {"repo_path": str(root), "max_depth": max_depth, "tree": tree_text,

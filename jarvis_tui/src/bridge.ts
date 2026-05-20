@@ -50,8 +50,10 @@ export class JarvisBridge extends EventEmitter {
 
   /** Send a request to the Python backend. */
   send(req: TUIRequest): void {
-    if (!this._proc?.stdin) throw new Error("Bridge not started");
-    this._proc.stdin.write(JSON.stringify(req) + "\n");
+    const stdin = this._proc?.stdin;
+    if (!stdin) throw new Error("Bridge not started");
+    if (stdin.destroyed) return;
+    stdin.write(Buffer.from(JSON.stringify(req) + "\n", "utf-8"));
   }
 
   /** Stop the Python backend. */
