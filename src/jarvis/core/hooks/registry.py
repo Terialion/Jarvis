@@ -26,6 +26,7 @@ class HookRegistry:
     def __init__(self) -> None:
         self._hooks: dict[str, list[HookRegistration]] = defaultdict(list)
         self._specs: list[HookSpec] = []
+        self._plugin_hooks_configs: list[dict[str, Any]] = []
 
     def register(self, reg: HookRegistration) -> dict[str, Any]:
         if reg.hook_point not in HOOK_POINTS:
@@ -102,6 +103,30 @@ class HookRegistry:
             except Exception:
                 pass  # Post hooks are audit-only, errors are swallowed
         return HookResult(allowed=True)
+
+    def register_plugin_hooks(self, hooks_configs: list[dict[str, Any]]) -> int:
+        """Register hooks from plugin hooks.json configurations.
+
+        Each config dict has: path, description, hooks (event_name → [matcher entries]).
+        Returns the number of hook entries registered.
+        """
+        count = 0
+        for config in hooks_configs:
+            hooks = config.get("hooks", {})
+            for event_name, matchers in hooks.items():
+                if not isinstance(matchers, list):
+                    continue
+                for entry in matchers:
+                    if isinstance(entry, dict):
+                        entry["_plugin"] = config.get("path", "")
+                        entry["_event"] = event_name
+                    count += 1
+        self._plugin_hooks_configs.extend(hooks_configs)
+        return count
+
+    def list_plugin_hooks(self) -> list[dict[str, Any]]:
+        """List all raw plugin hook config entries."""
+        return list(self._plugin_hooks_configs)
 
     def snapshot(self) -> dict[str, Any]:
         return {p: [h.hook_id for h in self._hooks.get(p, [])] for p in HOOK_POINTS}
