@@ -1301,22 +1301,57 @@ def cmd_evidence(args) -> int:
 
 
 def cmd_diff(_args) -> int:
+    """Show unified diff of the latest task's file changes."""
     store = _load_cli_coding_state()
     task_id = str(store.get("latest_task_id") or "")
     if not task_id:
-        _safe_print("Diff\n\nChanged files:\n- none\n\nSummary:\n- no local patch recorded")
+        _safe_print("No local patch recorded.")
         return 0
+
     task = store.get("tasks", {}).get(task_id, {})
     changed = list(task.get("changed_files") or [])
-    summary = str(task.get("diff_summary") or "no local patch recorded")
-    lines = ["Diff", "", "Changed files:"]
+
     if not changed:
-        lines.append("- none")
-    else:
-        for item in changed:
-            lines.append(f"- {item}")
-    lines.extend(["", "Summary:", f"- {summary}"])
-    _safe_print("\n".join(lines))
+        _safe_print("No files changed.")
+        return 0
+
+    from .cli_ui.render import render_diff
+    from .cli_ui.tui_utils import rich_to_ansi
+    from shutil import get_terminal_size
+
+    try:
+        width = get_terminal_size().columns - 4
+    except Exception:
+        width = 76
+
+    for path_str in changed:
+        diff_text = task.get("diff_summary", "")
+        # Try generating a fresh diff from the filesystem
+        try:
+            from pathlib import Path
+            from .core.file_editor import FileEditor
+            p = Path(path_str)
+            if p.exists():
+                editor = FileEditor()
+                # Read the file and generate a diff-like view
+                content = p.read_text(encoding="utf-8")
+                diff_lines = [
+                    f"+++ {path_str}",
+                    f"@@ -0,0 +1,{content.count(chr(10)) + (1 if content else 0)} @@",
+                ]
+                for line in content.split("\n"):
+                    diff_lines.append(f"+{line}")
+                diff_text = "\n".join(diff_lines)
+        except Exception:
+            pass
+
+        if diff_text.strip():
+            panel = render_diff(diff_text, file_path=path_str)
+            _safe_print(rich_to_ansi(panel, width=max(width, 40)))
+            _safe_print("")
+        else:
+            _safe_print(f"  {path_str} (no diff available)")
+
     return 0
 
 
