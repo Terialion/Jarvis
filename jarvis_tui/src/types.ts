@@ -129,7 +129,7 @@ export interface SubagentInfo {
 
 export interface FileChange {
   path: string;
-  diffText: string;
+  diff_text: string;
   added: number;
   removed: number;
   status: "created" | "modified" | "deleted";
