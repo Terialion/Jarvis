@@ -240,7 +240,7 @@ class SkillRegistry:
         roots.append(("project", (self.project_root / "skills").resolve()))
         roots.extend(("extra", path) for path in self.extra_dirs)
         roots.extend(("plugin", path) for path in self.plugin_skill_dirs)
-        roots.append(("home", Path.home().joinpath(".jarvis", "skills").resolve()))
+        roots.append(("home", (self.project_root / ".jarvis" / "skills").resolve()))
         roots.append(("builtin", self.builtin_root))
         for sub_root in self._discover_skill_roots():
             roots.append(sub_root)

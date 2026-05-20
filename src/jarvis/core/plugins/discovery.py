@@ -56,11 +56,12 @@ def discover_plugins(
                 for p in _scan_dir(Path(d).expanduser().resolve()):
                     _load(p)
 
-    # User scope
-    user_dir = Path(user_plugins_dir or "~/.jarvis/plugins").expanduser().resolve()
-    if user_dir.exists():
-        for p in _scan_dir(user_dir):
-            _load(p)
+    # User scope (defaults to project-local to avoid C: drive clutter)
+    if user_plugins_dir:
+        user_dir = Path(user_plugins_dir).expanduser().resolve()
+        if user_dir.exists():
+            for p in _scan_dir(user_dir):
+                _load(p)
 
     # Project scope (highest priority — loaded last so it overwrites)
     if project_root:
@@ -90,7 +91,9 @@ class PluginDiscovery:
         self.user_plugins_dir = (
             Path(user_plugins_dir).expanduser().resolve()
             if user_plugins_dir
-            else Path.home() / ".jarvis" / "plugins"
+            else (self.project_root / ".jarvis" / "plugins").resolve()
+            if self.project_root
+            else None
         )
         self._env_dirs = os.environ.get("JARVIS_PLUGIN_DIRS", "")
         self._cache: list[PluginManifest] | None = None
