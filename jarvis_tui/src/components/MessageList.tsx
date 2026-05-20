@@ -10,7 +10,8 @@
  */
 import React, { useState } from "react";
 import { Box, Text } from "ink";
-import type { ToolInfo } from "../types.js";
+import { DiffBlock } from "./DiffBlock.js";
+import type { ToolInfo, FileChange } from "../types.js";
 
 interface MessageListProps {
   currentAnswer: string;
@@ -19,6 +20,7 @@ interface MessageListProps {
   thinkingExpanded: boolean;
   toolsExpanded: boolean;
   isStreaming: boolean;
+  fileChanges?: FileChange[];
 }
 
 function toolIcon(status: string): { icon: string; color: string } {
@@ -46,14 +48,24 @@ export const MessageList: React.FC<MessageListProps> = ({
   thinkingExpanded,
   toolsExpanded,
   isStreaming,
+  fileChanges,
 }) => {
-  const hasStreaming = !!(currentAnswer || currentThinking || currentTools.length > 0);
+  const hasStreaming = !!(currentAnswer || currentThinking || currentTools.length > 0 || (fileChanges && fileChanges.length > 0));
   const [expandedTools, setExpandedTools] = useState<Record<number, boolean>>({});
 
   if (!hasStreaming) return null;
 
   return (
     <Box flexDirection="column" paddingX={1}>
+      {/* File changes — inline diff blocks */}
+      {fileChanges && fileChanges.length > 0 && (
+        <Box flexDirection="column" marginBottom={1}>
+          {fileChanges.map((fc, i) => (
+            <DiffBlock key={`diff-${i}`} change={fc} />
+          ))}
+        </Box>
+      )}
+
       {/* Thinking — Codex ReasoningSummaryCell style: bullet prefix, dimmed italic */}
       {currentThinking && thinkingExpanded && (
         <Box flexDirection="column" marginBottom={1}>

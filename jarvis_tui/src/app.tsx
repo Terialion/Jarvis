@@ -13,9 +13,10 @@ import { MessageList } from "./components/MessageList.js";
 import { MarkdownRenderer } from "./components/MarkdownRenderer.js";
 import { PromptInput } from "./components/PromptInput.js";
 import { ToggleBlock } from "./components/ToggleBlock.js";
+import { DiffBlock } from "./components/DiffBlock.js";
 import { JarvisBridge } from "./bridge.js";
 import { AgentPanel } from "./components/AgentPanel.js";
-import type { PythonEvent, Message, ToolInfo, ModelChunk, SubagentInfo, ContextUsageEvent } from "./types.js";
+import type { PythonEvent, Message, ToolInfo, ModelChunk, SubagentInfo, ContextUsageEvent, FileChange } from "./types.js";
 
 // ── Helpers ────────────────────────────────────────────────────────
 
@@ -107,6 +108,7 @@ export const App: React.FC<AppProps> = ({
   const [activeTool, setActiveTool] = useState("");
   const [contextUsed, setContextUsed] = useState(0);
   const [contextWindow, setContextWindow] = useState(0);
+  const [fileChanges, setFileChanges] = useState<FileChange[]>([]);
 
   const seenToolIds = useRef<Set<string>>(new Set());
   const turnStartTime = useRef<number>(0);
@@ -291,6 +293,12 @@ export const App: React.FC<AppProps> = ({
         if (isFirstToolCall) setToolsExpanded(true);
         break;
       }
+      case "file_change": {
+        if (chunk.file_change) {
+          setFileChanges((prev) => [...prev, chunk.file_change!]);
+        }
+        break;
+      }
       case "done": {
         handleDone(chunk.finish_reason);
         break;
@@ -401,6 +409,7 @@ export const App: React.FC<AppProps> = ({
       setCurrentAnswer("");
       setCurrentThinking("");
       setCurrentTools([]);
+      setFileChanges([]);
       setActiveTool("");
       setThinkingExpanded(false);
       setToolsExpanded(false);
@@ -498,6 +507,7 @@ export const App: React.FC<AppProps> = ({
         thinkingExpanded={thinkingExpanded}
         toolsExpanded={toolsExpanded}
         isStreaming={isStreaming}
+        fileChanges={fileChanges}
       />
 
       <ToggleBlock
