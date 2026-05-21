@@ -134,7 +134,7 @@ export class MarkdownMemoryStore {
       try {
         const text = await fs.readFile(filePath, 'utf-8');
         const { meta, body } = parseFrontmatter(text);
-        if (meta.name && body) {
+        if (meta.name) {
           entries.push({
             name: meta.name,
             description: meta.description || '',
@@ -202,10 +202,7 @@ export class MarkdownMemoryStore {
 
   /** Sanitize a name for use as a filename. */
   sanitizeName(name: string): string {
-    return name
-      .replace(/[/\\ :]/g, '_')
-      .replace(/\s+/g, '_')
-      .replace(/:/g, '_');
+    return name.replace(/[/\\ :]/g, '_').replace(/\s+/g, '_');
   }
 
   // ── Index management ────────────────────────────────────────────────

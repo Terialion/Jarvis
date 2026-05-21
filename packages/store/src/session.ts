@@ -5,7 +5,7 @@
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import * as os from 'node:os';
-import { randomUUID } from 'node:crypto';
+import type { TurnStatus } from '@jarvis/shared';
 
 // ============================================================================
 // Types
@@ -25,6 +25,14 @@ export interface SessionRecord {
     | 'task_plan';
   timestamp?: string; // ISO-8601 UTC, auto-set on write if missing
   [key: string]: unknown;
+}
+
+/** Turn record in the session JSONL. */
+export interface TurnRecord extends SessionRecord {
+  type: 'turn';
+  event: 'start' | 'end' | 'status_change' | 'final_answer';
+  turn_id: string;
+  status: TurnStatus;
 }
 
 /** Mutable sidecar metadata for a session. */
@@ -222,13 +230,6 @@ export class SessionStore {
     };
     this._sidecarCache.set(sessionId, sidecar);
     await this._saveSidecar(sessionId);
-    // Touch the JSONL file to create it
-    await this._appendLine(sessionId, {
-      type: 'turn',
-      event: 'start',
-      turn_id: `session_${randomUUID()}`,
-      status: 'created',
-    });
   }
 
   /** Append a single record to the session JSONL. */

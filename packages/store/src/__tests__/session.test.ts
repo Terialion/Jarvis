@@ -32,24 +32,12 @@ describe('SessionStore', () => {
   // ── createSession ──────────────────────────────────────────────────
 
   describe('createSession', () => {
-    it('creates a JSONL file and sidecar JSON', async () => {
+    it('creates a sidecar JSON for the session', async () => {
       const store = createStore();
       const sid = `session_${randomUUID()}`;
       await store.createSession(sid);
 
       expect(await store.sessionExists(sid)).toBe(true);
-
-      // Verify JSONL exists with at least one line
-      const jsonlPath = path.join(testDir, `${sid}.jsonl`);
-      const jsonlContent = await fs.readFile(jsonlPath, 'utf-8');
-      expect(jsonlContent.trim()).toBeTruthy();
-      const lines = jsonlContent.trim().split('\n');
-      for (const line of lines) {
-        const obj = JSON.parse(line);
-        expect(obj.type).toBe('turn');
-        expect(obj.event).toBe('start');
-        expect(obj.timestamp).toBeTruthy();
-      }
 
       // Verify sidecar exists
       const sidecarPath = path.join(testDir, `${sid}.json`);
