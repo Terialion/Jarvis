@@ -136,3 +136,4 @@ workspace/
 bin/
 jsonschema/
 reference/
+node_modules/
