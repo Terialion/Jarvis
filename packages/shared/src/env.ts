@@ -2,7 +2,7 @@
 // Environment Detection
 // ============================================================================
 
-import { existsSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 
 /**
@@ -61,7 +61,6 @@ export function isContainer(): boolean {
 
   // Check cgroup for container runtime references
   try {
-    const { readFileSync } = require('node:fs');
     const cgroup = readFileSync('/proc/1/cgroup', 'utf-8');
     const cgroupLower = cgroup.toLowerCase();
     if (
