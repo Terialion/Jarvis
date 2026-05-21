@@ -306,7 +306,6 @@ describe('getDefaultShell', () => {
   });
 
   it('returns powershell.exe on Windows (default, without SHELL set)', () => {
-    const originalPlatform = process.platform;
     const originalShell = process.env.SHELL;
     delete process.env.SHELL;
 

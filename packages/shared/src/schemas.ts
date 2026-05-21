@@ -72,11 +72,6 @@ function sanitizeToolSchema(
  * Recursively sanitize a JSON Schema node in place.
  */
 function sanitizeSchemaNode(node: Record<string, unknown>): void {
-  // Fix bare string type → { type: "string" }
-  if (typeof node.type === 'string') {
-    sanitizeSchemaProperty(node, node.type);
-  }
-
   // Strip union-with-null types: ["string", "null"] → skip (remove type)
   if (Array.isArray(node.type)) {
     delete node.type;
@@ -85,6 +80,11 @@ function sanitizeSchemaNode(node: Record<string, unknown>): void {
   // Object type must have properties
   if (node.type === 'object' && node.properties === undefined) {
     node.properties = {};
+  }
+
+  // Array type must have items
+  if (node.type === 'array' && node.items === undefined) {
+    node.items = {};
   }
 
   // Clean required array — remove entries that don't match any property
@@ -141,20 +141,3 @@ function sanitizeSchemaNode(node: Record<string, unknown>): void {
   }
 }
 
-/**
- * Sanitize a single schema property based on its type.
- */
-function sanitizeSchemaProperty(
-  node: Record<string, unknown>,
-  _type: string,
-): void {
-  // Ensure object-typed nodes have a properties field
-  if (node.type === 'object' && node.properties === undefined) {
-    node.properties = {};
-  }
-
-  // Ensure array-typed nodes have an items field
-  if (node.type === 'array' && node.items === undefined) {
-    node.items = {};
-  }
-}
