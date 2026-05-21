@@ -3,7 +3,7 @@
 // ============================================================================
 
 import OpenAI from 'openai';
-import type { ModelResponse, ToolCall } from '@jarvis/shared';
+import type { ToolCall } from '@jarvis/shared';
 
 // ============================================================================
 // Configuration

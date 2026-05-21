@@ -2,9 +2,9 @@
 // AgentLoop — the core agent loop orchestrating LLM calls and tool dispatch
 // ============================================================================
 
-import type { ChatMessage, ToolCall, ToolResult } from '@jarvis/shared';
+import type { ChatMessage, ToolResult } from '@jarvis/shared';
 import type { ToolRegistry } from '@jarvis/tools';
-import { LLMProvider, type ModelConfig, type LLMMessage } from './model.js';
+import { LLMProvider, type ModelConfig } from './model.js';
 import { AgentEventBus } from './events.js';
 import { ContextBuilder, type ContextConfig } from './context.js';
 import { withRetry, type RetryConfig } from './retry.js';
@@ -84,7 +84,7 @@ export class AgentLoop {
     history: ChatMessage[] = [],
   ): Promise<TurnResult> {
     const turnId = `turn_${crypto.randomUUID()}`;
-    const allMessages: ChatMessage[] = [...history];
+    let allMessages: ChatMessage[] = [...history];
     const allToolResults: ToolResult[] = [];
 
     // Create the user message
@@ -105,10 +105,10 @@ export class AgentLoop {
       turnsUsed = turn + 1;
 
       // Build messages for LLM call
-      const llmMessages = this._buildLLMMessages(allMessages);
+      const llmMessages = this.contextBuilder.buildMessages(this.config.systemPrompt, allMessages);
 
       // Compaction check
-      const estimatedTokens = this._estimateTokens(allMessages);
+      const estimatedTokens = this.contextBuilder.estimateMessageTokens(allMessages);
       if (this.contextBuilder.shouldCompress(estimatedTokens)) {
         this.eventBus?.emit('context:compressing', {
           turnId,
@@ -117,7 +117,7 @@ export class AgentLoop {
         });
         // Note: full compaction via summarization would require an LLM call.
         // For now, we compact old tool results inline.
-        this._compactInPlace(allMessages);
+        allMessages = this.contextBuilder.compactToolResults(allMessages);
       }
 
       // Get tool definitions from registry
@@ -290,68 +290,5 @@ export class AgentLoop {
       stopReason,
       turnsUsed,
     };
-  }
-
-  // ========================================================================
-  // Build LLM-formatted messages from ChatMessage history
-  // ========================================================================
-
-  private _buildLLMMessages(messages: ChatMessage[]): LLMMessage[] {
-    const llmMessages: LLMMessage[] = [];
-
-    // Prepend system prompt
-    if (this.config.systemPrompt) {
-      llmMessages.push({
-        role: 'system',
-        content: this.config.systemPrompt,
-      });
-    }
-
-    for (const msg of messages) {
-      const llmMsg: LLMMessage = {
-        role: msg.role,
-        content: msg.content,
-        tool_call_id: msg.toolCallId,
-        name: msg.name,
-      };
-      llmMessages.push(llmMsg);
-    }
-
-    return llmMessages;
-  }
-
-  // ========================================================================
-  // Token estimation for compaction
-  // ========================================================================
-
-  private _estimateTokens(messages: ChatMessage[]): number {
-    let total = 0;
-    for (const msg of messages) {
-      total += this.contextBuilder.estimateTokens(msg.content);
-    }
-    return total;
-  }
-
-  // ========================================================================
-  // Compact tool results in place
-  // ========================================================================
-
-  private _compactInPlace(messages: ChatMessage[]): void {
-    const ctx = this.config.context;
-    const firstN = ctx.protectFirstN ?? 3;
-    const lastN = ctx.protectLastN ?? 6;
-
-    for (let i = firstN; i < messages.length - lastN; i++) {
-      const msg = messages[i];
-      if (msg.role === 'tool') {
-        const name = msg.name ?? 'unknown';
-        const contentLen = msg.content.length;
-        const preview = msg.content.slice(0, 200).replace(/\n/g, ' ');
-        const suffix = contentLen > 200 ? '...' : '';
-        // Mutate directly
-        (msg as { content: string }).content =
-          `[Tool result for ${name} (${contentLen} chars): ${preview}${suffix}]`;
-      }
-    }
   }
 }

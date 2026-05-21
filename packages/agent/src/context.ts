@@ -3,6 +3,7 @@
 // ============================================================================
 
 import type { ChatMessage } from '@jarvis/shared';
+import type { LLMMessage } from './model.js';
 
 // ============================================================================
 // Configuration
@@ -17,22 +18,6 @@ export interface ContextConfig {
   protectFirstN?: number;
   /** Number of messages from the end to protect (recent conversation) */
   protectLastN?: number;
-}
-
-// ============================================================================
-// Internal context types
-// ============================================================================
-
-interface ContextMessage {
-  role: string;
-  content: string;
-  tool_call_id?: string;
-  name?: string;
-  tool_calls?: Array<{
-    id: string;
-    type: 'function';
-    function: { name: string; arguments: string };
-  }>;
 }
 
 // ============================================================================
@@ -58,24 +43,20 @@ export class ContextBuilder {
   buildMessages(
     systemPrompt: string,
     history: ChatMessage[],
-    tools: Record<string, unknown>[],
-  ): ContextMessage[] {
-    const messages: ContextMessage[] = [];
+  ): LLMMessage[] {
+    const messages: LLMMessage[] = [];
 
-    // 1. System prompt
     if (systemPrompt) {
       messages.push({ role: 'system', content: systemPrompt });
     }
 
-    // 2. Convert history ChatMessages to LLM format
     for (const msg of history) {
-      const cm: ContextMessage = {
+      messages.push({
         role: msg.role,
         content: msg.content,
         tool_call_id: msg.toolCallId,
         name: msg.name,
-      };
-      messages.push(cm);
+      });
     }
 
     return messages;
