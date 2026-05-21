@@ -136,3 +136,7 @@ workspace/
 bin/
 jsonschema/
 reference/
+
+# Node.js / TypeScript
+node_modules/
+*.tsbuildinfo
