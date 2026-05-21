@@ -43,6 +43,5 @@ export const webFetchTool: ToolEntry = {
   schema: webFetchSchema,
   handler: webFetchHandler,
   requiresEnv: ['JARVIS_WEB_API_KEY'],
-  isAsync: true,
   emoji: '📄',
 };

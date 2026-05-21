@@ -84,12 +84,6 @@ function escapeRe(str: string): string {
   return str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
-// Only escape backslashes for Windows path separators in the bracket expression
-function escapeReAlt(str: string): string {
-  // We only need the path separator character escaped properly
-  return str === '\\' ? '\\\\' : str;
-}
-
 /**
  * Match a filename against a non-recursive glob segment.
  */
@@ -174,35 +168,27 @@ async function walkGlob(options: WalkOptions): Promise<string[]> {
 
 // ---- handler ----
 
-const globHandler: ToolHandler = (args, _context) => {
-  return new Promise<string>(async (done) => {
-    const pattern = String(args.pattern ?? '');
-    const rawPath: string = args.path ? String(args.path) : process.cwd();
-    const basePath = resolve(rawPath);
+const globHandler: ToolHandler = async (args, _context) => {
+  const pattern = String(args.pattern ?? '');
+  const rawPath: string = args.path ? String(args.path) : process.cwd();
+  const basePath = resolve(rawPath);
 
-    if (!pattern) {
-      done(JSON.stringify({ error: 'No pattern provided' }));
-      return;
+  if (!pattern) {
+    return JSON.stringify({ error: 'No pattern provided' });
+  }
+
+  try {
+    const segments = parseSegments(pattern);
+    if (segments.length === 0) {
+      return JSON.stringify({ matches: [] });
     }
 
-    try {
-      const segments = parseSegments(pattern);
-      if (segments.length === 0) {
-        done(JSON.stringify({ matches: [] }));
-        return;
-      }
-
-      const matches = await walkGlob({
-        cwd: basePath,
-        segments,
-      });
-
-      done(JSON.stringify({ matches }));
-    } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      done(JSON.stringify({ error: `Glob failed: ${message}` }));
-    }
-  });
+    const matches = await walkGlob({ cwd: basePath, segments });
+    return JSON.stringify({ matches });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    return JSON.stringify({ error: `Glob failed: ${message}` });
+  }
 };
 
 // ---- entry ----

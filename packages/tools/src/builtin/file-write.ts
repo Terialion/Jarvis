@@ -6,6 +6,7 @@ import { writeFile, mkdir } from 'node:fs/promises';
 import { dirname } from 'node:path';
 import { toOpenAITool } from '@jarvis/shared';
 import type { ToolEntry, ToolHandler } from '../registry.js';
+import { resolveSafePath } from './path-utils.js';
 
 // ---- schema ----
 
@@ -30,35 +31,29 @@ export const writeFileSchema = toOpenAITool({
 
 // ---- handler ----
 
-const writeFileHandler: ToolHandler = (args, _context) => {
-  return new Promise<string>(async (resolve) => {
-    const path = String(args.path ?? '');
-    const content = String(args.content ?? '');
+const writeFileHandler: ToolHandler = async (args, _context) => {
+  const filePath = String(args.path ?? '');
+  const content = String(args.content ?? '');
+  const root = typeof args._workspaceRoot === 'string' ? args._workspaceRoot : undefined;
 
-    if (!path) {
-      resolve(JSON.stringify({ error: 'No path provided' }));
-      return;
-    }
+  const resolved = resolveSafePath(filePath, root);
+  if (!resolved.ok) {
+    return JSON.stringify({ error: resolved.error });
+  }
 
-    try {
-      // Create parent directories recursively
-      const dir = dirname(path);
-      await mkdir(dir, { recursive: true });
+  try {
+    await mkdir(dirname(resolved.path), { recursive: true });
+    await writeFile(resolved.path, content, 'utf-8');
 
-      await writeFile(path, content, 'utf-8');
-
-      resolve(
-        JSON.stringify({
-          ok: true,
-          path,
-          bytesWritten: Buffer.byteLength(content, 'utf-8'),
-        }),
-      );
-    } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      resolve(JSON.stringify({ error: `Failed to write file: ${message}` }));
-    }
-  });
+    return JSON.stringify({
+      ok: true,
+      path: resolved.path,
+      bytesWritten: Buffer.byteLength(content, 'utf-8'),
+    });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    return JSON.stringify({ error: `Failed to write file: ${message}` });
+  }
 };
 
 // ---- entry ----

@@ -300,7 +300,7 @@ describe('web_fetch tool', () => {
     expect(parsed.error).toContain('JARVIS_WEB_API_KEY');
   });
 
-  it('is marked async', () => {
-    expect(webFetchTool.isAsync).toBe(true);
+  it('is not marked async (stub returns plain string)', () => {
+    expect(webFetchTool.isAsync).toBeUndefined();
   });
 });

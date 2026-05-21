@@ -89,109 +89,100 @@ async function walkFiles(
   }
 }
 
-const grepHandler: ToolHandler = (args, _context) => {
-  return new Promise<string>(async (done) => {
-    const pattern = String(args.pattern ?? '');
-    const rawPath: string = args.path ? String(args.path) : process.cwd();
-    const basePath = resolve(rawPath);
-    const globFilter = args.glob ? String(args.glob) : undefined;
-    const outputMode: GrepOutputMode = (args.output_mode as GrepOutputMode) ?? 'content';
-    const headLimit = Number(args.head_limit ?? 250);
-    const headOffset = Number(args.offset ?? 0);
+const grepHandler: ToolHandler = async (args, _context) => {
+  const pattern = String(args.pattern ?? '');
+  const rawPath: string = args.path ? String(args.path) : process.cwd();
+  const basePath = resolve(rawPath);
+  const globFilter = args.glob ? String(args.glob) : undefined;
+  const outputMode: GrepOutputMode = (args.output_mode as GrepOutputMode) ?? 'content';
+  const headLimit = Number(args.head_limit ?? 250);
+  const headOffset = Number(args.offset ?? 0);
 
-    if (!pattern) {
-      done(JSON.stringify({ error: 'No pattern provided' }));
-      return;
+  if (!pattern) {
+    return JSON.stringify({ error: 'No pattern provided' });
+  }
+
+  let regex: RegExp;
+  try {
+    regex = new RegExp(pattern, 'gm');
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    return JSON.stringify({ error: `Invalid regex: ${message}` });
+  }
+
+  // Determine files to search
+  let filesToSearch: string[] = [];
+
+  try {
+    const st = statSync(basePath);
+    if (st.isFile()) {
+      filesToSearch = [basePath];
+    } else if (st.isDirectory()) {
+      await walkFiles(basePath, globFilter, filesToSearch);
+    } else {
+      return JSON.stringify({ error: `Path does not exist: ${basePath}` });
     }
+  } catch {
+    return JSON.stringify({ error: `Cannot access path: ${basePath}` });
+  }
 
-    let regex: RegExp;
+  // Search files
+  const fileResults: Map<string, { lines: string[]; count: number }> = new Map();
+
+  for (const filePath of filesToSearch) {
     try {
-      regex = new RegExp(pattern, 'gm');
-    } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      done(JSON.stringify({ error: `Invalid regex: ${message}` }));
-      return;
-    }
+      const size = statSync(filePath).size;
+      if (size > MAX_FILE_SIZE) continue;
 
-    // Determine files to search
-    let filesToSearch: string[] = [];
+      const content = await readFile(filePath, 'utf-8');
+      const lines = content.split('\n');
+      const matches: string[] = [];
+      let matchCount = 0;
 
-    try {
-      const st = statSync(basePath);
-      if (st.isFile()) {
-        filesToSearch = [basePath];
-      } else if (st.isDirectory()) {
-        await walkFiles(basePath, globFilter, filesToSearch);
-      } else {
-        done(JSON.stringify({ error: `Path does not exist: ${basePath}` }));
-        return;
+      regex.lastIndex = 0;
+      let match: RegExpExecArray | null;
+      while ((match = regex.exec(content)) !== null) {
+        matchCount++;
+        const lineNum = content.slice(0, match.index).split('\n').length;
+        const line = lines[lineNum - 1] ?? '';
+        const relPath = relative(basePath, filePath).replace(/\\/g, '/');
+        matches.push(`${relPath}:${lineNum}:${line}`);
+      }
+
+      if (matchCount > 0) {
+        fileResults.set(filePath, { lines: matches, count: matchCount });
       }
     } catch {
-      done(JSON.stringify({ error: `Cannot access path: ${basePath}` }));
-      return;
+      // Skip unreadable files
     }
+  }
 
-    // Search files
-    const fileResults: Map<string, { lines: string[]; count: number }> = new Map();
-
-    for (const filePath of filesToSearch) {
-      try {
-        const size = statSync(filePath).size;
-        if (size > MAX_FILE_SIZE) continue;
-
-        const content = await readFile(filePath, 'utf-8');
-        const lines = content.split('\n');
-        const matches: string[] = [];
-        let matchCount = 0;
-
-        regex.lastIndex = 0;
-        let match: RegExpExecArray | null;
-        while ((match = regex.exec(content)) !== null) {
-          matchCount++;
-          const lineNum = content.slice(0, match.index).split('\n').length;
-          const line = lines[lineNum - 1] ?? '';
-          const relPath = relative(basePath, filePath).replace(/\\/g, '/');
-          matches.push(`${relPath}:${lineNum}:${line}`);
-        }
-
-        if (matchCount > 0) {
-          fileResults.set(filePath, { lines: matches, count: matchCount });
-        }
-      } catch {
-        // Skip unreadable files
-      }
+  // Format output
+  switch (outputMode) {
+    case 'files_with_matches': {
+      const fileList = Array.from(fileResults.keys())
+        .map((f) => relative(basePath, f).replace(/\\/g, '/'))
+        .slice(headOffset, headOffset + headLimit);
+      return JSON.stringify({ files: fileList });
     }
-
-    // Format output
-    switch (outputMode) {
-      case 'files_with_matches': {
-        const fileList = Array.from(fileResults.keys())
-          .map((f) => relative(basePath, f).replace(/\\/g, '/'))
-          .slice(headOffset, headOffset + headLimit);
-        done(JSON.stringify({ files: fileList }));
-        break;
-      }
-      case 'count': {
-        const entries = Array.from(fileResults.entries()).map(([f, r]) => ({
-          file: relative(basePath, f).replace(/\\/g, '/'),
-          count: r.count,
-        }));
-        const sliced = entries.slice(headOffset, headOffset + (headLimit || 250));
-        done(JSON.stringify({ counts: sliced }));
-        break;
-      }
-      case 'content':
-      default: {
-        let allLines: string[] = [];
-        for (const [, result] of fileResults) {
-          allLines = allLines.concat(result.lines);
-        }
-        const sliced = allLines.slice(headOffset, headOffset + (headLimit || 250));
-        done(JSON.stringify({ matches: sliced }));
-        break;
-      }
+    case 'count': {
+      const entries = Array.from(fileResults.entries()).map(([f, r]) => ({
+        file: relative(basePath, f).replace(/\\/g, '/'),
+        count: r.count,
+      }));
+      const sliced = entries.slice(headOffset, headOffset + (headLimit || 250));
+      return JSON.stringify({ counts: sliced });
     }
-  });
+    case 'content':
+    default: {
+      let allLines: string[] = [];
+      for (const [, result] of fileResults) {
+        allLines = allLines.concat(result.lines);
+      }
+      const sliced = allLines.slice(headOffset, headOffset + (headLimit || 250));
+      return JSON.stringify({ matches: sliced });
+    }
+  }
 };
 
 // ---- entry ----

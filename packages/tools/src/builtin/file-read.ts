@@ -3,9 +3,10 @@
 // ============================================================================
 
 import { readFile } from 'node:fs/promises';
-import { existsSync } from 'node:fs';
+import { statSync } from 'node:fs';
 import { toOpenAITool } from '@jarvis/shared';
 import type { ToolEntry, ToolHandler } from '../registry.js';
+import { resolveSafePath, MAX_READ_SIZE } from './path-utils.js';
 
 // ---- schema ----
 
@@ -36,60 +37,62 @@ export const readFileSchema = toOpenAITool({
 
 // ---- handler ----
 
-const readFileHandler: ToolHandler = (args, _context) => {
-  return new Promise<string>(async (resolve) => {
-    const path = String(args.path ?? '');
-    const offset = Math.max(1, Number(args.offset ?? 1));
-    const limit = Math.max(1, Number(args.limit ?? 500));
+const readFileHandler: ToolHandler = async (args, _context) => {
+  const filePath = String(args.path ?? '');
+  const offset = Math.max(1, Number(args.offset ?? 1));
+  const limit = Math.max(1, Number(args.limit ?? 500));
+  const root = typeof args._workspaceRoot === 'string' ? args._workspaceRoot : undefined;
 
-    if (!path) {
-      resolve(JSON.stringify({ error: 'No path provided' }));
-      return;
-    }
+  const resolved = resolveSafePath(filePath, root);
+  if (!resolved.ok) {
+    return JSON.stringify({ error: resolved.error });
+  }
 
+  try {
+    // Size check before reading (matching grep.ts pattern)
+    let stat;
     try {
-      if (!existsSync(path)) {
-        resolve(JSON.stringify({ error: `File not found: ${path}` }));
-        return;
-      }
-
-      const content = await readFile(path, 'utf-8');
-      const lines = content.split('\n');
-
-      const startIdx = offset - 1;
-      if (startIdx >= lines.length) {
-        resolve(
-          JSON.stringify({
-            content: '',
-            totalLines: lines.length,
-            message: `Offset ${offset} exceeds file length (${lines.length} lines)`,
-          }),
-        );
-        return;
-      }
-
-      const sliced = lines.slice(startIdx, startIdx + limit);
-
-      // cat -n format: right-aligned 6-digit line numbers
-      const numbered = sliced
-        .map((line, i) => {
-          const lineNum = String(startIdx + i + 1).padStart(6, ' ');
-          return `${lineNum}\t${line}`;
-        })
-        .join('\n');
-
-      resolve(
-        JSON.stringify({
-          content: numbered,
-          totalLines: lines.length,
-          linesRead: sliced.length,
-        }),
-      );
-    } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      resolve(JSON.stringify({ error: `Failed to read file: ${message}` }));
+      stat = statSync(resolved.path);
+    } catch {
+      return JSON.stringify({ error: `File not found: ${filePath}` });
     }
-  });
+    if (stat.size > MAX_READ_SIZE) {
+      return JSON.stringify({
+        error: `File too large (${(stat.size / 1024 / 1024).toFixed(1)} MB). Max: ${MAX_READ_SIZE / 1024 / 1024} MB`,
+      });
+    }
+
+    const content = await readFile(resolved.path, 'utf-8');
+    const lines = content.split('\n');
+
+    const startIdx = offset - 1;
+    if (startIdx >= lines.length) {
+      return JSON.stringify({
+        content: '',
+        totalLines: lines.length,
+        message: `Offset ${offset} exceeds file length (${lines.length} lines)`,
+      });
+    }
+
+    const sliced = lines.slice(startIdx, startIdx + limit);
+
+    // cat -n format: right-aligned 6-digit line numbers
+    const numbered = sliced
+      .map((line, i) => {
+        const lineNum = String(startIdx + i + 1).padStart(6, ' ');
+        return `${lineNum}\t${line}`;
+      })
+      .join('\n');
+
+    return JSON.stringify({
+      content: numbered,
+      totalLines: lines.length,
+      linesRead: sliced.length,
+    });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    return JSON.stringify({ error: `Failed to read file: ${message}` });
+  }
 };
 
 // ---- entry ----
