@@ -95,6 +95,29 @@ function resolveHome(filePath: string): string {
   return filePath;
 }
 
+class Mutex {
+  private _locked = false;
+  private _queue: Array<() => void> = [];
+
+  async acquire(): Promise<void> {
+    if (!this._locked) {
+      this._locked = true;
+      return;
+    }
+    return new Promise<void>((resolve) => {
+      this._queue.push(resolve);
+    });
+  }
+
+  release(): void {
+    if (this._queue.length > 0) {
+      this._queue.shift()!();
+    } else {
+      this._locked = false;
+    }
+  }
+}
+
 // ============================================================================
 // MarkdownMemoryStore
 // ============================================================================
@@ -102,6 +125,7 @@ function resolveHome(filePath: string): string {
 export class MarkdownMemoryStore {
   private readonly baseDir: string;
   readonly indexPath: string;
+  private readonly _writeLock = new Mutex();
 
   constructor(baseDir: string = '~/.jarvis/memory') {
     this.baseDir = resolveHome(baseDir);
@@ -152,38 +176,48 @@ export class MarkdownMemoryStore {
 
   /** Write a memory entry to a .md file and update MEMORY.md index. */
   async write(entry: MemoryEntry): Promise<string> {
-    const safeName = this.sanitizeName(entry.name);
-    const fileName = `${safeName}.md`;
-    const filePath = path.join(this.baseDir, fileName);
+    await this._writeLock.acquire();
+    try {
+      const safeName = this.sanitizeName(entry.name);
+      const fileName = `${safeName}.md`;
+      const filePath = path.join(this.baseDir, fileName);
 
-    const meta: Record<string, string> = {
-      name: entry.name,
-      description: entry.description,
-      type: entry.memoryType,
-    };
+      const meta: Record<string, string> = {
+        name: entry.name,
+        description: entry.description,
+        type: entry.memoryType,
+      };
 
-    // Write the entry file
-    await fs.mkdir(this.baseDir, { recursive: true });
-    await fs.writeFile(filePath, formatFrontmatter(meta, entry.content), 'utf-8');
+      await fs.mkdir(this.baseDir, { recursive: true });
+      await fs.writeFile(
+        filePath,
+        formatFrontmatter(meta, entry.content),
+        'utf-8',
+      );
 
-    // Update the index
-    await this._updateIndex(entry, fileName);
-
-    return filePath;
+      await this._updateIndex(entry, fileName);
+      return filePath;
+    } finally {
+      this._writeLock.release();
+    }
   }
 
   /** Delete a memory entry file and remove from MEMORY.md index. */
   async delete(name: string): Promise<void> {
-    const safeName = this.sanitizeName(name);
-    const fileName = `${safeName}.md`;
-    const filePath = path.join(this.baseDir, fileName);
+    await this._writeLock.acquire();
+    try {
+      const safeName = this.sanitizeName(name);
+      const fileName = `${safeName}.md`;
+      const filePath = path.join(this.baseDir, fileName);
 
-    await fs.unlink(filePath).catch(() => {
-      /* ok if doesn't exist */
-    });
+      await fs.unlink(filePath).catch(() => {
+        /* ok if doesn't exist */
+      });
 
-    // Remove from index
-    await this._removeFromIndex(fileName);
+      await this._removeFromIndex(fileName);
+    } finally {
+      this._writeLock.release();
+    }
   }
 
   /** Search across name, description, and content (substring match). */

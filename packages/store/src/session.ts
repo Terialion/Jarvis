@@ -214,7 +214,7 @@ export class SessionStore {
 
   // ── Session lifecycle ───────────────────────────────────────────────
 
-  /** Create a new session: JSONL file + sidecar JSON. */
+  /** Create a new session: initializes the sidecar JSON metadata file. */
   async createSession(
     sessionId: string,
     meta?: Partial<SessionSidecar>,

@@ -79,7 +79,6 @@ describe('SessionStore', () => {
       } as SessionRecord);
 
       const records = await store.getRecords(sid);
-      // Should have: turn:start (from createSession) + the message
       const messages = records.filter((r) => r.type === 'message');
       expect(messages).toHaveLength(1);
       expect(messages[0].role).toBe('user');
@@ -158,8 +157,7 @@ describe('SessionStore', () => {
       await store.appendRecord(sid, { type: 'tool_call', tool_name: 'read', call_id: 'c1' } as SessionRecord);
 
       const records = await store.getRecords(sid);
-      // turn:start + 3 records = 4
-      expect(records.length).toBeGreaterThanOrEqual(3);
+      expect(records).toHaveLength(3);
     });
 
     it('filters by type', async () => {
