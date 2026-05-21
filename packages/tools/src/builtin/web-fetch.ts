@@ -42,7 +42,6 @@ export const webFetchTool: ToolEntry = {
   toolset: 'web',
   schema: webFetchSchema,
   handler: webFetchHandler,
-  checkFn: () => Boolean(process.env.JARVIS_WEB_API_KEY),
   requiresEnv: ['JARVIS_WEB_API_KEY'],
   isAsync: true,
   emoji: '📄',

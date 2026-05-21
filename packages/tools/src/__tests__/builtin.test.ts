@@ -283,9 +283,8 @@ describe('web_search tool', () => {
     expect(parsed.error).toContain('SEARCH_API_KEY');
   });
 
-  it('has correct checkFn and requiresEnv', () => {
+  it('has correct requiresEnv for availability check', () => {
     expect(webSearchTool.requiresEnv).toContain('SEARCH_API_KEY');
-    expect(webSearchTool.checkFn).toBeDefined();
   });
 });
 

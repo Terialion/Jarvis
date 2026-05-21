@@ -48,7 +48,6 @@ export const webSearchTool: ToolEntry = {
   toolset: 'web',
   schema: webSearchSchema,
   handler: webSearchHandler,
-  checkFn: () => Boolean(process.env.SEARCH_API_KEY),
   requiresEnv: ['SEARCH_API_KEY'],
   emoji: '🌐',
 };
