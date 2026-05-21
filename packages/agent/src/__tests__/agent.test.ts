@@ -307,7 +307,6 @@ describe('ContextBuilder', () => {
     const messages = builder.buildMessages(
       'You are helpful',
       [],
-      [],
     );
     expect(messages).toHaveLength(1);
     expect(messages[0]).toEqual({ role: 'system', content: 'You are helpful' });
@@ -327,7 +326,7 @@ describe('ContextBuilder', () => {
       },
     ];
 
-    const messages = builder.buildMessages('system', history, []);
+    const messages = builder.buildMessages('system', history);
     expect(messages).toHaveLength(3);
     expect(messages[0].role).toBe('system');
     expect(messages[1].role).toBe('user');
@@ -347,13 +346,13 @@ describe('ContextBuilder', () => {
       },
     ];
 
-    const messages = builder.buildMessages('system', history, []);
+    const messages = builder.buildMessages('system', history);
     expect(messages[1].tool_call_id).toBe('call_1');
     expect(messages[1].name).toBe('bash');
   });
 
   it('buildMessages returns empty system if no system prompt', () => {
-    const messages = builder.buildMessages('', [], []);
+    const messages = builder.buildMessages('', []);
     expect(messages).toHaveLength(0);
   });
 
@@ -910,7 +909,10 @@ describe('AgentLoop', () => {
 
 describe('LLMProvider', () => {
   it('constructs with minimal config', () => {
-    const provider = new LLMProvider({ model: 'test-model' });
+    const provider = new LLMProvider({
+      model: 'test-model',
+      apiKey: 'sk-test',
+    });
     expect(provider).toBeDefined();
   });
 

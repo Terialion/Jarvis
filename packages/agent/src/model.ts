@@ -88,12 +88,16 @@ export class LLMProvider {
       ...config,
     };
 
-    // Use a placeholder key when none is provided (for testing / lazy config)
     const apiKey =
       this.config.apiKey ??
       process.env['JARVIS_LLM_API_KEY'] ??
-      process.env['OPENAI_API_KEY'] ??
-      'sk-placeholder';
+      process.env['OPENAI_API_KEY'];
+
+    if (!apiKey) {
+      throw new Error(
+        'No API key configured. Set JARVIS_LLM_API_KEY or OPENAI_API_KEY, or pass apiKey in ModelConfig.',
+      );
+    }
 
     this.client = new OpenAI({
       baseURL: this.config.baseURL,

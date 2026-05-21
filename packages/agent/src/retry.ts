@@ -111,18 +111,24 @@ function _sleep(ms: number): Promise<void> {
  * Determine if an error is retryable based on common error shapes.
  */
 function _isRetryableError(error: unknown, retryOn: number[]): boolean | null {
-  // Check for HTTP status code on error object (OpenAI SDK pattern)
   if (error && typeof error === 'object') {
     const err = error as Record<string, unknown>;
-    if (typeof err['status'] === 'number' && retryOn.includes(err['status'] as number)) {
-      return true;
+
+    // Check HTTP status code on error object (OpenAI SDK pattern)
+    if (typeof err['status'] === 'number') {
+      if (retryOn.includes(err['status'] as number)) return true;
+      // Explicit non-retryable status codes (400, 401, 403, etc.)
+      return false;
     }
+
     if (err['error'] && typeof err['error'] === 'object') {
       const inner = err['error'] as Record<string, unknown>;
-      if (typeof inner['status'] === 'number' && retryOn.includes(inner['status'] as number)) {
-        return true;
+      if (typeof inner['status'] === 'number') {
+        if (retryOn.includes(inner['status'] as number)) return true;
+        return false;
       }
     }
+
     if (typeof err['code'] === 'string') {
       const code = err['code'] as string;
       if (['ECONNRESET', 'ETIMEDOUT', 'ECONNREFUSED', 'ENOTFOUND'].includes(code)) {
@@ -130,9 +136,11 @@ function _isRetryableError(error: unknown, retryOn: number[]): boolean | null {
       }
     }
   }
-  if (error instanceof TypeError && error.message.includes('fetch')) {
+
+  if (error instanceof TypeError && error.message.includes('fetch failed')) {
     return true;
   }
+
   // Return null to defer to the default (retry unknown errors)
   return null;
 }
