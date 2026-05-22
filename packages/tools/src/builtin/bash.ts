@@ -2,6 +2,7 @@
 // Bash tool — execute shell commands via child_process
 // ============================================================================
 
+import * as fs from 'node:fs';
 import { exec, type ExecOptions } from 'node:child_process';
 import { toOpenAITool } from '@jarvis/shared';
 import type { ToolEntry, ToolHandler, ToolContext } from '../registry.js';
@@ -32,6 +33,24 @@ export const bashSchema = toOpenAITool({
   },
 });
 
+// ---- shell detection ----
+
+function detectShell(): string {
+  if (process.platform !== 'win32') return '/bin/sh';
+
+  // Prefer Git Bash when available — LLMs generate bash syntax
+  const gitBashPaths = [
+    'C:\\Program Files\\Git\\bin\\bash.exe',
+    'C:\\Program Files (x86)\\Git\\bin\\bash.exe',
+  ];
+  for (const bashPath of gitBashPaths) {
+    if (fs.existsSync(bashPath)) return bashPath;
+  }
+
+  // cmd.exe supports && chaining and some POSIX-like patterns
+  return 'cmd.exe';
+}
+
 // ---- handler ----
 
 const bashHandler: ToolHandler = (args, _context) => {
@@ -49,7 +68,7 @@ const bashHandler: ToolHandler = (args, _context) => {
       timeout,
       maxBuffer: 10 * 1024 * 1024, // 10 MB
       cwd: workdir,
-      shell: process.platform === 'win32' ? 'powershell.exe' : '/bin/sh',
+      shell: detectShell(),
     };
 
     const child = exec(command, options, (error, stdout, stderr) => {
