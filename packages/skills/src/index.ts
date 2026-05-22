@@ -6,6 +6,7 @@ export { SkillLoader, normalizeAllowedTools, inferRiskLevel, inferSourceType } f
 export { SkillRegistry } from './registry.js';
 export type { RegistryOptions } from './registry.js';
 export { SkillMatcher } from './matcher.js';
+export type { SkillMatchResult } from './matcher.js';
 export { SkillExecutor } from './executor.js';
 export type {
   SkillSpec,

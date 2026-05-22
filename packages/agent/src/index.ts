@@ -2,26 +2,89 @@
 // @jarvis/agent — Core agent loop, LLM provider, and context management
 // ============================================================================
 
-export { LLMProvider } from './model.js';
+// model
+export { FakeModelClient, LLMProvider } from './model.js';
 export type {
   ModelConfig,
   TokenUsage,
   LLMResponse,
   LLMMessage,
   StreamCallbacks,
+  ModelResponse,
+  ModelChunk,
 } from './model.js';
 
-export { jitteredBackoff, withRetry } from './retry.js';
-export type { RetryConfig } from './retry.js';
+// retry
+export {
+  ErrorClassifier,
+  FailureTracker,
+  ReplanPolicy,
+  RetryPolicy,
+  jitteredBackoff,
+  withRetry,
+} from './retry.js';
+export type { ErrorClassification, FailureRecord, RetryConfig } from './retry.js';
 
+// events
 export { AgentEventBus } from './events.js';
 export type { EventHandler } from './events.js';
 
-export { ContextBuilder } from './context.js';
-export type { ContextConfig } from './context.js';
+// context
+export { ContextBuilder, ContextUpdater } from './context.js';
+export type {
+  ContextConfig,
+  ContextPack,
+  ContextStoreLike,
+  ConversationContext,
+  MemoryContext,
+  MemoryStoreLike,
+  ProjectContext,
+  RuntimeState,
+  SessionStoreLike,
+  SkillContext,
+  SkillRegistryLike,
+  TurnContext,
+} from './context.js';
 
-export { ConversationSummarizer } from './summary.js';
-export type { ConversationSummary, SummaryConfig } from './summary.js';
+// context-store
+export { ContextStore } from './context-store.js';
+export type {
+  SessionContextState,
+  SkillObservation,
+  ActiveTaskState,
+  HandoffSummary,
+  ResearchObservation,
+} from './context-store.js';
 
+// compactor
+export {
+  compact,
+  shouldAutoCompact,
+  microCompact,
+  buildCompactionSummaryPrefix,
+  buildSkillStateCompactionSummary,
+} from './compactor.js';
+export type {
+  CompactionMessage,
+  CompactionReport,
+  CompactionModelClient,
+} from './compactor.js';
+
+// normalizer
+export { normalizeMessages } from './normalizer.js';
+export type { MessageRecord } from './normalizer.js';
+
+// prompt-builder
+export { AGENT_SYSTEM_PROMPT, PromptBuilder } from './prompt-builder.js';
+
+// summary
+export { ConversationSummarizer, ResponseComposer } from './summary.js';
+export type {
+  ComposeOptions,
+  ConversationSummary,
+  SummaryConfig,
+} from './summary.js';
+
+// loop
 export { AgentLoop } from './loop.js';
-export type { AgentLoopConfig, TurnResult } from './loop.js';
+export type { AgentLoopConfig, AgentRunResult, TurnResult } from './loop.js';

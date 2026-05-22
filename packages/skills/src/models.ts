@@ -23,6 +23,14 @@ export interface SkillSpec {
   trustLevel: number;
   /** Tags for matching */
   tags?: string[];
+  /** Capability keywords for matching */
+  capabilities?: string[];
+  /** Example usage patterns for matching */
+  examples?: string[];
+  /** When-to-use guidance for matching */
+  when_to_use?: string;
+  /** Skill type: unknown, executable, hybrid, or reference */
+  skill_type?: string;
   /** Raw file modification time (for cache invalidation) */
   mtimeMs?: number;
 }

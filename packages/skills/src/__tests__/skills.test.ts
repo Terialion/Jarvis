@@ -315,7 +315,7 @@ describe('SkillMatcher', () => {
 
     const matches = matcher.match('Help me with git branching', skills);
     expect(matches).toHaveLength(1);
-    expect(matches[0].reason).toContain('tag:git');
+    expect(matches[0].reason).toContain('tag matched');
     expect(matches[0].score).toBeGreaterThanOrEqual(40);
   });
 
