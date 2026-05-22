@@ -273,7 +273,6 @@ class ModelChunk:
     finish_reason: str = ""
     reasoning_delta: str = ""
     usage: dict | None = None  # Provider token usage info when available
-    file_change: dict | None = None  # {path, diff_text, added, removed, status}
 
     def to_dict(self) -> dict[str, Any]:
         return _redact_value(asdict(self))

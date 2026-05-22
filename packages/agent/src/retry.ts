@@ -1,6 +1,8 @@
 // ============================================================================
-// Retry utilities — jittered exponential backoff + withRetry wrapper
+// Retry utilities — jittered backoff, error classification, failure tracking
 // ============================================================================
+
+import type { ToolCall, ToolResult } from '@jarvis/shared';
 
 // ============================================================================
 // Jittered Backoff
@@ -117,7 +119,6 @@ function _isRetryableError(error: unknown, retryOn: number[]): boolean | null {
     // Check HTTP status code on error object (OpenAI SDK pattern)
     if (typeof err['status'] === 'number') {
       if (retryOn.includes(err['status'] as number)) return true;
-      // Explicit non-retryable status codes (400, 401, 403, etc.)
       return false;
     }
 
@@ -143,4 +144,179 @@ function _isRetryableError(error: unknown, retryOn: number[]): boolean | null {
 
   // Return null to defer to the default (retry unknown errors)
   return null;
+}
+
+// ============================================================================
+// Error Classification
+// ============================================================================
+
+export interface ErrorClassification {
+  category: string;
+  retryable: boolean;
+  replan: boolean;
+  reason: string;
+}
+
+export class ErrorClassifier {
+  classify(toolResult: ToolResult): ErrorClassification {
+    const err = (toolResult.error ?? '').toLowerCase();
+    if (!err) {
+      return { category: 'none', retryable: false, replan: false, reason: 'no_error' };
+    }
+    if (err.includes('timeout')) {
+      return { category: 'timeout', retryable: true, replan: false, reason: 'command_timeout' };
+    }
+    if (err.includes('approval_required') || err.includes('denied') || err.includes('permission')) {
+      return { category: 'permission', retryable: false, replan: true, reason: 'permission_denied' };
+    }
+    if (err.includes('unknown tool') || err.includes('unknown_tool')) {
+      return { category: 'tool_schema', retryable: true, replan: true, reason: 'unknown_tool' };
+    }
+    if (err.includes('not found') || err.includes('does_not_exist') || err.includes('no such file')) {
+      return { category: 'not_found', retryable: false, replan: true, reason: 'missing_target' };
+    }
+    if (err.includes('invalid') || err.includes('malformed') || err.includes('parameter')) {
+      return { category: 'bad_params', retryable: true, replan: true, reason: 'invalid_parameters' };
+    }
+    if (err.includes('assertion') || err.includes('test')) {
+      return { category: 'test_failed', retryable: false, replan: true, reason: 'tests_failed' };
+    }
+    return { category: 'other', retryable: false, replan: true, reason: 'tool_failed' };
+  }
+}
+
+// ============================================================================
+// RetryPolicy
+// ============================================================================
+
+export class RetryPolicy {
+  private maxRetries: number;
+  private retryCounts = new Map<string, number>();
+
+  constructor(maxRetries = 2) {
+    this.maxRetries = maxRetries;
+  }
+
+  shouldRetry(call: ToolCall, classification: ErrorClassification): boolean {
+    if (!classification.retryable) return false;
+    const key = `${call.name}:${classification.category}`;
+    const used = this.retryCounts.get(key) ?? 0;
+    if (used >= this.maxRetries) return false;
+    this.retryCounts.set(key, used + 1);
+    return true;
+  }
+}
+
+// ============================================================================
+// FailureTracker
+// ============================================================================
+
+export interface FailureRecord {
+  toolName: string;
+  errorCategory: string;
+  errorMessage: string;
+  step: number;
+}
+
+export class FailureTracker {
+  private maxConsecutive: number;
+  private maxSameTool: number;
+  private maxRepeat: number;
+  consecutiveFailures: FailureRecord[] = [];
+  toolFailureCounts = new Map<string, number>();
+  toolTotalCalls = new Map<string, number>();
+  private _synthesisNudged = new Set<string>();
+
+  constructor(maxConsecutive = 5, maxSameTool = 4, maxRepeat = 3) {
+    this.maxConsecutive = maxConsecutive;
+    this.maxSameTool = maxSameTool;
+    this.maxRepeat = maxRepeat;
+  }
+
+  recordFailure(
+    toolName: string,
+    errorCategory: string,
+    errorMessage: string,
+    step: number,
+  ): void {
+    this.consecutiveFailures.push({ toolName, errorCategory, errorMessage, step });
+    this.toolFailureCounts.set(toolName, (this.toolFailureCounts.get(toolName) ?? 0) + 1);
+    this.toolTotalCalls.set(toolName, (this.toolTotalCalls.get(toolName) ?? 0) + 1);
+  }
+
+  recordSuccess(toolName: string): void {
+    this.consecutiveFailures = [];
+    this.toolFailureCounts.delete(toolName);
+    this.toolTotalCalls.set(toolName, (this.toolTotalCalls.get(toolName) ?? 0) + 1);
+  }
+
+  shouldStop(): { stop: boolean; reason: string } {
+    if (this.consecutiveFailures.length >= this.maxConsecutive) {
+      const last = this.consecutiveFailures[this.consecutiveFailures.length - 1];
+      return {
+        stop: true,
+        reason: `${this.maxConsecutive} consecutive tool failures. Last error (${last.toolName}): ${last.errorMessage.slice(0, 200)}`,
+      };
+    }
+    return { stop: false, reason: '' };
+  }
+
+  shouldRejectTool(toolName: string): { reject: boolean; reason: string; kind: string } {
+    const failCount = this.toolFailureCounts.get(toolName) ?? 0;
+    if (failCount >= this.maxSameTool) {
+      return {
+        reject: true,
+        reason: `Tool \`${toolName}\` has failed ${failCount} times; try a different approach or stop.`,
+        kind: 'failure',
+      };
+    }
+    const total = this.toolTotalCalls.get(toolName) ?? 0;
+    if (total >= this.maxRepeat) {
+      return {
+        reject: true,
+        reason: `Tool \`${toolName}\` has been called ${total} times this turn. Stop calling it and synthesize a final answer from the results you already have.`,
+        kind: 'repeat',
+      };
+    }
+    return { reject: false, reason: '', kind: '' };
+  }
+
+  isRepeatHardStop(toolName: string): boolean {
+    if (this._synthesisNudged.has(toolName)) return true;
+    this._synthesisNudged.add(toolName);
+    return false;
+  }
+}
+
+// ============================================================================
+// ReplanPolicy
+// ============================================================================
+
+export class ReplanPolicy {
+  private maxReplans: number;
+  replanCount = 0;
+
+  constructor(maxReplans = 2) {
+    this.maxReplans = maxReplans;
+  }
+
+  shouldReplan(classification: ErrorClassification): boolean {
+    if (!classification.replan) return false;
+    if (this.replanCount >= this.maxReplans) return false;
+    this.replanCount++;
+    return true;
+  }
+
+  buildReplanObservation(
+    toolResult: ToolResult,
+    classification: ErrorClassification,
+  ): Record<string, unknown> {
+    return {
+      event: 'replan_hint',
+      tool_name: toolResult.name,
+      category: classification.category,
+      reason: classification.reason,
+      error: toolResult.error,
+    };
+  }
 }

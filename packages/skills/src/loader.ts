@@ -92,7 +92,8 @@ export class SkillLoader {
   private _parseFrontmatter(
     raw: string,
   ): Record<string, string> {
-    const lines = raw.split('\n');
+    // Strip \r to handle CRLF line endings before splitting
+    const lines = raw.replace(/\r/g, '').split('\n');
     if (lines[0]?.trim() !== '---') return {};
 
     const endIdx = lines.findIndex((l, i) => i > 0 && l.trim() === '---');

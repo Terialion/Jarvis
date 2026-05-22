@@ -1,0 +1,14 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "jsx": "react-jsx",
+    "lib": ["ES2022", "DOM"],
+    "paths": {
+      "@claude-code-kit/shared": ["./src/vendor/shared/index.ts"],
+      "@claude-code-kit/shared/yoga-layout": ["./src/vendor/shared/yoga-layout/index.ts"],
+      "@claude-code-kit/ink-renderer": ["./src/vendor/ink-renderer/index.ts"],
+      "@claude-code-kit/ui": ["./src/vendor/ui/index.ts"]
+    }
+  },
+  "include": ["src/**/*.ts", "src/**/*.tsx"]
+}

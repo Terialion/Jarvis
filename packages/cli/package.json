@@ -1,0 +1,34 @@
+{
+  "name": "@jarvis/cli",
+  "version": "0.1.0",
+  "type": "module",
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "bin": {
+    "jarvis": "./dist/main.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsx --tsconfig ../tui/tsconfig.json src/main.ts",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@jarvis/shared": "workspace:*",
+    "@jarvis/agent": "workspace:*",
+    "@jarvis/tools": "workspace:*",
+    "@jarvis/store": "workspace:*",
+    "@jarvis/hooks": "workspace:*",
+    "@jarvis/skills": "workspace:*",
+    "@jarvis/plugins": "workspace:*",
+    "@jarvis/tui": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "typescript": "^5.8.0",
+    "vitest": "^3.0.0"
+  }
+}

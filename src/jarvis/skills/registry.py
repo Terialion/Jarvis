@@ -29,13 +29,11 @@ class SkillRegistry:
         project_root: str | Path | None = None,
         loader: SkillLoader | None = None,
         lifecycle: SkillLifecycleManager | None = None,
-        plugin_skill_dirs: list[str | Path] | None = None,
     ) -> None:
         self.loader = loader or SkillLoader()
         self.project_root = Path(project_root or Path.cwd()).resolve()
         self.builtin_root = Path(builtin_root or Path(__file__).resolve().parent / "builtin").resolve()
         self.extra_dirs = [Path(p).resolve() for p in list(extra_dirs or [])]
-        self.plugin_skill_dirs = [Path(p).resolve() for p in list(plugin_skill_dirs or [])]
         self.lifecycle = lifecycle or SkillLifecycleManager(project_root=self.project_root, loader=self.loader)
         self._cache: dict[str, SkillSpec] | None = None
         self._discovery_roots: list[dict[str, str]] = []
@@ -239,8 +237,7 @@ class SkillRegistry:
         roots.extend(("env", path) for path in env_dirs)
         roots.append(("project", (self.project_root / "skills").resolve()))
         roots.extend(("extra", path) for path in self.extra_dirs)
-        roots.extend(("plugin", path) for path in self.plugin_skill_dirs)
-        roots.append(("home", (self.project_root / ".jarvis" / "skills").resolve()))
+        roots.append(("home", Path.home().joinpath(".jarvis", "skills").resolve()))
         roots.append(("builtin", self.builtin_root))
         for sub_root in self._discover_skill_roots():
             roots.append(sub_root)

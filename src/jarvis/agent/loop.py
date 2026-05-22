@@ -1097,14 +1097,11 @@ class AgentLoop:
             stream_retry_with_length_count = 0
             stream_retry_tool_intent_count = 0
             stream_retry_reasoning_only_count = 0
-            stream_retry_empty_response_count = 0
             stream_any_tool_called = False
             stream_seen_calls: dict[str, list[tuple[frozenset[tuple[str, Any]], dict[str, Any]]]] = {}
             stream_loaded_skills: list[str] = []
             stream_tool_call_counts_total: dict[str, int] = {}
             stream_last_good_content: str = ""
-            stream_synthesis_steps = 0  # successful tool-calling steps since last nudge
-            stream_total_tool_calls = 0  # total successful tool calls across all steps
             for step in range(1, self.max_steps + 1):
                 if (time.perf_counter() - started) > self.timeout_s:
                     yield ModelChunk(kind="done", finish_reason="timeout")
@@ -1240,11 +1237,7 @@ class AgentLoop:
                         yield ModelChunk(kind="done", finish_reason="stop")
                         return
 
-                    # Model produced reasoning but no text answer — retry once.
-                    # Reasoning models (DeepSeek, o1, etc.) can exhaust their reasoning
-                    # budget without outputting a single visible token. Claude Code
-                    # handles this by blocking think/tool_choice in the retry; for
-                    # providers without that API, we inject a strong textual nudge.
+                    # Model produced reasoning but no text answer — retry once
                     has_reasoning = any(
                         c.kind == "reasoning_delta" and (c.reasoning_delta or "").strip()
                         for c in step_chunks
@@ -1254,28 +1247,9 @@ class AgentLoop:
                         messages.append({
                             "role": "user",
                             "content": (
-                                "Your last response was ALL reasoning — the user "
-                                "cannot see it. You MUST write a direct answer in "
-                                "the main text output. "
-                                "Do NOT put your answer in reasoning blocks. "
-                                "Do NOT think — just output the final answer. "
-                                "Start your response with the answer immediately."
-                            ),
-                        })
-                        continue
-
-                    # Empty response after tool results — model produced zero
-                    # tokens. DeepSeek sometimes returns an empty stream when
-                    # it sees a rejection or large results. Retry once with a
-                    # guidance prompt that asks it to synthesize.
-                    if stream_any_tool_called and stream_retry_empty_response_count < 1:
-                        stream_retry_empty_response_count += 1
-                        messages.append({
-                            "role": "user",
-                            "content": (
-                                "Your last response was empty — you must answer. "
-                                "Review the tool results above and write a summary "
-                                "of what you found. Start writing NOW."
+                                "You provided reasoning but no final answer. "
+                                "Please restate your conclusion as a direct text response "
+                                "— do not use reasoning blocks, just output the answer."
                             ),
                         })
                         continue
@@ -1305,10 +1279,29 @@ class AgentLoop:
                     messages = list(compacted)
                     continue
 
+                # Build assistant message for conversation history (OpenAI protocol)
+                assistant_text = "".join(
+                    c.text_delta or c.reasoning_delta or ""
+                    for c in step_chunks
+                    if c.kind in ("text_delta", "reasoning_delta")
+                ).strip() or None
+                assistant_msg: dict[str, Any] = {"role": "assistant", "content": assistant_text}
+                assistant_msg["tool_calls"] = [
+                    {
+                        "id": tc.id,
+                        "type": "function",
+                        "function": {
+                            "name": tc.name,
+                            "arguments": json.dumps(tc.arguments, ensure_ascii=False),
+                        },
+                    }
+                    for tc in tool_calls_buffer
+                ]
+                messages.append(assistant_msg)
+
                 any_ok = False
                 stream_tool_names_this_step: set[str] = set()
                 stream_tool_call_counts: dict[str, int] = {}
-                processed_call_ids: list[str] = []  # track which calls were executed
                 for call in tool_calls_buffer:
                     stream_tool_names_this_step.add(call.name)
                     stream_tool_call_counts[call.name] = stream_tool_call_counts.get(call.name, 0) + 1
@@ -1317,15 +1310,10 @@ class AgentLoop:
                     reject, reject_reason, reject_kind = stream_failures.should_reject_tool(call.name)
                     if reject:
                         if reject_kind == "repeat":
-                            # Cross-step repeat: model already saw a rejection
-                            # for this tool in a previous step but called it again.
                             if stream_failures.is_repeat_hard_stop(call.name):
                                 yield ModelChunk(kind="done", finish_reason="consecutive_rejections")
                                 return
-                            # First repeat rejection in this batch — inject nudge
-                            # and BREAK the tool loop so remaining calls from the
-                            # same batch (planned before seeing this rejection) are
-                            # discarded. The model gets a fresh chance next step.
+                            # First repeat rejection — inject synthesis nudge
                             messages.append({
                                 "role": "user",
                                 "content": (
@@ -1338,7 +1326,7 @@ class AgentLoop:
                             })
                             yield ModelChunk(kind="text_delta",
                                              text_delta=f"\n[Tool `{call.name}`: rejected: {reject_reason}]")
-                            break  # stop processing remaining calls; go to next step
+                            continue
                         # Failure kind — tool has failed too many times
                         messages.append({
                             "role": "user",
@@ -1374,7 +1362,6 @@ class AgentLoop:
                     reused_result = self._find_seen_result(stream_seen_calls, call)
                     if reused_result is not None:
                         dedup_text = json.dumps(reused_result.get('content', ''), ensure_ascii=False)[:50000]
-                        processed_call_ids.append(call.id)
                         messages.append({
                             "role": "tool",
                             "tool_call_id": call.id,
@@ -1408,7 +1395,6 @@ class AgentLoop:
                                 (canonical_key[1], {"content": obs_text, "ok": True})
                             )
                         yield ModelChunk(kind="text_delta", text_delta=obs_text)
-                        processed_call_ids.append(call.id)
                         messages.append({"role": "tool", "tool_call_id": call.id, "content": obs_text})
                         self._persist_tool_message(session_id, turn_id, call.id, call.name, obs_text)
                     else:
@@ -1426,19 +1412,6 @@ class AgentLoop:
                         # Yield tool result for display
                         yield ModelChunk(kind="text_delta",
                                          text_delta=f"\n[Tool `{result.name}`: {obs_text[:16000]}]")
-                        # Emit file_change chunk if this tool modified a file
-                        if result.metadata.get("auto_diff"):
-                            fd = result.metadata["auto_diff"]
-                            yield ModelChunk(
-                                kind="file_change",
-                                file_change={
-                                    "path": fd["path"],
-                                    "diff_text": fd["diff_text"],
-                                    "added": fd["added"],
-                                    "removed": fd["removed"],
-                                    "status": fd["status"],
-                                },
-                            )
                         # Track failures and successes
                         if result.ok:
                             stream_failures.record_success(result.name)
@@ -1481,7 +1454,6 @@ class AgentLoop:
                                 "Call the tools described above NOW to complete the user's task. "
                                 "Do NOT describe what you plan to do — use the tool functions directly."
                             )
-                            processed_call_ids.append(call.id)
                             messages.append({
                                 "role": "tool",
                                 "tool_call_id": call.id,
@@ -1490,36 +1462,12 @@ class AgentLoop:
                             self._persist_tool_message(session_id, turn_id, call.id, call.name, skill_tool_msg)
                         else:
                             truncated = obs_text[:24000]
-                            processed_call_ids.append(call.id)
                             messages.append({
                                 "role": "tool",
                                 "tool_call_id": call.id,
                                 "content": truncated,
                             })
                             self._persist_tool_message(session_id, turn_id, call.id, result.name, truncated)
-
-                # Build assistant message with ONLY the tool calls that were
-                # actually processed (break on repeat rejection skips the rest).
-                assistant_text = "".join(
-                    c.text_delta or c.reasoning_delta or ""
-                    for c in step_chunks
-                    if c.kind in ("text_delta", "reasoning_delta")
-                ).strip() or None
-                assistant_msg: dict[str, Any] = {"role": "assistant", "content": assistant_text}
-                processed_ids_set = set(processed_call_ids)
-                assistant_msg["tool_calls"] = [
-                    {
-                        "id": tc.id,
-                        "type": "function",
-                        "function": {
-                            "name": tc.name,
-                            "arguments": json.dumps(tc.arguments, ensure_ascii=False),
-                        },
-                    }
-                    for tc in tool_calls_buffer
-                    if tc.id in processed_ids_set
-                ]
-                messages.append(assistant_msg)
 
                 # Mid-turn auto-compaction: prevent context overflow during long turns
                 stream_estimator = TokenEstimator(self._model_name)
@@ -1531,22 +1479,22 @@ class AgentLoop:
                     if report.stage != "none":
                         messages = list(compacted)
 
-                # ── Progressive synthesis guidance ──────────────────────────
-                # Aligned with Claude Code "Stop hook" and Codex "needs_follow_up":
-                # after the model has successfully gathered information, nudge it
-                # to synthesize a final answer. Without this, reasoning models
-                # (DeepSeek) keep calling tools indefinitely — each observation
-                # triggers another tool idea, never converging on an answer.
+                # Progressive synthesis guidance (aligned with Codex needs_follow_up /
+                # Claude Code Stop hook). After terminal tool results, the model MUST
+                # synthesize a final answer. DeepSeek reasoning models tend to keep
+                # No-progress detection: stop if no tools succeeded in this step.
+                # Dedup already catches identical tool calls; hard cap below
+                # handles excessive same-tool-type usage. Only flag steps where
+                # every tool failed or was rejected — a step that made progress
+                # (any_ok=True) should reset the counter regardless of tool set.
                 current_tool_names = frozenset(stream_tool_names_this_step)
                 tool_set_repeat = (
                     current_tool_names
                     and current_tool_names == stream_last_tool_names
                     and stream_any_tool_called
                 )
-
                 if not any_ok:
                     stream_no_progress += 1
-                    stream_synthesis_steps = 0
                     if stream_no_progress >= 3:
                         if stream_last_good_content:
                             yield ModelChunk(kind="text_delta",
@@ -1556,43 +1504,6 @@ class AgentLoop:
                         return
                 else:
                     stream_no_progress = 0
-                    stream_synthesis_steps += 1
-                    stream_total_tool_calls += len([1 for _ in stream_tool_names_this_step])
-
-                # Synthesis nudge: after enough successful tool calls (2+ steps OR
-                # 3+ total calls), tell the model to stop gathering and write the
-                # answer. Claude Code does this via Stop hooks; Codex uses
-                # needs_follow_up signals. A single step with 4 tool calls is just
-                # as information-gathering as 2 steps with 2 calls each.
-                if stream_any_tool_called and (
-                    stream_synthesis_steps >= 2 or stream_total_tool_calls >= 3
-                ):
-                    messages.append({
-                        "role": "user",
-                        "content": (
-                            "You have collected enough information. "
-                            "STOP calling tools. "
-                            "Synthesize your final answer NOW from the results above. "
-                            "Write the answer directly — do NOT use reasoning blocks, "
-                            "do NOT call more tools."
-                        ),
-                    })
-                    stream_synthesis_steps = 0
-                    stream_total_tool_calls = 0
-
-                # Tool-set repeat detection: model is re-calling the exact same
-                # set of tools as the previous step — stuck in a pattern.
-                if tool_set_repeat:
-                    messages.append({
-                        "role": "user",
-                        "content": (
-                            "You just called the same tools as the previous step. "
-                            "Do NOT repeat the same tool calls. "
-                            "Write your final answer NOW based on the results "
-                            "you already have."
-                        ),
-                    })
-
                 stream_last_tool_names = current_tool_names
 
                 # Per-tool-type loop detection: track total calls & hard-stop if looping

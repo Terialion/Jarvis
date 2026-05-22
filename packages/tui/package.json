@@ -1,0 +1,55 @@
+{
+  "name": "@jarvis/tui",
+  "version": "0.1.0",
+  "type": "module",
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "build": "tsc",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@jarvis/shared": "workspace:*",
+    "@jarvis/agent": "workspace:*",
+    "@jarvis/tools": "workspace:*",
+    "@jarvis/hooks": "workspace:*",
+    "@jarvis/store": "workspace:*",
+    "@jarvis/skills": "workspace:*",
+    "react": "^19.0.0",
+    "react-reconciler": "^0.31.0",
+    "chalk": "^5.3.0",
+    "marked": "^12.0.0",
+    "zod": "^3.22.0",
+    "strip-ansi": "^7.1.0",
+    "emoji-regex": "^10.3.0",
+    "get-east-asian-width": "^1.2.0",
+    "semver": "^7.6.0",
+    "auto-bind": "^5.0.1",
+    "bidi-js": "^1.0.3",
+    "cli-boxes": "^4.0.0",
+    "code-excerpt": "^4.0.0",
+    "indent-string": "^5.0.0",
+    "signal-exit": "^4.1.0",
+    "stack-utils": "^2.0.6",
+    "supports-hyperlinks": "^3.0.0",
+    "type-fest": "^4.0.0",
+    "usehooks-ts": "^3.1.1",
+    "wrap-ansi": "^9.0.0",
+    "chokidar": "^4.0.0",
+    "figures": "^6.1.0",
+    "@alcalzone/ansi-tokenize": "^0.1.0"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "@types/react": "^19.0.0",
+    "@types/react-reconciler": "^0.33.0",
+    "@types/semver": "^7.5.0",
+    "typescript": "^5.8.0",
+    "vitest": "^3.0.0",
+    "tsx": "^4.0.0"
+  }
+}

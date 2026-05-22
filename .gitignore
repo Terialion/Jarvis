@@ -125,6 +125,7 @@ openclaw/
 codex/
 claude-code/
 learn-claude-code/
+claude-code-kit-main/
 runs/
 suites/
 reference_agents/

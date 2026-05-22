@@ -71,9 +71,6 @@ def run_bridge() -> int:
         "permission_mode": "default",
     })
 
-    # Send slash command metadata for TUI popup
-    _send_commands_metadata()
-
     # Create agent loop (shared across turns)
     try:
         loop = AgentLoop(
@@ -149,22 +146,6 @@ def _handle_input(loop: AgentLoop, text: str, cwd: str, session_id: str) -> None
             "finish_reason": "error",
         })
         traceback.print_exc(file=sys.stderr)
-
-
-def _send_commands_metadata() -> None:
-    """Send the full slash command registry to the TUI for popup display."""
-    try:
-        from jarvis.cli_command_map import command_specs_json
-        commands = command_specs_json()
-        # Only send implemented/skeleton slash commands (not unsupported/disabled)
-        active = [
-            c for c in commands
-            if c.get("status") in ("implemented", "skeleton")
-            and c.get("safety") != "disabled"
-        ]
-        _send_event({"type": "commands_metadata", "commands": active})
-    except Exception:
-        pass  # Command map not available; TUI will use built-in defaults
 
 
 def _get_attr(chunk: Any, name: str) -> str:

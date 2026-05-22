@@ -162,37 +162,6 @@ class MCPClient:
             "arguments": arguments or {},
         })
 
-    # ── plugin MCP config loading ──────────────────────────────────────
-
-    def load_from_plugin_configs(
-        self,
-        configs: list[dict[str, Any]],
-        plugin_root: str = "",
-    ) -> list[str]:
-        """Load MCP servers from plugin .mcp.json configurations.
-
-        Supports ${PLUGIN_ROOT} variable substitution in command args.
-        Returns list of connected server names.
-        """
-        connected: list[str] = []
-        for config in configs:
-            servers = config.get("mcpServers", {})
-            for name, server_cfg in servers.items():
-                if name in self._connections:
-                    continue
-                try:
-                    cmd = str(server_cfg.get("command", "")).strip()
-                    if not cmd:
-                        continue
-                    args = [str(a) for a in server_cfg.get("args", [])]
-                    if plugin_root:
-                        args = [a.replace("${PLUGIN_ROOT}", plugin_root) for a in args]
-                    self.connect_stdio(name, [cmd] + args)
-                    connected.append(name)
-                except Exception:
-                    pass
-        return connected
-
     # ── lifecycle ──────────────────────────────────────────────────────
 
     def shutdown_all(self) -> None:
