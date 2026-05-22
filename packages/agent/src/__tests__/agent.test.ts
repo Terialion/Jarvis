@@ -351,6 +351,50 @@ describe('ContextBuilder', () => {
     expect(messages[1].name).toBe('bash');
   });
 
+  it('buildMessages preserves tool_call_id and name in LLM output', () => {
+    const history: ChatMessage[] = [
+      {
+        role: 'tool',
+        content: 'file contents here',
+        messageId: 'msg_t1',
+        toolCallId: 'call_read_1',
+        name: 'read',
+      },
+      {
+        role: 'assistant',
+        content: 'I read the file',
+        messageId: 'msg_a1',
+      },
+    ];
+
+    const messages = builder.buildMessages('system', history);
+
+    // Tool message must have tool_call_id and name
+    expect(messages[1].role).toBe('tool');
+    expect(messages[1].content).toBe('file contents here');
+    expect(messages[1].tool_call_id).toBe('call_read_1');
+    expect(messages[1].name).toBe('read');
+
+    // Assistant message must NOT have spurious tool_call_id
+    expect(messages[2].role).toBe('assistant');
+    expect(messages[2].tool_call_id).toBeUndefined();
+    expect(messages[2].name).toBeUndefined();
+  });
+
+  it('buildMessages handles messages without optional fields', () => {
+    const history: ChatMessage[] = [
+      { role: 'user', content: 'hello', messageId: 'm1' },
+      { role: 'assistant', content: 'hi', messageId: 'm2' },
+    ];
+
+    const messages = builder.buildMessages('system', history);
+
+    expect(messages[1].tool_call_id).toBeUndefined();
+    expect(messages[1].name).toBeUndefined();
+    expect(messages[2].tool_call_id).toBeUndefined();
+    expect(messages[2].name).toBeUndefined();
+  });
+
   it('buildMessages returns empty system if no system prompt', () => {
     const messages = builder.buildMessages('', []);
     expect(messages).toHaveLength(0);

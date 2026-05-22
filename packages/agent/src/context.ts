@@ -176,12 +176,17 @@ export class ContextBuilder {
     }
 
     for (const msg of history) {
-      messages.push({
+      const llmMsg: LLMMessage = {
         role: msg.role,
         content: msg.content,
-        tool_call_id: msg.toolCallId,
-        name: msg.name,
-      });
+      };
+      if (msg.toolCallId) {
+        llmMsg.tool_call_id = msg.toolCallId;
+      }
+      if (msg.name) {
+        llmMsg.name = msg.name;
+      }
+      messages.push(llmMsg);
     }
 
     return messages;
