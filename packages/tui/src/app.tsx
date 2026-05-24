@@ -1,7 +1,7 @@
 import type React from 'react';
 import { useState, useCallback, useRef, useEffect } from 'react';
 import { execSync } from 'node:child_process';
-import { readFileSync, existsSync, readdirSync } from 'node:fs';
+import { readFileSync, existsSync, readdirSync, writeFileSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { platform, arch, totalmem, freemem, uptime } from 'node:os';
 import { REPL } from './vendor/ui/REPL.js';
@@ -31,6 +31,7 @@ interface SlashCommandCtx {
   getAgent: () => AgentLoop;
   maxTurns: number;
   outputStyleRef: React.MutableRefObject<string>;
+  permissionModeRef: React.MutableRefObject<string>;
 }
 
 interface SlashCommandDef {
@@ -55,6 +56,41 @@ const REVIEW_PROMPT = `Review the uncommitted changes shown below. Focus on:
 3. **Style** — consistency with surrounding code, naming
 
 Be concise. Flag only real problems. Skip style nits that don't affect correctness.`;
+
+const SECURITY_REVIEW_PROMPT = `Audit the uncommitted changes shown below for security issues. Focus exclusively on:
+1. **Injection** — SQL, command, shell, path traversal, template injection
+2. **Secrets** — hardcoded keys, tokens, passwords, connection strings
+3. **Input validation** — missing or bypassable checks, trust of user input
+4. **Auth** — broken access control, missing authorization checks, session issues
+5. **Crypto** — weak algorithms, broken nonce handling, timing attacks
+6. **Data exposure** — logging sensitive data, error messages leaking internals
+
+Be concise. Flag only real security problems. Not a general code review.`;
+
+const INIT_CLAUDE_MD_TEMPLATE = `# CLAUDE.md
+
+This file provides instructions to AI coding assistants working in this project.
+
+## Project Overview
+
+<!-- Describe what this project does in 1-2 sentences -->
+
+## Build & Test
+
+\`\`\`bash
+# Build
+npm run build
+
+# Test
+npm test
+\`\`\`
+
+## Code Style
+
+- Follow existing patterns in the codebase
+- Write minimal code — no unnecessary abstractions
+- Verify changes with tests before committing
+`;
 
 const SLASH_COMMANDS: SlashCommandDef[] = [
   {
@@ -395,6 +431,85 @@ const SLASH_COMMANDS: SlashCommandDef[] = [
       return `Output style set to: ${style}`;
     },
   },
+  {
+    name: 'security-review',
+    description: 'Security audit of uncommitted changes',
+    usage: '/security-review',
+    handler: async (_args, ctx) => {
+      let diff: string;
+      try {
+        diff = execSync('git diff', { cwd: ctx.cwd, encoding: 'utf-8', timeout: 10000 });
+      } catch {
+        return 'Error: could not run git diff.';
+      }
+      if (!diff.trim()) return 'No uncommitted changes to audit.';
+
+      const truncated = diff.length > 12000 ? diff.slice(0, 12000) + '\n... (truncated)' : diff;
+      const prompt = `${SECURITY_REVIEW_PROMPT}\n\n---\n${truncated}\n---`;
+
+      ctx.setIsLoading(true);
+      try {
+        const agent = ctx.getAgent();
+        const result = await agent.run(prompt, []);
+        return result.answer || 'Security review complete (no text response).';
+      } catch (e) {
+        return `Security review failed: ${e instanceof Error ? e.message : String(e)}`;
+      } finally {
+        ctx.setIsLoading(false);
+      }
+    },
+  },
+  {
+    name: 'init',
+    description: 'Initialize project with CLAUDE.md and .jarvis config',
+    usage: '/init',
+    handler: (_args, ctx) => {
+      const created: string[] = [];
+      const claudeMd = join(ctx.cwd, 'CLAUDE.md');
+      const jarvisDir = join(ctx.cwd, '.jarvis');
+
+      try {
+        if (!existsSync(claudeMd)) {
+          writeFileSync(claudeMd, INIT_CLAUDE_MD_TEMPLATE, 'utf-8');
+          created.push('CLAUDE.md');
+        } else {
+          created.push('CLAUDE.md (already exists, skipped)');
+        }
+      } catch (e) {
+        created.push(`CLAUDE.md (error: ${e instanceof Error ? e.message : String(e)})`);
+      }
+
+      try {
+        if (!existsSync(jarvisDir)) {
+          mkdirSync(jarvisDir, { recursive: true });
+          created.push('.jarvis/');
+        } else {
+          created.push('.jarvis/ (already exists)');
+        }
+      } catch (e) {
+        created.push(`.jarvis/ (error: ${e instanceof Error ? e.message : String(e)})`);
+      }
+
+      return `Project initialized:\n${created.map((f) => `  ${f}`).join('\n')}`;
+    },
+  },
+  {
+    name: 'permissions',
+    description: 'Show or set tool permission mode',
+    usage: '/permissions [workspace_write|accept_edits|bypass]',
+    handler: (args, ctx) => {
+      const modes = ['workspace_write', 'accept_edits', 'bypass'];
+      if (args.length === 0) {
+        return `Permission mode: ${ctx.permissionModeRef.current}\nAvailable: ${modes.join(', ')}`;
+      }
+      const mode = args[0].toLowerCase();
+      if (!modes.includes(mode)) {
+        return `Invalid mode "${mode}". Options: ${modes.join(', ')}`;
+      }
+      ctx.permissionModeRef.current = mode;
+      return `Permission mode set to: ${mode}`;
+    },
+  },
 ];
 
 function resolveSlashCommand(input: string): SlashCommandDef | null {
@@ -442,6 +557,7 @@ export function App({ options }: { options: TUIOptions }): React.ReactNode {
   const modelRef = useRef<string>(options.model);
   const modifiedFilesRef = useRef<Set<string>>(new Set());
   const outputStyleRef = useRef<string>('default');
+  const permissionModeRef = useRef<string>('workspace_write');
 
   // Initialize session store and restore previous session for this directory
   useEffect(() => {
@@ -542,6 +658,7 @@ export function App({ options }: { options: TUIOptions }): React.ReactNode {
         getAgent,
         maxTurns: options.maxTurns,
         outputStyleRef,
+        permissionModeRef,
       });
       setMessages((prev) => [...prev, makeSysMsg(result)]);
       return;
