@@ -1,11 +1,12 @@
 import type React from 'react';
-import { useState, useCallback, useRef } from 'react';
+import { useState, useCallback, useRef, useEffect } from 'react';
 import { REPL } from './vendor/ui/REPL.js';
 import type { Message, MessageContent } from './vendor/ui/MessageList.js';
 import type { StatusLineSegment } from './vendor/ui/StatusLine.js';
 import { AgentLoop } from '@jarvis/agent';
 import { ToolRegistry, allBuiltinTools } from '@jarvis/tools';
 import { SkillRegistry, SkillExecutor } from '@jarvis/skills';
+import { SessionStore } from '@jarvis/store';
 import type { TUIOptions } from './types.js';
 import type { ChatMessage } from '@jarvis/shared';
 
@@ -17,6 +18,56 @@ export function App({ options }: { options: TUIOptions }): React.ReactNode {
   const toolsRef = useRef<ToolRegistry | null>(null);
   const skillsRef = useRef<SkillRegistry | null>(null);
   const executorRef = useRef<SkillExecutor | null>(null);
+  const sessionStoreRef = useRef<SessionStore | null>(null);
+  const sessionIdRef = useRef<string | null>(null);
+  const sessionReadyRef = useRef(false);
+
+  // Initialize session store and restore previous session for this directory
+  useEffect(() => {
+    const store = new SessionStore();
+    sessionStoreRef.current = store;
+
+    const cwd = process.cwd();
+    store.listSessions().then(async (sessionIds) => {
+      let best: { id: string; updatedAt: string } | null = null;
+
+      for (const sid of sessionIds) {
+        try {
+          const sidecar = await store.getSidecar(sid);
+          if (sidecar.cwd === cwd) {
+            if (!best || sidecar.updated_at > best.updatedAt) {
+              best = { id: sid, updatedAt: sidecar.updated_at };
+            }
+          }
+        } catch {
+          // Skip sessions with missing sidecar
+        }
+      }
+
+      if (best) {
+        sessionIdRef.current = best.id;
+        const rawMessages = await store.loadMessages(best.id);
+        const chatMessages: ChatMessage[] = rawMessages.map((m) => {
+          const meta = (m.metadata ?? {}) as Record<string, unknown>;
+          return {
+            role: m.role as ChatMessage['role'],
+            content: m.content as string,
+            messageId: m.message_id as string,
+            toolCallId: m.tool_call_id as string | undefined,
+            name: meta['_name'] as string | undefined,
+            metadata: meta,
+          };
+        });
+        historyRef.current = chatMessages;
+      } else {
+        const sid = `session_${crypto.randomUUID().slice(0, 12)}`;
+        await store.createSession(sid, { cwd });
+        sessionIdRef.current = sid;
+      }
+
+      sessionReadyRef.current = true;
+    });
+  }, []);
 
   const getAgent = useCallback((): AgentLoop => {
     if (!agentRef.current) {
@@ -28,8 +79,6 @@ export function App({ options }: { options: TUIOptions }): React.ReactNode {
 
       if (!skillsRef.current) {
         skillsRef.current = new SkillRegistry();
-        // Discover project skills from .jarvis/skills/
-        // In TUI context, use process.cwd() to find project root
         skillsRef.current.discover({
           projectDir: '.jarvis/skills',
         });
@@ -66,11 +115,11 @@ export function App({ options }: { options: TUIOptions }): React.ReactNode {
 
     try {
       const agent = getAgent();
+      const prevLen = historyRef.current.length;
       const result = await agent.run(prompt, historyRef.current);
 
       const content: MessageContent[] = [];
 
-      // Tool results as tool_use blocks
       for (const tr of result.toolResults) {
         content.push({
           type: 'tool_use',
@@ -81,7 +130,6 @@ export function App({ options }: { options: TUIOptions }): React.ReactNode {
         });
       }
 
-      // Final answer
       if (result.answer) {
         content.push({
           type: 'text',
@@ -100,6 +148,23 @@ export function App({ options }: { options: TUIOptions }): React.ReactNode {
       };
 
       setMessages((prev) => [...prev, assistantMsg]);
+
+      // Persist new messages from this turn to SessionStore
+      historyRef.current = result.messages;
+      const newMsgs = result.messages.slice(prevLen);
+      const store = sessionStoreRef.current;
+      const sid = sessionIdRef.current;
+      if (store && sid) {
+        for (const msg of newMsgs) {
+          const meta = { ...(msg.metadata ?? {}) };
+          if (msg.name) meta['_name'] = msg.name;
+          store.appendMessage(sid, msg.role, msg.content, {
+            turnId: result.turnId,
+            toolCallId: msg.toolCallId,
+            metadata: Object.keys(meta).length > 0 ? meta : undefined,
+          });
+        }
+      }
     } catch (err) {
       const errMsg: Message = {
         id: `msg_${Date.now()}`,
