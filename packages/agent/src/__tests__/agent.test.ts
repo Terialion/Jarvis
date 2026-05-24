@@ -913,6 +913,45 @@ describe('AgentLoop', () => {
     expect(messages.some((m) => m.content === 'Follow up')).toBe(true);
   });
 
+  it('sends tool history messages with role=tool and tool_call_id', async () => {
+    const mockProvider = createMockProvider([
+      { content: 'Understood, continuing...', finishReason: 'stop' },
+    ]);
+
+    const loop = new AgentLoop({
+      model: { model: 'test-model' },
+      provider: mockProvider as unknown as LLMProvider,
+    });
+
+    const history: ChatMessage[] = [
+      { role: 'user', content: 'Read the config', messageId: 'm_u1' },
+      { role: 'assistant', content: 'Let me read it', messageId: 'm_a1' },
+      {
+        role: 'tool',
+        content: '{"port": 3000}',
+        messageId: 'm_t1',
+        toolCallId: 'call_read_cfg',
+        name: 'read',
+      },
+    ];
+
+    await loop.run('Check that config', history);
+
+    const callArgs = mockProvider.chat.mock.calls[0];
+    const messages = callArgs[0] as Array<{
+      role: string;
+      content: string;
+      tool_call_id?: string;
+      name?: string;
+    }>;
+
+    const toolMsg = messages.find((m) => m.role === 'tool');
+    expect(toolMsg).toBeDefined();
+    expect(toolMsg!.tool_call_id).toBe('call_read_cfg');
+    expect(toolMsg!.name).toBe('read');
+    expect(toolMsg!.content).toContain('port');
+  });
+
   it('returns messages array in result', async () => {
     const mockProvider = createMockProvider([
       { content: 'Answer', finishReason: 'stop' },
