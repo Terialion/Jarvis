@@ -3,6 +3,7 @@ import { useState, useCallback, useRef, useEffect } from 'react';
 import { execSync } from 'node:child_process';
 import { readFileSync, existsSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
+import { platform, arch, totalmem, freemem, uptime } from 'node:os';
 import { REPL } from './vendor/ui/REPL.js';
 import type { Message, MessageContent } from './vendor/ui/MessageList.js';
 import type { StatusLineSegment } from './vendor/ui/StatusLine.js';
@@ -28,6 +29,8 @@ interface SlashCommandCtx {
   modelRef: React.MutableRefObject<string>;
   modifiedFilesRef: React.MutableRefObject<Set<string>>;
   getAgent: () => AgentLoop;
+  maxTurns: number;
+  outputStyleRef: React.MutableRefObject<string>;
 }
 
 interface SlashCommandDef {
@@ -274,6 +277,124 @@ const SLASH_COMMANDS: SlashCommandDef[] = [
       }
     },
   },
+  {
+    name: 'doctor',
+    description: 'Run environment diagnostics',
+    usage: '/doctor',
+    handler: (_args, ctx) => {
+      const lines: string[] = ['Environment diagnostics:\n'];
+
+      lines.push(`Platform: ${platform()} ${arch()}`);
+      lines.push(`Node.js: ${process.version}`);
+      lines.push(`CWD: ${ctx.cwd}`);
+
+      try {
+        const npmVer = execSync('npm --version', { encoding: 'utf-8', timeout: 5000 }).trim();
+        lines.push(`npm: ${npmVer}`);
+      } catch {
+        lines.push('npm: (not found)');
+      }
+
+      try {
+        const gitVer = execSync('git --version', { encoding: 'utf-8', timeout: 5000 }).trim();
+        lines.push(`Git: ${gitVer}`);
+      } catch {
+        lines.push('Git: (not found)');
+      }
+
+      try {
+        const totalMem = totalmem();
+        const freeMem = freemem();
+        const usedMem = totalMem - freeMem;
+        const memPct = Math.round((usedMem / totalMem) * 100);
+        const gb = (n: number) => (n / 1024 ** 3).toFixed(1);
+        lines.push(`Memory: ${gb(usedMem)}GB / ${gb(totalMem)}GB (${memPct}%)`);
+      } catch {
+        lines.push('Memory: (unavailable)');
+      }
+
+      try {
+        const up = uptime();
+        const h = Math.floor(up / 3600);
+        const m = Math.floor((up % 3600) / 60);
+        lines.push(`Uptime: ${h}h ${m}m`);
+      } catch {
+        lines.push('Uptime: (unavailable)');
+      }
+
+      try {
+        const gitStatus = execSync('git status --short', { cwd: ctx.cwd, encoding: 'utf-8', timeout: 5000 });
+        const changed = gitStatus.split('\n').filter(Boolean).length;
+        lines.push(`Git changes: ${changed} file(s)`);
+      } catch {
+        lines.push('Git: (not a repo or error)');
+      }
+
+      return lines.join('\n');
+    },
+  },
+  {
+    name: 'config',
+    description: 'Show or set configuration',
+    usage: '/config [key] [value]',
+    handler: (args, ctx) => {
+      if (args.length === 0) {
+        const modelName = ctx.modelRef.current;
+        const outputStyle = ctx.outputStyleRef.current;
+        const sid = (ctx.sid ?? 'none').slice(-16);
+        return [
+          'Current configuration:\n',
+          `  model       = ${modelName}`,
+          `  max-turns   = ${ctx.maxTurns}`,
+          `  output-style = ${outputStyle}`,
+          `  session     = ${sid}`,
+          `  cwd         = ${ctx.cwd}`,
+        ].join('\n');
+      }
+
+      const key = args[0].toLowerCase();
+      const value = args[1];
+
+      if (key === 'model') {
+        if (!value) return `model = ${ctx.modelRef.current}`;
+        ctx.modelRef.current = value;
+        return `model = ${value} (effective next turn)`;
+      }
+
+      if (key === 'output-style') {
+        if (!value) return `output-style = ${ctx.outputStyleRef.current}`;
+        if (!['default', 'concise', 'verbose'].includes(value)) {
+          return `Invalid style. Options: default, concise, verbose`;
+        }
+        ctx.outputStyleRef.current = value;
+        return `output-style = ${value}`;
+      }
+
+      if (key === 'max-turns') {
+        if (!value) return `max-turns = ${ctx.maxTurns}`;
+        return 'max-turns is read-only during a session.';
+      }
+
+      return `Unknown config key: ${key}. Available: model, output-style, max-turns`;
+    },
+  },
+  {
+    name: 'output-style',
+    description: 'Set output style: default, concise, or verbose',
+    usage: '/output-style [default|concise|verbose]',
+    handler: (args, ctx) => {
+      const validStyles = ['default', 'concise', 'verbose'];
+      if (args.length === 0) {
+        return `Output style: ${ctx.outputStyleRef.current} (available: ${validStyles.join(', ')})`;
+      }
+      const style = args[0].toLowerCase();
+      if (!validStyles.includes(style)) {
+        return `Invalid style "${style}". Options: ${validStyles.join(', ')}`;
+      }
+      ctx.outputStyleRef.current = style;
+      return `Output style set to: ${style}`;
+    },
+  },
 ];
 
 function resolveSlashCommand(input: string): SlashCommandDef | null {
@@ -320,6 +441,7 @@ export function App({ options }: { options: TUIOptions }): React.ReactNode {
   const sessionReadyRef = useRef(false);
   const modelRef = useRef<string>(options.model);
   const modifiedFilesRef = useRef<Set<string>>(new Set());
+  const outputStyleRef = useRef<string>('default');
 
   // Initialize session store and restore previous session for this directory
   useEffect(() => {
@@ -418,6 +540,8 @@ export function App({ options }: { options: TUIOptions }): React.ReactNode {
         modelRef,
         modifiedFilesRef,
         getAgent,
+        maxTurns: options.maxTurns,
+        outputStyleRef,
       });
       setMessages((prev) => [...prev, makeSysMsg(result)]);
       return;
