@@ -1,5 +1,5 @@
 import type React from 'react';
-import { useState, useCallback, useRef, useEffect } from 'react';
+import { useState, useCallback, useRef, useEffect, useMemo } from 'react';
 import { execSync } from 'node:child_process';
 import { readFileSync, existsSync, readdirSync, writeFileSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
@@ -512,7 +512,7 @@ const SLASH_COMMANDS: SlashCommandDef[] = [
   },
 ];
 
-function resolveSlashCommand(input: string): SlashCommandDef | null {
+function resolveSlashCommand(input: string): { command: SlashCommandDef; args: string[] } | null {
   const trimmed = input.trim();
   if (!trimmed.startsWith('/')) return null;
 
@@ -520,7 +520,33 @@ function resolveSlashCommand(input: string): SlashCommandDef | null {
   const name = parts[0]?.toLowerCase();
   const args = parts.slice(1);
 
-  return SLASH_COMMANDS.find((c) => c.name === name) ?? null;
+  const command = SLASH_COMMANDS.find((c) => c.name === name) ?? null;
+  return command ? { command, args } : null;
+}
+
+type REPLCommandDef = {
+  name: string;
+  description: string;
+  onExecute: (args: string) => void;
+};
+
+function buildReplCommands(
+  ctx: SlashCommandCtx,
+  setMessages: (v: Message[] | ((prev: Message[]) => Message[])) => void,
+): REPLCommandDef[] {
+  return SLASH_COMMANDS.map((cmd) => ({
+    name: cmd.name,
+    description: cmd.description,
+    onExecute: (rawArgs: string) => {
+      const args = rawArgs ? rawArgs.split(/\s+/) : [];
+      const result = cmd.handler(args, ctx);
+      if (result instanceof Promise) {
+        result.then((text) => setMessages((prev) => [...prev, makeSysMsg(text)]));
+      } else {
+        setMessages((prev) => [...prev, makeSysMsg(result)]);
+      }
+    },
+  }));
 }
 
 // ============================================================================
@@ -642,28 +668,6 @@ export function App({ options }: { options: TUIOptions }): React.ReactNode {
   }, [options]);
 
   const onSubmit = useCallback(async (prompt: string) => {
-    // Check for slash commands
-    const command = resolveSlashCommand(prompt);
-    if (command) {
-      const result = await command.handler([], {
-        store: sessionStoreRef.current,
-        sid: sessionIdRef.current,
-        historyRef,
-        messages,
-        setMessages,
-        setIsLoading,
-        cwd: process.cwd(),
-        modelRef,
-        modifiedFilesRef,
-        getAgent,
-        maxTurns: options.maxTurns,
-        outputStyleRef,
-        permissionModeRef,
-      });
-      setMessages((prev) => [...prev, makeSysMsg(result)]);
-      return;
-    }
-
     const userMsg: Message = {
       id: `msg_${Date.now()}`,
       role: 'user',
@@ -754,6 +758,31 @@ export function App({ options }: { options: TUIOptions }): React.ReactNode {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [getAgent, options.model]);
 
+  const replCommands: REPLCommandDef[] = useMemo(
+    () =>
+      buildReplCommands(
+        {
+          store: sessionStoreRef.current,
+          sid: sessionIdRef.current,
+          historyRef,
+          messages,
+          setMessages,
+          setIsLoading,
+          cwd: process.cwd(),
+          modelRef,
+          modifiedFilesRef,
+          getAgent,
+          maxTurns: options.maxTurns,
+          outputStyleRef,
+          permissionModeRef,
+        },
+        setMessages,
+      ),
+    // Rebuild only when getAgent changes (lazy init via useCallback)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [getAgent, options.maxTurns, messages],
+  );
+
   const statusSegments: StatusLineSegment[] = [
     { content: `model: ${modelRef.current}` },
   ];
@@ -765,6 +794,7 @@ export function App({ options }: { options: TUIOptions }): React.ReactNode {
       onSubmit={onSubmit}
       model={modelRef.current}
       statusSegments={statusSegments}
+      commands={replCommands}
     />
   );
 }
