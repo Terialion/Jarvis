@@ -30,7 +30,7 @@ export { AgentEventBus } from './events.js';
 export type { EventHandler } from './events.js';
 
 // context
-export { ContextBuilder, ContextUpdater } from './context.js';
+export { ContextBuilder, ContextUpdater, UserFactExtractor } from './context.js';
 export type {
   ContextConfig,
   ContextPack,
