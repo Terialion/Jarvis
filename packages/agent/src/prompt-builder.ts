@@ -46,7 +46,7 @@ Use tools to fulfill the user's request. Do NOT describe what you'll do — do i
 </agent>`;
 
 export class PromptBuilder {
-  buildMessages(turnContext: TurnContext): Array<{ role: string; content: string }> {
+  buildMessages(turnContext: TurnContext): Array<{ role: string; content: string; tool_call_id?: string }> {
     const pack = turnContext.contextPack;
     if (!pack) {
       return [{ role: 'user', content: turnContext.userInput }];
@@ -54,7 +54,7 @@ export class PromptBuilder {
 
     const modelName = (turnContext.modelName ?? '').trim() || 'unknown';
     const systemPrompt = AGENT_SYSTEM_PROMPT.replace('{model_name}', modelName);
-    const messages: Array<{ role: string; content: string }> = [
+    const messages: Array<{ role: string; content: string; tool_call_id?: string }> = [
       { role: 'system', content: systemPrompt },
     ];
 
@@ -90,7 +90,7 @@ export class PromptBuilder {
     const recent = [...conv.recentMessages].slice(-40);
     if (recent.length > 0) {
       messages.push({
-        role: 'user',
+        role: 'system',
         content:
           '<conversation-history>\n' +
           'Messages above this point are from earlier turns in ' +
@@ -112,7 +112,8 @@ export class PromptBuilder {
           (msg.tool_call_id as string) ??
           'unknown';
         messages.push({
-          role: 'user',
+          role: 'tool',
+          tool_call_id: msg.tool_call_id,
           content: `[Previous tool result — ${toolName}]: ${content.slice(0, 3000)}`,
         });
       } else {
