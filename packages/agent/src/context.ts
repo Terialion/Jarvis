@@ -1112,3 +1112,42 @@ function pickModelInfo(state: RuntimeState): Record<string, unknown> {
   if (state['model_name'] !== undefined) info['model_name'] = state['model_name'];
   return info;
 }
+
+// ============================================================================
+// UserFactExtractor — lightweight extraction of user profile from turns
+// ============================================================================
+
+export class UserFactExtractor {
+  private static NAME_PATTERNS: Array<{ pattern: RegExp; group: number }> = [
+    { pattern: /[Mm]y [Nn]ame [Ii][Ss]\s+["']?([A-Z][a-z]+(?:\s+[A-Z][a-z]+){0,2})["']?\b/, group: 1 },
+    { pattern: /[Cc]all [Mm]e\s+["']?([A-Z][a-z]+(?:\s+[A-Z][a-z]+){0,2})["']?\b/, group: 1 },
+    { pattern: /[Ii](?:'| [Aa])?[Mm]\s+["']?([A-Z][a-z]+(?:\s+[A-Z][a-z]+){0,2})["']?(?:\s|,|\.|$)/, group: 1 },
+  ];
+
+  private static ROLE_PATTERN = /i(?:'|\s+a)?m\s+(a\s+)?((?:senior\s+|lead\s+|staff\s+|principal\s+)?(?:software\s+)?(?:engineer|developer|programmer|architect|designer|manager|lead|cto|devops|sre|data\s+scientist|researcher|student|consultant|product\s+manager))/i;
+
+  static extractFacts(text: string): Array<{ key: string; value: string; memory_type: string }> {
+    const facts: Array<{ key: string; value: string; memory_type: string }> = [];
+
+    for (const { pattern, group } of UserFactExtractor.NAME_PATTERNS) {
+      const match = text.match(pattern);
+      if (match) {
+        const captured = match[group]?.trim();
+        if (captured && captured.length >= 2 && captured.length <= 40) {
+          facts.push({ key: 'name', value: captured, memory_type: 'user_profile' });
+          break;
+        }
+      }
+    }
+
+    const roleMatch = text.match(UserFactExtractor.ROLE_PATTERN);
+    if (roleMatch) {
+      const roleValue = roleMatch[0].trim();
+      if (/^i(?:'|\s+a)?m\s+(a\s+)?(senior|lead|staff|principal|software|engineer|developer|programmer|architect|designer|manager|cto|devops|sre|data|researcher|student|consultant|product)/i.test(roleValue)) {
+        facts.push({ key: 'role', value: roleValue, memory_type: 'user_profile' });
+      }
+    }
+
+    return facts;
+  }
+}

@@ -5,7 +5,7 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { AgentEventBus } from '../events.js';
 import { jitteredBackoff, withRetry } from '../retry.js';
-import { ContextBuilder } from '../context.js';
+import { ContextBuilder, UserFactExtractor } from '../context.js';
 import { ConversationSummarizer } from '../summary.js';
 import { AgentLoop } from '../loop.js';
 import { LLMProvider } from '../model.js';
@@ -581,6 +581,54 @@ describe('ConversationSummarizer', () => {
     expect(compact).toContain('Goal:');
     expect(compact).toContain('Progress:');
     expect(compact).toContain('Use TypeScript');
+  });
+});
+
+// ============================================================================
+// UserFactExtractor
+// ============================================================================
+
+describe('UserFactExtractor', () => {
+  it('extracts name from "my name is" pattern', () => {
+    const facts = UserFactExtractor.extractFacts('Hello, my name is Zhang Wei. I need help with code.');
+    const nameFact = facts.find((f) => f.key === 'name');
+    expect(nameFact).toBeDefined();
+    expect(nameFact!.value).toBe('Zhang Wei');
+    expect(nameFact!.memory_type).toBe('user_profile');
+  });
+
+  it('extracts name from "call me" pattern', () => {
+    const facts = UserFactExtractor.extractFacts('You can call me Alice when we chat.');
+    const nameFact = facts.find((f) => f.key === 'name');
+    expect(nameFact).toBeDefined();
+    expect(nameFact!.value).toBe('Alice');
+  });
+
+  it('extracts name from "I\'m" pattern', () => {
+    const facts = UserFactExtractor.extractFacts("Hi, I'm Bob Smith and I work here.");
+    const nameFact = facts.find((f) => f.key === 'name');
+    expect(nameFact).toBeDefined();
+    expect(nameFact!.value).toBe('Bob Smith');
+  });
+
+  it('extracts role from "I\'m a developer" pattern', () => {
+    const facts = UserFactExtractor.extractFacts("I'm a software engineer working on the backend team.");
+    const roleFact = facts.find((f) => f.key === 'role');
+    expect(roleFact).toBeDefined();
+    expect(roleFact!.value).toContain('software engineer');
+    expect(roleFact!.memory_type).toBe('user_profile');
+  });
+
+  it('returns empty array for text with no identifiable facts', () => {
+    const facts = UserFactExtractor.extractFacts('Can you fix the bug in auth.ts?');
+    expect(facts).toEqual([]);
+  });
+
+  it('does not match "I\'m" in code contexts', () => {
+    const facts = UserFactExtractor.extractFacts(
+      "I'm checking if I'm logged in. The config says I'm using the wrong port.",
+    );
+    expect(facts).toEqual([]);
   });
 });
 
