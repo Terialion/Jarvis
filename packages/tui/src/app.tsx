@@ -1,6 +1,8 @@
 import type React from 'react';
 import { useState, useCallback, useRef, useEffect } from 'react';
 import { execSync } from 'node:child_process';
+import { readFileSync, existsSync, readdirSync } from 'node:fs';
+import { join } from 'node:path';
 import { REPL } from './vendor/ui/REPL.js';
 import type { Message, MessageContent } from './vendor/ui/MessageList.js';
 import type { StatusLineSegment } from './vendor/ui/StatusLine.js';
@@ -15,22 +17,27 @@ import type { ChatMessage } from '@jarvis/shared';
 // Slash command definitions
 // ============================================================================
 
+interface SlashCommandCtx {
+  store: SessionStore | null;
+  sid: string | null;
+  historyRef: React.MutableRefObject<ChatMessage[]>;
+  messages: Message[];
+  setMessages: (v: Message[] | ((prev: Message[]) => Message[])) => void;
+  setIsLoading: (v: boolean) => void;
+  cwd: string;
+  modelRef: React.MutableRefObject<string>;
+  modifiedFilesRef: React.MutableRefObject<Set<string>>;
+  getAgent: () => AgentLoop;
+}
+
 interface SlashCommandDef {
   name: string;
   description: string;
   usage?: string;
-  handler: (args: string[], ctx: {
-    store: SessionStore | null;
-    sid: string | null;
-    historyRef: React.MutableRefObject<ChatMessage[]>;
-    messages: Message[];
-    setMessages: (v: Message[] | ((prev: Message[]) => Message[])) => void;
-    cwd: string;
-    model: string;
-  }) => string | Promise<string>;
+  handler: (args: string[], ctx: SlashCommandCtx) => string | Promise<string>;
 }
 
-function makeCommand(msg: string): Message {
+function makeSysMsg(msg: string): Message {
   return {
     id: `cmd_${Date.now()}`,
     role: 'assistant',
@@ -38,6 +45,13 @@ function makeCommand(msg: string): Message {
     timestamp: Date.now(),
   };
 }
+
+const REVIEW_PROMPT = `Review the uncommitted changes shown below. Focus on:
+1. **Correctness** — logic errors, edge cases, off-by-one
+2. **Security** — injection vectors, missing validation, leaked secrets
+3. **Style** — consistency with surrounding code, naming
+
+Be concise. Flag only real problems. Skip style nits that don't affect correctness.`;
 
 const SLASH_COMMANDS: SlashCommandDef[] = [
   {
@@ -58,8 +72,8 @@ const SLASH_COMMANDS: SlashCommandDef[] = [
     usage: '/clear',
     handler: async (_args, ctx) => {
       ctx.historyRef.current = [];
+      ctx.modifiedFilesRef.current = new Set();
       ctx.setMessages([]);
-      // Create new session so cleared history isn't resumed
       if (ctx.store) {
         const sid = `session_${crypto.randomUUID().slice(0, 12)}`;
         await ctx.store.createSession(sid, { cwd: ctx.cwd });
@@ -119,11 +133,13 @@ const SLASH_COMMANDS: SlashCommandDef[] = [
       const totalChars = ctx.historyRef.current.reduce((sum, m) => sum + m.content.length, 0);
       const estTokens = Math.ceil(totalChars / 4);
       const shortSid = (ctx.sid ?? 'none').slice(-16);
+      const modFiles = ctx.modifiedFilesRef.current.size;
       return [
         `Session: ${shortSid}`,
-        `Model: ${ctx.model}`,
+        `Model: ${ctx.modelRef.current}`,
         `Messages: ${msgCount}`,
         `Estimated tokens: ${estTokens.toLocaleString()}`,
+        `Modified files: ${modFiles}`,
         `UI messages: ${ctx.messages.length}`,
       ].join('\n');
     },
@@ -140,7 +156,6 @@ const SLASH_COMMANDS: SlashCommandDef[] = [
       const summary = summarizer.summarize(history);
       const compacted = summarizer.compactSummary(summary);
 
-      // Keep the last user+assistant exchange, replace older history with summary
       const lastUserIdx = history.length - 2;
       const lastMessages = history.slice(Math.max(0, lastUserIdx));
       const compactMsg: ChatMessage = {
@@ -151,6 +166,112 @@ const SLASH_COMMANDS: SlashCommandDef[] = [
       ctx.historyRef.current = [compactMsg, ...lastMessages];
 
       return `Compacted ${history.length} messages into a summary (${compacted.length} chars). Kept last exchange.`;
+    },
+  },
+  {
+    name: 'model',
+    description: 'Show or set the current model',
+    usage: '/model [model-name]',
+    handler: (args, ctx) => {
+      if (args.length > 0) {
+        ctx.modelRef.current = args[0];
+        return `Model set to: ${args[0]} (effective on next turn)`;
+      }
+      return `Current model: ${ctx.modelRef.current}`;
+    },
+  },
+  {
+    name: 'review',
+    description: 'Code-review uncommitted changes',
+    usage: '/review',
+    handler: async (_args, ctx) => {
+      let diff: string;
+      try {
+        diff = execSync('git diff', { cwd: ctx.cwd, encoding: 'utf-8', timeout: 10000 });
+      } catch {
+        return 'Error: could not run git diff.';
+      }
+      if (!diff.trim()) return 'No uncommitted changes to review.';
+
+      const truncated = diff.length > 12000 ? diff.slice(0, 12000) + '\n... (truncated)' : diff;
+      const prompt = `${REVIEW_PROMPT}\n\n---\n${truncated}\n---`;
+
+      ctx.setIsLoading(true);
+      try {
+        const agent = ctx.getAgent();
+        const result = await agent.run(prompt, []);
+        return result.answer || 'Review complete (no text response).';
+      } catch (e) {
+        return `Review failed: ${e instanceof Error ? e.message : String(e)}`;
+      } finally {
+        ctx.setIsLoading(false);
+      }
+    },
+  },
+  {
+    name: 'memory',
+    description: 'Show or search project memory',
+    usage: '/memory [search-term]',
+    handler: (_args, ctx) => {
+      const searchTerm = _args.join(' ').toLowerCase();
+      const sources: string[] = [];
+
+      // Check CLAUDE.md
+      const claudeMdPath = join(ctx.cwd, 'CLAUDE.md');
+      if (existsSync(claudeMdPath)) {
+        const content = readFileSync(claudeMdPath, 'utf-8');
+        if (!searchTerm) {
+          sources.push(`CLAUDE.md (${content.length} chars)`);
+        } else if (content.toLowerCase().includes(searchTerm)) {
+          const lines = content.split('\n').filter((l) => l.toLowerCase().includes(searchTerm));
+          sources.push(`CLAUDE.md matches:\n${lines.slice(0, 10).map((l) => `  ${l.trim()}`).join('\n')}`);
+        }
+      }
+
+      // Check .jarvis/memory/
+      const memDir = join(ctx.cwd, '.jarvis', 'memory');
+      if (existsSync(memDir)) {
+        try {
+          const files = readdirSync(memDir);
+          for (const f of files) {
+            if (!f.endsWith('.md')) continue;
+            const filePath = join(memDir, f);
+            const content = readFileSync(filePath, 'utf-8');
+            if (!searchTerm) {
+              sources.push(`.jarvis/memory/${f} (${content.length} chars)`);
+            } else if (content.toLowerCase().includes(searchTerm)) {
+              const lines = content.split('\n').filter((l) => l.toLowerCase().includes(searchTerm));
+              sources.push(`.jarvis/memory/${f} matches:\n${lines.slice(0, 10).map((l) => `  ${l.trim()}`).join('\n')}`);
+            }
+          }
+        } catch { /* ignore read errors */ }
+      }
+
+      if (sources.length === 0) {
+        return searchTerm
+          ? `No memory entries matching "${searchTerm}".`
+          : 'No memory files found (CLAUDE.md or .jarvis/memory/).';
+      }
+      return sources.join('\n\n');
+    },
+  },
+  {
+    name: 'rewind',
+    description: 'Restore files modified by agent to their git state',
+    usage: '/rewind',
+    handler: (_args, ctx) => {
+      const files = [...ctx.modifiedFilesRef.current];
+      if (files.length === 0) return 'No files have been modified by the agent in this session.';
+
+      try {
+        for (const f of files) {
+          execSync(`git checkout -- "${f}"`, { cwd: ctx.cwd, encoding: 'utf-8', timeout: 5000 });
+        }
+        ctx.modifiedFilesRef.current = new Set();
+        return `Restored ${files.length} file(s):\n${files.map((f) => `  ${f}`).join('\n')}`;
+      } catch (e) {
+        return `Rewind failed: ${e instanceof Error ? e.message : String(e)}`;
+      }
     },
   },
 ];
@@ -164,6 +285,22 @@ function resolveSlashCommand(input: string): SlashCommandDef | null {
   const args = parts.slice(1);
 
   return SLASH_COMMANDS.find((c) => c.name === name) ?? null;
+}
+
+// ============================================================================
+// Tool names that modify the filesystem
+// ============================================================================
+
+const FILE_MODIFYING_TOOLS = new Set(['write', 'edit', 'bash']);
+
+function extractModifiedFiles(toolName: string, toolResult: string): string[] {
+  const files: string[] = [];
+  if (toolName === 'write' || toolName === 'edit') {
+    // Tool results for write/edit include the file path in the result content
+    const match = toolResult.match(/^\[(?:wrote|edited)\]\s+(.+)$/m);
+    if (match) files.push(match[1].trim());
+  }
+  return files;
 }
 
 // ============================================================================
@@ -181,6 +318,8 @@ export function App({ options }: { options: TUIOptions }): React.ReactNode {
   const sessionStoreRef = useRef<SessionStore | null>(null);
   const sessionIdRef = useRef<string | null>(null);
   const sessionReadyRef = useRef(false);
+  const modelRef = useRef<string>(options.model);
+  const modifiedFilesRef = useRef<Set<string>>(new Set());
 
   // Initialize session store and restore previous session for this directory
   useEffect(() => {
@@ -249,7 +388,7 @@ export function App({ options }: { options: TUIOptions }): React.ReactNode {
 
       agentRef.current = new AgentLoop({
         model: {
-          model: options.model,
+          model: modelRef.current,
           apiKey: options.apiKey,
           baseURL: options.baseURL,
         },
@@ -261,22 +400,26 @@ export function App({ options }: { options: TUIOptions }): React.ReactNode {
       });
     }
     return agentRef.current;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [options]);
 
   const onSubmit = useCallback(async (prompt: string) => {
     // Check for slash commands
     const command = resolveSlashCommand(prompt);
     if (command) {
-      const result = await command.handler(command.usage?.split(' ')?.slice(1) ?? [], {
+      const result = await command.handler([], {
         store: sessionStoreRef.current,
         sid: sessionIdRef.current,
         historyRef,
         messages,
         setMessages,
+        setIsLoading,
         cwd: process.cwd(),
-        model: options.model,
+        modelRef,
+        modifiedFilesRef,
+        getAgent,
       });
-      setMessages((prev) => [...prev, makeCommand(result)]);
+      setMessages((prev) => [...prev, makeSysMsg(result)]);
       return;
     }
 
@@ -293,6 +436,16 @@ export function App({ options }: { options: TUIOptions }): React.ReactNode {
       const agent = getAgent();
       const prevLen = historyRef.current.length;
       const result = await agent.run(prompt, historyRef.current);
+
+      // Track files modified by this turn
+      for (const tr of result.toolResults) {
+        if (FILE_MODIFYING_TOOLS.has(tr.name)) {
+          const files = extractModifiedFiles(tr.name, tr.content);
+          for (const f of files) {
+            modifiedFilesRef.current.add(f);
+          }
+        }
+      }
 
       const content: MessageContent[] = [];
 
@@ -357,10 +510,11 @@ export function App({ options }: { options: TUIOptions }): React.ReactNode {
     } finally {
       setIsLoading(false);
     }
-  }, [getAgent, messages, options.model]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [getAgent, options.model]);
 
   const statusSegments: StatusLineSegment[] = [
-    { content: `model: ${options.model}` },
+    { content: `model: ${modelRef.current}` },
   ];
 
   return (
@@ -368,7 +522,7 @@ export function App({ options }: { options: TUIOptions }): React.ReactNode {
       messages={messages}
       isLoading={isLoading}
       onSubmit={onSubmit}
-      model={options.model}
+      model={modelRef.current}
       statusSegments={statusSegments}
     />
   );
