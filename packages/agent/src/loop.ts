@@ -42,6 +42,8 @@ export interface AgentLoopConfig {
   autoApprove?: boolean;
   /** Token tracker for accumulating usage across turns. */
   tokenTracker?: TokenTracker;
+  /** Streaming token callback — each token is emitted as it arrives. */
+  onToken?: (token: string) => void;
 }
 
 export interface TurnResult {
@@ -247,16 +249,25 @@ export class AgentLoop {
 
       this.eventBus?.emit('llm:request', { turnId, turn, messageCount: llmMessages.length });
 
-      let response: Awaited<ReturnType<LLMProvider['chat']>>;
+      let response: Awaited<ReturnType<LLMProvider['chat']>> | Awaited<ReturnType<LLMProvider['chatStream']>>;
       try {
-        response = await withRetry(
-          () => (this.provider as LLMProvider).chat(llmMessages, toolDefs),
-          {
-            maxRetries: this.config.model.maxRetries ?? 3,
-            baseDelay: 5_000,
-            maxDelay: 120_000,
-          },
-        );
+        if (this.config.onToken) {
+          // Streaming mode: no retry (partial tokens already emitted)
+          response = await (this.provider as LLMProvider).chatStream(
+            llmMessages,
+            toolDefs,
+            { onToken: this.config.onToken },
+          );
+        } else {
+          response = await withRetry(
+            () => (this.provider as LLMProvider).chat(llmMessages, toolDefs),
+            {
+              maxRetries: this.config.model.maxRetries ?? 3,
+              baseDelay: 5_000,
+              maxDelay: 120_000,
+            },
+          );
+        }
       } catch (err) {
         const errMsg = err instanceof Error ? err.message : String(err);
         this.eventBus?.emit('llm:error', { turnId, turn, error: errMsg });

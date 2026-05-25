@@ -7,6 +7,7 @@ import { platform, arch, totalmem, freemem, uptime } from 'node:os';
 import { REPL } from './vendor/ui/REPL.js';
 import type { Message, MessageContent } from './vendor/ui/MessageList.js';
 import type { StatusLineSegment } from './vendor/ui/StatusLine.js';
+import { WelcomeScreen, ClawdLogo } from './vendor/ui/WelcomeScreen.js';
 import { AgentLoop, ConversationSummarizer, TokenTracker, formatTokensCompact, parseModelName } from '@jarvis/agent';
 import {
   ToolRegistry,
@@ -688,6 +689,7 @@ export function App({ options }: { options: TUIOptions }): React.ReactNode {
   const [askQuestions, setAskQuestions] = useState<AskQuestionDef[] | null>(null);
   const askResolveRef = useRef<((answers: Record<string, string>) => void) | null>(null);
   const askRejectRef = useRef<((err: Error) => void) | null>(null);
+  const [streamingContent, setStreamingContent] = useState<string | null>(null);
 
   // Set up the AskUserQuestion bridge for the tool
   useEffect(() => {
@@ -843,6 +845,9 @@ export function App({ options }: { options: TUIOptions }): React.ReactNode {
         skillRegistry: skillsRef.current,
         skillExecutor: executorRef.current,
         tokenTracker: tokenTrackerRef.current,
+        onToken: (token: string) => {
+          setStreamingContent((prev) => (prev ?? '') + token);
+        },
       });
     }
     return agentRef.current;
@@ -863,6 +868,7 @@ export function App({ options }: { options: TUIOptions }): React.ReactNode {
     };
     setMessages((prev) => [...prev, userMsg]);
     setIsLoading(true);
+    setStreamingContent(null); // Reset streaming for new run
 
     // Create abort controller for this run
     const abort = new AbortController();
@@ -989,6 +995,7 @@ export function App({ options }: { options: TUIOptions }): React.ReactNode {
     } finally {
       abortRef.current = null;
       setIsLoading(false);
+      setStreamingContent(null);
       // Stop elapsed timer
       if (elapsedTimerRef.current) {
         clearInterval(elapsedTimerRef.current);
@@ -1112,6 +1119,7 @@ export function App({ options }: { options: TUIOptions }): React.ReactNode {
     <REPL
       messages={messages}
       isLoading={isLoading}
+      streamingContent={streamingContent}
       onSubmit={onSubmit}
       onInterrupt={handleInterrupt}
       onExit={handleExit}
@@ -1119,6 +1127,7 @@ export function App({ options }: { options: TUIOptions }): React.ReactNode {
       statusSegments={statusSegments}
       commands={replCommands}
       askUserQuestion={askUserQuestion}
+      welcome={<WelcomeScreen appName="Jarvis" subtitle="AI Coding Assistant" model={parseModelName(modelRef.current).cleanName} tips={['Type a message to start', 'Use /help to see commands', 'Ctrl+C twice to exit']} />}
     />
   );
 }
