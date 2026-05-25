@@ -20,6 +20,8 @@ type PromptInputProps = {
   prefix?: string;
   prefixColor?: string;
   disabled?: boolean;
+  /** When true, Esc is not consumed so parent can handle interrupt */
+  isLoading?: boolean;
   commands?: Command[];
   onCommandSelect?: (name: string) => void;
   history?: string[];
@@ -35,6 +37,7 @@ export function PromptInput({
   prefix = "❯",
   prefixColor = "cyan",
   disabled = false,
+  isLoading = false,
   commands = [],
   onCommandSelect,
   history = [],
@@ -209,6 +212,8 @@ export function PromptInput({
         return;
       }
       if (key.escape) {
+        // Let parent handle Esc when loading (for interrupt)
+        if (isLoading) return;
         if (hasSuggestions) {
           setShowSuggestions(false);
           return;

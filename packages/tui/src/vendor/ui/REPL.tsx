@@ -238,6 +238,7 @@ export function REPL({
           prefix={prefix}
           placeholder={placeholder}
           disabled={searchOpen}
+          isLoading={isLoading}
           commands={promptCommands}
           history={history}
         />

@@ -755,6 +755,8 @@ export function App({ options }: { options: TUIOptions }): React.ReactNode {
   const askResolveRef = useRef<((answers: Record<string, string>) => void) | null>(null);
   const askRejectRef = useRef<((err: Error) => void) | null>(null);
   const [streamingContent, setStreamingContent] = useState<string | null>(null);
+  const streamBufferRef = useRef<string>('');
+  const streamFlushRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Set up the AskUserQuestion bridge for the tool
   useEffect(() => {
@@ -911,7 +913,15 @@ export function App({ options }: { options: TUIOptions }): React.ReactNode {
         skillExecutor: executorRef.current,
         tokenTracker: tokenTrackerRef.current,
         onToken: (token: string) => {
-          setStreamingContent((prev) => (prev ?? '') + token);
+          streamBufferRef.current += token;
+          if (!streamFlushRef.current) {
+            streamFlushRef.current = setTimeout(() => {
+              const chunk = streamBufferRef.current;
+              streamBufferRef.current = '';
+              streamFlushRef.current = null;
+              setStreamingContent((prev) => (prev ?? '') + chunk);
+            }, 50);
+          }
         },
         onReasoningDelta: (delta: string) => {
           setStreamingContent((prev) => {
@@ -940,7 +950,9 @@ export function App({ options }: { options: TUIOptions }): React.ReactNode {
     };
     setMessages((prev) => [...prev, userMsg]);
     setIsLoading(true);
-    setStreamingContent(null); // Reset streaming for new run
+    setStreamingContent(null);
+    streamBufferRef.current = ''; // Clear buffer
+    if (streamFlushRef.current) { clearTimeout(streamFlushRef.current); streamFlushRef.current = null; }
 
     // Create abort controller for this run
     const abort = new AbortController();
@@ -1068,6 +1080,8 @@ export function App({ options }: { options: TUIOptions }): React.ReactNode {
       abortRef.current = null;
       setIsLoading(false);
       setStreamingContent(null);
+      streamBufferRef.current = '';
+      if (streamFlushRef.current) { clearTimeout(streamFlushRef.current); streamFlushRef.current = null; }
       // Stop elapsed timer
       if (elapsedTimerRef.current) {
         clearInterval(elapsedTimerRef.current);
