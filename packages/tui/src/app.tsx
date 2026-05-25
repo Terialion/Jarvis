@@ -611,11 +611,50 @@ const FILE_MODIFYING_TOOLS = new Set(['write', 'edit', 'bash']);
 function extractModifiedFiles(toolName: string, toolResult: string): string[] {
   const files: string[] = [];
   if (toolName === 'write' || toolName === 'edit') {
-    // Tool results for write/edit include the file path in the result content
     const match = toolResult.match(/^\[(?:wrote|edited)\]\s+(.+)$/m);
     if (match) files.push(match[1].trim());
   }
   return files;
+}
+
+function safeJsonParse(raw: string): Record<string, unknown> | null {
+  try { return JSON.parse(raw); } catch { return null; }
+}
+
+interface FileChange {
+  filename: string;
+  added: number;
+  removed: number;
+}
+
+function computeFileChange(toolName: string, toolResult: string): FileChange | null {
+  if (toolName !== 'write' && toolName !== 'edit') return null;
+  const parsed = safeJsonParse(toolResult);
+  if (!parsed) return null;
+  const filename = (parsed['path'] || parsed['file'] || parsed['filename'] || '') as string;
+  if (!filename) return null;
+  if (toolName === 'write') {
+    const content = (parsed['content'] || '') as string;
+    return { filename, added: content.split('\n').length, removed: 0 };
+  }
+  const oldStr = (parsed['old_string'] || '') as string;
+  const newStr = (parsed['new_string'] || '') as string;
+  return {
+    filename,
+    added: newStr ? newStr.split('\n').length : 0,
+    removed: oldStr ? oldStr.split('\n').length : 0,
+  };
+}
+
+function formatFileChangeSummary(changes: FileChange[]): string {
+  return changes.map((c) => {
+    const display = c.filename.replace(/\\/g, '/');
+    const parts: string[] = [];
+    if (c.added > 0) parts.push(`Added ${c.added}`);
+    if (c.removed > 0) parts.push(`Removed ${c.removed}`);
+    const summary = parts.length > 0 ? parts.join(', ') : 'modified';
+    return `● ${display}\n  ⎿  ${summary} lines`;
+  }).join('\n');
 }
 
 // ============================================================================
@@ -848,7 +887,12 @@ export function App({ options }: { options: TUIOptions }): React.ReactNode {
         });
       }
 
+      // Collect file changes for summary display
+      const fileChanges: FileChange[] = [];
       for (const tr of result.toolResults) {
+        const change = computeFileChange(tr.name, tr.content);
+        if (change) fileChanges.push(change);
+
         const parsed = parseToolContent(tr.name, tr.content);
         if (parsed) {
           content.push(parsed);
@@ -867,6 +911,15 @@ export function App({ options }: { options: TUIOptions }): React.ReactNode {
         content.push({
           type: 'text',
           text: result.answer,
+        });
+      }
+
+      // Append file change summary if any files were modified
+      if (fileChanges.length > 0) {
+        content.push({
+          type: 'diff',
+          filename: `Changes (${fileChanges.length} file${fileChanges.length > 1 ? 's' : ''})`,
+          diff: formatFileChangeSummary(fileChanges),
         });
       }
 
