@@ -34,6 +34,8 @@ type AskUserQuestionState = {
 export type REPLProps = {
   onSubmit: (message: string) => Promise<void> | void;
   onExit?: () => void;
+  /** Called when user requests interrupt (Esc while loading, or first Ctrl+C). */
+  onInterrupt?: () => void;
 
   messages: Message[];
   isLoading?: boolean;
@@ -59,6 +61,7 @@ export type REPLProps = {
 export function REPL({
   onSubmit,
   onExit,
+  onInterrupt,
   messages,
   isLoading = false,
   streamingContent,
@@ -133,11 +136,32 @@ export function REPL({
     [commands, onSubmit, externalHistory],
   );
 
+  const lastCtrlCPressRef = useRef(0);
+
   useInput(
     (_input: string, key: Key) => {
-      if (key.ctrl && _input === "c" && isLoading) {
+      // Ctrl+C: first press interrupts, second within 1s exits (like Codex)
+      if (key.ctrl && _input === "c") {
+        const now = Date.now();
+        if (lastCtrlCPressRef.current > 0 && now - lastCtrlCPressRef.current < 1000) {
+          lastCtrlCPressRef.current = 0;
+          if (onExit) { onExit(); } else { exit(); }
+          return;
+        }
+        lastCtrlCPressRef.current = now;
+        if (isLoading && onInterrupt) {
+          onInterrupt();
+        }
         return;
       }
+      // Esc: interrupt while loading (like Codex bottom pane)
+      if (key.escape && isLoading) {
+        onInterrupt?.();
+        return;
+      }
+      // Any other key resets the double-press timer
+      lastCtrlCPressRef.current = 0;
+
       if (key.ctrl && _input === "d") {
         if (onExit) {
           onExit();

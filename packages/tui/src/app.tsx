@@ -682,6 +682,7 @@ export function App({ options }: { options: TUIOptions }): React.ReactNode {
   const elapsedRef = useRef<number>(0);
   const elapsedTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const taskCountRef = useRef<{ pending: number; in_progress: number; completed: number }>({ pending: 0, in_progress: 0, completed: 0 });
+  const abortRef = useRef<AbortController | null>(null);
 
   // AskUserQuestion bridge state
   const [askQuestions, setAskQuestions] = useState<AskQuestionDef[] | null>(null);
@@ -855,6 +856,10 @@ export function App({ options }: { options: TUIOptions }): React.ReactNode {
     setMessages((prev) => [...prev, userMsg]);
     setIsLoading(true);
 
+    // Create abort controller for this run
+    const abort = new AbortController();
+    abortRef.current = abort;
+
     // Start elapsed timer
     const startTime = Date.now();
     if (elapsedTimerRef.current) clearInterval(elapsedTimerRef.current);
@@ -864,6 +869,8 @@ export function App({ options }: { options: TUIOptions }): React.ReactNode {
     }, 1000);
 
     try {
+      if (abort.signal.aborted) throw new DOMException('Aborted', 'AbortError');
+
       const agent = getAgent();
       const prevLen = historyRef.current.length;
       const result = await agent.run(prompt, historyRef.current);
@@ -956,19 +963,23 @@ export function App({ options }: { options: TUIOptions }): React.ReactNode {
         }
       }
     } catch (err) {
+      const isAbort = err instanceof DOMException && err.name === 'AbortError';
       const errMsg: Message = {
         id: `msg_${Date.now()}`,
         role: 'assistant',
         content: [
           {
-            type: 'error',
-            message: err instanceof Error ? err.message : String(err),
+            type: isAbort ? 'text' : 'error',
+            ...(isAbort
+              ? { text: 'Conversation interrupted.' }
+              : { message: err instanceof Error ? err.message : String(err) }),
           },
         ],
         timestamp: Date.now(),
       };
       setMessages((prev) => [...prev, errMsg]);
     } finally {
+      abortRef.current = null;
       setIsLoading(false);
       // Stop elapsed timer
       if (elapsedTimerRef.current) {
@@ -1049,6 +1060,23 @@ export function App({ options }: { options: TUIOptions }): React.ReactNode {
     return segs;
   }, [messages.length, modelRef.current]);
 
+  // Interrupt handler — cancels current agent run
+  const handleInterrupt = useCallback(() => {
+    if (abortRef.current) {
+      abortRef.current.abort();
+    }
+  }, []);
+
+  // Exit handler — clean shutdown (Ctrl+C double-tap or Ctrl+D)
+  const handleExit = useCallback(() => {
+    if (abortRef.current) abortRef.current.abort();
+    if (elapsedTimerRef.current) clearInterval(elapsedTimerRef.current);
+    if (sessionStoreRef.current) {
+      try { sessionStoreRef.current.close(); } catch { /* ignore */ }
+    }
+    process.exit(0);
+  }, []);
+
   // AskUserQuestion submit handler
   const handleAskSubmit = useCallback(
     (answers: Record<string, string>) => {
@@ -1076,6 +1104,8 @@ export function App({ options }: { options: TUIOptions }): React.ReactNode {
       messages={messages}
       isLoading={isLoading}
       onSubmit={onSubmit}
+      onInterrupt={handleInterrupt}
+      onExit={handleExit}
       model={modelRef.current}
       statusSegments={statusSegments}
       commands={replCommands}
