@@ -49,13 +49,34 @@ export function lineCount(value: string): number {
 }
 
 /**
- * Filter commands whose `/name` starts with the current typed value.
- * Returns an empty array when `value` does not start with `/`.
+ * Filter commands with scoring: prefix > substring > description match.
+ * Returns sorted results, max 50. Matches CC/Codex-style filtering.
  */
 export function filterCommands(
   commands: Array<{ name: string; description: string }>,
   value: string,
 ): Array<{ name: string; description: string }> {
   if (!value.startsWith("/")) return [];
-  return commands.filter((cmd) => `/${cmd.name}`.startsWith(value));
+  const query = value.slice(1).toLowerCase();
+  if (!query) return commands.slice(0, 50);
+
+  const scored: Array<{ cmd: { name: string; description: string }; score: number }> = [];
+
+  for (const cmd of commands) {
+    const name = cmd.name.toLowerCase();
+    const desc = cmd.description.toLowerCase();
+
+    if (name === query) {
+      scored.push({ cmd, score: 100 }); // exact match
+    } else if (name.startsWith(query)) {
+      scored.push({ cmd, score: 80 }); // prefix match
+    } else if (name.includes(query)) {
+      scored.push({ cmd, score: 50 + name.indexOf(query) * -0.1 }); // substring
+    } else if (desc.includes(query)) {
+      scored.push({ cmd, score: 20 }); // description match
+    }
+  }
+
+  scored.sort((a, b) => b.score - a.score);
+  return scored.slice(0, 50).map((s) => s.cmd);
 }

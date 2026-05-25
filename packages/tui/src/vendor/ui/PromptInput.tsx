@@ -45,6 +45,7 @@ export function PromptInput({
   const [historyIndex, setHistoryIndex] = useState(-1);
   const [suggestionIndex, setSuggestionIndex] = useState(0);
   const [showSuggestions, setShowSuggestions] = useState(false);
+  const MAX_VISIBLE_SUGGESTIONS = 8;
   const [vim, setVim] = useState<VimMode>("INSERT");
   const [pendingD, setPendingD] = useState(false);
   const isVimNormal = vimMode && vim === "NORMAL";
@@ -344,22 +345,45 @@ export function PromptInput({
   return (
     <Box flexDirection="column">
       {renderContent()}
-      {hasSuggestions && (
-        <Box flexDirection="column" marginLeft={2}>
-          {suggestions.map((cmd, i) => {
-            const isFocused = i === suggestionIndex;
-            return (
-              <Box key={cmd.name}>
-                <Text color={isFocused ? "cyan" : undefined}>{isFocused ? "❯" : " "} </Text>
-                <Text color={isFocused ? "cyan" : undefined} bold={isFocused}>
-                  {`/${cmd.name}`}
-                </Text>
-                <Text dimColor>{`  ${cmd.description}`}</Text>
-              </Box>
-            );
-          })}
-        </Box>
-      )}
+      {hasSuggestions && (() => {
+        const total = suggestions.length;
+        const max = MAX_VISIBLE_SUGGESTIONS;
+        // Scroll offset: keep selected item centered
+        let scrollOffset = 0;
+        if (total > max) {
+          const half = Math.floor(max / 2);
+          if (suggestionIndex <= half) scrollOffset = 0;
+          else if (suggestionIndex >= total - max + half) scrollOffset = total - max;
+          else scrollOffset = suggestionIndex - half;
+        }
+        const visible = suggestions.slice(scrollOffset, scrollOffset + max);
+        const hasAbove = scrollOffset > 0;
+        const hasBelow = scrollOffset + max < total;
+
+        return (
+          <Box flexDirection="column" marginLeft={2}>
+            {hasAbove && (
+              <Text dimColor>{`  ↑ ${scrollOffset} more`}</Text>
+            )}
+            {visible.map((cmd, vi) => {
+              const i = scrollOffset + vi;
+              const isFocused = i === suggestionIndex;
+              return (
+                <Box key={cmd.name}>
+                  <Text color={isFocused ? "cyan" : undefined}>{isFocused ? "❯" : " "} </Text>
+                  <Text color={isFocused ? "cyan" : undefined} bold={isFocused}>
+                    {`/${cmd.name}`}
+                  </Text>
+                  <Text dimColor>{`  ${cmd.description.slice(0, 80)}`}</Text>
+                </Box>
+              );
+            })}
+            {hasBelow && (
+              <Text dimColor>{`  ↓ ${total - scrollOffset - max} more`}</Text>
+            )}
+          </Box>
+        );
+      })()}
     </Box>
   );
 }
