@@ -7,6 +7,8 @@ import OpenAI from 'openai';
 import type { ToolCall, ToolSpec } from '@jarvis/shared';
 import { normalizeMessages } from './normalizer.js';
 import type { MessageRecord } from './normalizer.js';
+import { parseModelName, resolveContextWindow } from './model-catalog.js';
+import type { ParsedModelName } from './model-catalog.js';
 
 // ============================================================================
 // Configuration
@@ -215,13 +217,22 @@ export interface ModelChunk {
 export class LLMProvider {
   private client: OpenAI;
   private config: ModelConfig;
+  /** Parsed model info with clean name (annotations stripped) and context window */
+  readonly parsedModel: ParsedModelName;
+  /** Resolved context window for this model session */
+  readonly contextWindow: number;
   supportsNativeToolCalling: boolean;
 
   constructor(config: ModelConfig) {
+    this.parsedModel = parseModelName(config.model);
+    this.contextWindow = resolveContextWindow(config.model);
+
     this.config = {
       maxRetries: 3,
       timeout: 120_000,
       ...config,
+      // Ensure the clean model name (no [size] annotation) is used for API calls
+      model: this.parsedModel.cleanName,
     };
 
     const apiKey =
@@ -243,6 +254,19 @@ export class LLMProvider {
     });
 
     this.supportsNativeToolCalling = config.supportsNativeToolCalling ?? true;
+  }
+
+  /** Formatted model name for display (includes context annotation if known). */
+  get displayModelName(): string {
+    if (this.parsedModel.hasExplicitAnnotation || this.parsedModel.catalogInfo) {
+      const cw = this.contextWindow;
+      if (cw >= 1_000_000) {
+        const m = cw / 1_000_000;
+        return `${this.config.model}[${m === Math.round(m) ? Math.round(m) : m.toFixed(1)}m]`;
+      }
+      return `${this.config.model}[${Math.round(cw / 1000)}k]`;
+    }
+    return this.config.model;
   }
 
   // ==========================================================================

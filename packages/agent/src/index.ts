@@ -14,6 +14,18 @@ export type {
   ModelChunk,
 } from './model.js';
 
+// model catalog
+export {
+  parseModelName,
+  findModel,
+  resolveContextWindow,
+  formatModelWithContext,
+} from './model-catalog.js';
+export type {
+  ModelInfo,
+  ParsedModelName,
+} from './model-catalog.js';
+
 // retry
 export {
   ErrorClassifier,

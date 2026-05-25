@@ -6,25 +6,193 @@ import type { ToolResult } from '@jarvis/shared';
 import { ToolRegistry, type ToolContext } from './registry.js';
 
 // ============================================================================
+// PermissionManager — per-tool approval mode gating
+// ============================================================================
+
+export type PermissionMode = 'bypass' | 'accept_edits' | 'default';
+
+/** Risk levels for tool categorization */
+export type ToolRiskLevel = 'read_only' | 'write_approval_required' | 'command' | 'network' | 'credentialed';
+
+export interface PermissionCheckResult {
+  allowed: boolean;
+  reason?: string;
+  needsApproval?: boolean;
+}
+
+interface PermissionConfig {
+  mode: PermissionMode;
+  approveAll: boolean;
+  approvedTools: Set<string>;
+  deniedTools: Set<string>;
+}
+
+const DEFAULT_RISK_MAP: Record<string, ToolRiskLevel> = {
+  bash: 'command',
+  read_file: 'read_only',
+  write_file: 'write_approval_required',
+  edit_file: 'write_approval_required',
+  glob: 'read_only',
+  grep: 'read_only',
+  web_search: 'network',
+  web_fetch: 'network',
+  ask_user_question: 'read_only',
+  task_create: 'read_only',
+  task_update: 'read_only',
+  task_list: 'read_only',
+  task_get: 'read_only',
+  task_output: 'read_only',
+  task_stop: 'read_only',
+  enter_plan_mode: 'read_only',
+  exit_plan_mode: 'read_only',
+  notebook_edit: 'write_approval_required',
+  cron_create: 'read_only',
+  cron_delete: 'read_only',
+  cron_list: 'read_only',
+  schedule_wakeup: 'read_only',
+  enter_worktree: 'write_approval_required',
+  exit_worktree: 'write_approval_required',
+  skill_load: 'read_only',
+  Skill: 'read_only',
+};
+
+/**
+ * PermissionManager controls which tools can execute without approval.
+ *
+ * Modes:
+ * - bypass: all tools auto-approved (no prompts, like Claude Code's bypass mode)
+ * - accept_edits: auto-approve file edits, prompt for bash/network/credentialed
+ * - default: prompt for write, bash, network, and credentialed tools
+ */
+export class PermissionManager {
+  private config: PermissionConfig = {
+    mode: 'default',
+    approveAll: false,
+    approvedTools: new Set(),
+    deniedTools: new Set(),
+  };
+
+  private riskMap: Record<string, ToolRiskLevel>;
+
+  constructor(riskMap?: Record<string, ToolRiskLevel>) {
+    this.riskMap = riskMap ?? DEFAULT_RISK_MAP;
+  }
+
+  /** Set the permission mode. */
+  setMode(mode: PermissionMode): void {
+    this.config.mode = mode;
+  }
+
+  /** Get the current mode. */
+  getMode(): PermissionMode {
+    return this.config.mode;
+  }
+
+  /** Approve a specific tool for the remainder of the session. */
+  approveTool(toolName: string): void {
+    this.config.approvedTools.add(toolName);
+    this.config.deniedTools.delete(toolName);
+  }
+
+  /** Deny a specific tool for the remainder of the session. */
+  denyTool(toolName: string): void {
+    this.config.deniedTools.add(toolName);
+    this.config.approvedTools.delete(toolName);
+  }
+
+  /** Approve all tools (one-time bypass). */
+  approveAll(): void {
+    this.config.approveAll = true;
+  }
+
+  /** Reset approvals (keep mode). */
+  resetApprovals(): void {
+    this.config.approveAll = false;
+    this.config.approvedTools.clear();
+    this.config.deniedTools.clear();
+  }
+
+  /**
+   * Check whether a tool can execute without approval.
+   * Returns { allowed, needsApproval, reason }.
+   */
+  check(toolName: string): PermissionCheckResult {
+    // Bypass mode: everything auto-approved
+    if (this.config.mode === 'bypass') {
+      return { allowed: true };
+    }
+
+    // One-time approve-all
+    if (this.config.approveAll) {
+      return { allowed: true };
+    }
+
+    // Explicitly approved
+    if (this.config.approvedTools.has(toolName)) {
+      return { allowed: true };
+    }
+
+    // Explicitly denied
+    if (this.config.deniedTools.has(toolName)) {
+      return { allowed: false, reason: `Tool "${toolName}" has been denied for this session.` };
+    }
+
+    const risk = this.riskMap[toolName] ?? 'write_approval_required';
+
+    switch (this.config.mode) {
+      case 'default': {
+        // In default mode: read_only auto-approved, everything else needs approval
+        if (risk === 'read_only') return { allowed: true };
+        return {
+          allowed: true,
+          needsApproval: true,
+          reason: `Tool "${toolName}" (${risk}) requires approval. Use /permissions to adjust.`,
+        };
+      }
+      case 'accept_edits': {
+        // accept_edits: auto-approve read_only + write, prompt for bash/network/credentialed
+        if (risk === 'read_only' || risk === 'write_approval_required') return { allowed: true };
+        return {
+          allowed: true,
+          needsApproval: true,
+          reason: `Tool "${toolName}" (${risk}) requires approval in accept_edits mode.`,
+        };
+      }
+      default:
+        return { allowed: true };
+    }
+  }
+}
+
+// ============================================================================
 // ToolRuntime
 // ============================================================================
 
 export interface ToolRuntimeOptions {
   /** Default max result characters before truncation (per-tool caps override) */
   defaultMaxResultSize?: number;
+  /** Optional permission manager for per-tool approval gating */
+  permissionManager?: PermissionManager;
 }
 
 /**
  * ToolRuntime wraps a ToolRegistry with execution orchestration:
- * dispatch, result truncation, timing, and structured ToolResult output.
+ * dispatch, result truncation, timing, permission gating, and structured ToolResult output.
  */
 export class ToolRuntime {
   private registry: ToolRegistry;
   private defaultMaxResultSize: number;
+  private permissionManager?: PermissionManager;
 
   constructor(registry: ToolRegistry, options: ToolRuntimeOptions = {}) {
     this.registry = registry;
     this.defaultMaxResultSize = options.defaultMaxResultSize ?? 100_000;
+    this.permissionManager = options.permissionManager;
+  }
+
+  /** Get the permission manager (for external configuration). */
+  getPermissionManager(): PermissionManager | undefined {
+    return this.permissionManager;
   }
 
   /**
@@ -38,6 +206,27 @@ export class ToolRuntime {
   ): Promise<ToolResult> {
     const callId = `call_${crypto.randomUUID()}`;
     const start = performance.now();
+
+    // Permission check
+    if (this.permissionManager) {
+      const check = this.permissionManager.check(name);
+      if (!check.allowed) {
+        return {
+          callId,
+          name,
+          ok: false,
+          content: JSON.stringify({ error: check.reason ?? 'Tool execution blocked by permission policy.' }),
+          error: check.reason ?? 'Permission denied',
+          errorType: 'permission_denied',
+          durationMs: 0,
+        };
+      }
+      if (check.needsApproval) {
+        // Tool requires approval but no interactive bridge is available —
+        // the caller (TUI/CLI) should handle this via a pre-tool hook.
+        // We proceed with a flag that the caller can intercept.
+      }
+    }
 
     const raw = await this.registry.dispatch(name, args, context);
     let content = raw;

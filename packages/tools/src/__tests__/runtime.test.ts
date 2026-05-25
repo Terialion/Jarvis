@@ -6,6 +6,7 @@ import { describe, it, expect, beforeEach } from 'vitest';
 import { ToolRegistry, type ToolEntry } from '../registry.js';
 import { ToolRuntime } from '../runtime.js';
 import { ApprovalGate } from '../runtime.js';
+import { PermissionManager } from '../runtime.js';
 import { toOpenAITool } from '@jarvis/shared';
 
 function makeEntry(overrides: Partial<ToolEntry> = {}): ToolEntry {
@@ -231,6 +232,101 @@ describe('ApprovalGate', () => {
       // Extra spaces between rm and flags
       const result = gate.checkCommand('rm   -rf  /tmp/test');
       expect(result.safe).toBe(false);
+    });
+  });
+});
+
+// ============================================================================
+// PermissionManager tests
+// ============================================================================
+
+describe('PermissionManager', () => {
+  let pm: PermissionManager;
+
+  beforeEach(() => {
+    pm = new PermissionManager();
+  });
+
+  describe('modes', () => {
+    it('bypass mode allows all tools', () => {
+      pm.setMode('bypass');
+      expect(pm.check('bash').allowed).toBe(true);
+      expect(pm.check('write_file').allowed).toBe(true);
+      expect(pm.check('web_search').allowed).toBe(true);
+      expect(pm.check('read_file').allowed).toBe(true);
+    });
+
+    it('default mode auto-approves read_only tools', () => {
+      pm.setMode('default');
+      expect(pm.check('read_file').allowed).toBe(true);
+      expect(pm.check('glob').allowed).toBe(true);
+      expect(pm.check('grep').allowed).toBe(true);
+      expect(pm.check('task_list').allowed).toBe(true);
+    });
+
+    it('default mode flags write/bash/network/credentialed for approval', () => {
+      pm.setMode('default');
+      expect(pm.check('write_file').needsApproval).toBe(true);
+      expect(pm.check('bash').needsApproval).toBe(true);
+      expect(pm.check('web_search').needsApproval).toBe(true);
+    });
+
+    it('accept_edits mode auto-approves read + write, flags bash/network', () => {
+      pm.setMode('accept_edits');
+      expect(pm.check('read_file').allowed).toBe(true);
+      expect(pm.check('write_file').allowed).toBe(true);
+      expect(pm.check('edit_file').allowed).toBe(true);
+      expect(pm.check('bash').needsApproval).toBe(true);
+      expect(pm.check('web_search').needsApproval).toBe(true);
+    });
+  });
+
+  describe('per-tool approvals', () => {
+    it('approveTool allows a specific tool', () => {
+      pm.setMode('default');
+      pm.approveTool('write_file');
+      expect(pm.check('write_file').allowed).toBe(true);
+      expect(pm.check('write_file').needsApproval).toBeUndefined();
+      expect(pm.check('bash').needsApproval).toBe(true); // other tools unaffected
+    });
+
+    it('denyTool blocks a specific tool', () => {
+      pm.setMode('default');
+      pm.denyTool('glob');
+      expect(pm.check('glob').allowed).toBe(false);
+      expect(pm.check('glob').reason).toContain('denied');
+    });
+
+    it('approveAll allows everything regardless of mode', () => {
+      pm.setMode('default');
+      pm.approveAll();
+      expect(pm.check('bash').allowed).toBe(true);
+      expect(pm.check('write_file').allowed).toBe(true);
+    });
+
+    it('resetApprovals clears all overrides', () => {
+      pm.setMode('default');
+      pm.approveTool('bash');
+      pm.resetApprovals();
+      expect(pm.check('bash').needsApproval).toBe(true); // back to default behavior
+    });
+
+    it('approve overrides deny for same tool', () => {
+      pm.denyTool('write_file');
+      pm.approveTool('write_file');
+      expect(pm.check('write_file').allowed).toBe(true);
+    });
+  });
+
+  describe('custom risk map', () => {
+    it('uses custom risk levels', () => {
+      const customPm = new PermissionManager({
+        my_tool: 'command',
+        safe_tool: 'read_only',
+      });
+      customPm.setMode('default');
+      expect(customPm.check('my_tool').needsApproval).toBe(true);
+      expect(customPm.check('safe_tool').allowed).toBe(true);
     });
   });
 });

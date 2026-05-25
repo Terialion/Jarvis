@@ -14,8 +14,11 @@ export {
 export {
   ToolRuntime,
   ApprovalGate,
+  PermissionManager,
   type ToolRuntimeOptions,
   type ApprovalResult,
+  type PermissionMode,
+  type PermissionCheckResult,
 } from './runtime.js';
 
 // Builtin tools (individual entries + schemas)
