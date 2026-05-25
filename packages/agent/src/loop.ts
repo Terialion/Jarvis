@@ -97,10 +97,15 @@ const SENSITIVE_MARKERS = [
 ];
 
 export class AgentLoop {
-  private config: Required<Omit<AgentLoopConfig, 'tools' | 'eventBus' | 'provider' | 'skillRegistry' | 'skillExecutor' | 'hooks' | 'sessionStore' | 'memoryStore' | 'contextStore'>> & {
+  private config: Required<Omit<AgentLoopConfig, 'tools' | 'eventBus' | 'provider' | 'skillRegistry' | 'skillExecutor' | 'hooks' | 'sessionStore' | 'memoryStore' | 'contextStore' | 'tokenTracker' | 'onToken' | 'onReasoningDelta' | 'onToolStart' | 'onToolEnd'>> & {
     tools?: ToolRegistry;
     eventBus?: AgentEventBus;
     provider?: LLMProvider;
+    tokenTracker?: TokenTracker;
+    onToken?: (token: string) => void;
+    onReasoningDelta?: (delta: string) => void;
+    onToolStart?: (callId: string, toolName: string, args: Record<string, unknown>) => void;
+    onToolEnd?: (callId: string, toolName: string, result: ToolResult) => void;
     skillRegistry?: SkillRegistry;
     skillExecutor?: SkillExecutor;
     hooks?: HookRegistry;

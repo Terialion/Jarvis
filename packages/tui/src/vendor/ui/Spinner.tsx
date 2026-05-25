@@ -1,52 +1,45 @@
 import { Box, Text } from "../ink-renderer/index.js";
 import type React from "react";
 import { useEffect, useRef, useState } from "react";
+import { getStableKeys } from "./utils/stableKeys";
 
 const DEFAULT_CHARACTERS =
   process.platform === "darwin" ? ["·", "✢", "✳", "✶", "✻", "✽"] : ["·", "✢", "*", "✶", "✻", "✽"];
 const FRAMES = [...DEFAULT_CHARACTERS, ...[...DEFAULT_CHARACTERS].reverse()];
 const SPINNER_INTERVAL = 80;
-const VERB_ROTATE_INTERVAL = 4000;
-const ELAPSED_SHOW_AFTER = 1000;
 const DEFAULT_COLOR = "#DA7756";
-const TIPS = [
-  "Use Ctrl+C twice to exit",
-  "Use Esc to interrupt",
-  "Type / to see commands",
-  "Use Ctrl+T to expand thinking",
-];
 
 export type SpinnerProps = {
-  label?: string;
+  /** Dynamic verb/description — from reasoning or current action */
   verb?: string;
-  verbs?: string[];
+  /** Fallback verbs for rotation when no dynamic verb */
+  fallbackVerbs?: string[];
   color?: string;
   showElapsed?: boolean;
-  /** Token count to display (e.g. "↓ 1.2K tokens") */
+  /** Token count (e.g. "↓ 1.2K tokens") */
   tokenCount?: number;
-  /** Tip to show on second line */
-  tip?: string;
-  /** Detail line below the spinner */
-  detail?: string;
+  /** Status suffix (e.g. "almost done thinking with high effort") */
+  status?: string;
+  /** Completed tool names to show as ✔ checkmarks */
+  completed?: string[];
+  /** Running tool name to show as ◌ */
+  running?: string;
 };
 
 export function Spinner({
-  label,
   verb,
-  verbs,
+  fallbackVerbs = ["Thinking"],
   color = DEFAULT_COLOR,
   showElapsed = true,
   tokenCount,
-  tip,
-  detail,
+  status,
+  completed = [],
+  running,
 }: SpinnerProps): React.ReactNode {
   const [frameIndex, setFrameIndex] = useState(0);
-  const [verbIndex, setVerbIndex] = useState(0);
   const [elapsed, setElapsed] = useState(0);
-  const [tipIndex, setTipIndex] = useState(0);
+  const [verbIdx, setVerbIdx] = useState(0);
   const startRef = useRef(Date.now());
-
-  const allVerbs = verbs ?? (verb ? [verb] : ["Thinking"]);
 
   useEffect(() => {
     const id = setInterval(() => {
@@ -56,27 +49,17 @@ export function Spinner({
     return () => clearInterval(id);
   }, []);
 
+  // Rotate fallback verbs every 8s when no dynamic verb
   useEffect(() => {
-    if (allVerbs.length <= 1) return;
+    if (verb || fallbackVerbs.length <= 1) return;
     const id = setInterval(() => {
-      setVerbIndex((i) => (i + 1) % allVerbs.length);
-    }, VERB_ROTATE_INTERVAL);
+      setVerbIdx((i) => (i + 1) % fallbackVerbs.length);
+    }, 8000);
     return () => clearInterval(id);
-  }, [allVerbs.length]);
+  }, [verb, fallbackVerbs.length]);
 
-  // Rotate tips every 5s
-  useEffect(() => {
-    const id = setInterval(() => {
-      setTipIndex((i) => (i + 1) % TIPS.length);
-    }, 5000);
-    return () => clearInterval(id);
-  }, []);
-
-  const frame = FRAMES[frameIndex]!;
-  const currentVerb = allVerbs[verbIndex % allVerbs.length]!;
-  const elapsedSec = Math.floor(elapsed / 1000);
-  const showTime = showElapsed && elapsed >= ELAPSED_SHOW_AFTER;
-
+  const elapsedMs = elapsed;
+  const elapsedSec = Math.floor(elapsedMs / 1000);
   const fmtElapsed = elapsedSec < 60
     ? `${elapsedSec}s`
     : `${Math.floor(elapsedSec / 60)}m ${(elapsedSec % 60).toString().padStart(2, '0')}s`;
@@ -85,13 +68,29 @@ export function Spinner({
     ? `↓ ${tokenCount >= 1000 ? (tokenCount / 1000).toFixed(1) + 'K' : tokenCount} tokens`
     : null;
 
+  // Use dynamic verb if provided, otherwise rotate fallback
+  const displayVerb = verb || fallbackVerbs[verbIdx % fallbackVerbs.length]!;
+  const frame = FRAMES[frameIndex]!;
+
+  // Show "thought for Ns" when reasoning ends and content generation begins
+  const statusText = status || (verb && elapsedSec > 0 && !running
+    ? `thought for ${elapsedSec < 5 ? `${Math.floor(elapsedMs / 100) / 10}s` : fmtElapsed}`
+    : undefined);
+
+  const stableCompleted = completed.length > 0
+    ? getStableKeys(completed, (t) => t)
+    : [];
+
   return (
     <Box flexDirection="column" marginTop={1}>
+      {/* Main line: spinner + verb + stats */}
       <Box>
         <Text color={color}>{frame}</Text>
-        <Text> {currentVerb}</Text>
-        {label && <Text> {label}</Text>}
-        <Text dimColor> (</Text>
+        <Text> {displayVerb}</Text>
+        {!verb && <Text>...</Text>}
+        {verb && <Text dimColor>…</Text>}
+        <Text> </Text>
+        <Text dimColor>(</Text>
         <Text dimColor>{fmtElapsed}</Text>
         {fmtTokens && (
           <>
@@ -99,16 +98,29 @@ export function Spinner({
             <Text dimColor>{fmtTokens}</Text>
           </>
         )}
+        {statusText && (
+          <>
+            <Text dimColor> · </Text>
+            <Text dimColor>{statusText}</Text>
+          </>
+        )}
         <Text dimColor>)</Text>
       </Box>
-      {detail && (
-        <Box marginLeft={1}>
-          <Text dimColor>  └  {detail}</Text>
+
+      {/* Completed tool checkmarks */}
+      {stableCompleted.map((key, i) => (
+        <Box key={key} marginLeft={2}>
+          <Text dimColor>  ⎿  </Text>
+          <Text color="green">✔</Text>
+          <Text dimColor> {completed[i]}</Text>
         </Box>
-      )}
-      {!detail && (tip ?? TIPS[tipIndex % TIPS.length]) && (
-        <Box marginLeft={1}>
-          <Text dimColor>  ⎿  Tip: {tip ?? TIPS[tipIndex % TIPS.length]}</Text>
+      ))}
+
+      {/* Currently running tool */}
+      {running && (
+        <Box marginLeft={2}>
+          <Text dimColor>  ⎿  </Text>
+          <Text dimColor>◌ {running}</Text>
         </Box>
       )}
     </Box>

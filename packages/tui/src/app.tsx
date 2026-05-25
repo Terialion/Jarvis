@@ -755,7 +755,10 @@ export function App({ options }: { options: TUIOptions }): React.ReactNode {
   const askResolveRef = useRef<((answers: Record<string, string>) => void) | null>(null);
   const askRejectRef = useRef<((err: Error) => void) | null>(null);
   const [streamingContent, setStreamingContent] = useState<string | null>(null);
-  const [spinnerDetail, setSpinnerDetail] = useState<string | undefined>(undefined);
+  const [spinnerVerb, setSpinnerVerb] = useState<string | undefined>(undefined);
+  const [spinnerStatus, setSpinnerStatus] = useState<string | undefined>(undefined);
+  const [spinnerCompleted, setSpinnerCompleted] = useState<string[]>([]);
+  const [spinnerRunning, setSpinnerRunning] = useState<string | undefined>(undefined);
   const streamBufferRef = useRef<string>('');
   const streamFlushRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -915,6 +918,10 @@ export function App({ options }: { options: TUIOptions }): React.ReactNode {
         tokenTracker: tokenTrackerRef.current,
         onToken: (token: string) => {
           streamBufferRef.current += token;
+          // When content starts flowing, mark reasoning as complete
+          if (!spinnerStatus && spinnerVerb) {
+            setSpinnerStatus(`thought for ${Math.floor(Date.now() / 100) / 10}s`);
+          }
           if (!streamFlushRef.current) {
             streamFlushRef.current = setTimeout(() => {
               const chunk = streamBufferRef.current;
@@ -929,10 +936,16 @@ export function App({ options }: { options: TUIOptions }): React.ReactNode {
             if (!prev || !prev.startsWith('Thinking')) return `Thinking: ${delta}`;
             return prev + delta;
           });
-          const match = delta.match(/\*\*([^*]+)\*\*/);
-          if (match) setSpinnerDetail(match[1]);
+          const boldMatch = delta.match(/\*\*([^*]+)\*\*/);
+          if (boldMatch) {
+            setSpinnerVerb(boldMatch[1]);
+          } else if (!spinnerVerb) {
+            const clean = delta.replace(/[#*`\n]/g, ' ').replace(/\s+/g, ' ').trim();
+            if (clean.length > 10) setSpinnerVerb(clean.slice(0, 60));
+          }
         },
         onToolStart: (callId, toolName, args) => {
+          setSpinnerRunning(toolName);
           const argPreview = typeof args === 'object' && args !== null
             ? Object.entries(args as Record<string, unknown>).slice(0, 2).map(([k, v]) => `${k}=${String(v).slice(0, 40)}`).join(', ')
             : '';
@@ -949,6 +962,8 @@ export function App({ options }: { options: TUIOptions }): React.ReactNode {
           }]);
         },
         onToolEnd: (callId, toolName, result) => {
+          setSpinnerRunning(undefined);
+          setSpinnerCompleted((prev) => [...prev, toolName]);
           setMessages((prev) => prev.map((m) => {
             if (m.id === `tool_${callId}`) {
               const content = [...(m.content as MessageContent[])];
@@ -982,7 +997,10 @@ export function App({ options }: { options: TUIOptions }): React.ReactNode {
     setMessages((prev) => [...prev, userMsg]);
     setIsLoading(true);
     setStreamingContent(null);
-    setSpinnerDetail(undefined);
+    setSpinnerVerb(undefined);
+    setSpinnerStatus(undefined);
+    setSpinnerCompleted([]);
+    setSpinnerRunning(undefined);
     streamBufferRef.current = ''; // Clear buffer
     if (streamFlushRef.current) { clearTimeout(streamFlushRef.current); streamFlushRef.current = null; }
 
@@ -1242,7 +1260,10 @@ export function App({ options }: { options: TUIOptions }): React.ReactNode {
       commands={replCommands}
       askUserQuestion={askUserQuestion}
       spinnerTokenCount={tokenTrackerRef.current?.totalBlended}
-      spinnerDetail={spinnerDetail}
+      spinnerVerb={spinnerVerb}
+      spinnerStatus={spinnerStatus}
+      spinnerRunning={spinnerRunning}
+      spinnerCompleted={spinnerCompleted}
       welcome={<WelcomeScreen appName="Jarvis" subtitle="AI Coding Assistant" model={parseModelName(modelRef.current).cleanName} color="#00BFFF" tips={['Type a message to start', 'Use /help to see commands', 'Ctrl+C twice to exit']} />}
     />
   );

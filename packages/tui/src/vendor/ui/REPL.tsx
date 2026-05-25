@@ -57,7 +57,10 @@ export type REPLProps = {
   renderMessage?: (message: Message) => React.ReactNode;
   spinner?: React.ReactNode;
   spinnerTokenCount?: number;
-  spinnerDetail?: string;
+  spinnerVerb?: string;
+  spinnerStatus?: string;
+  spinnerRunning?: string;
+  spinnerCompleted?: string[];
 };
 
 export function REPL({
@@ -79,7 +82,10 @@ export function REPL({
   renderMessage,
   spinner,
   spinnerTokenCount,
-  spinnerDetail,
+  spinnerVerb,
+  spinnerStatus,
+  spinnerRunning,
+  spinnerCompleted,
 }: REPLProps): React.ReactNode {
   const { exit } = useApp();
   const [inputValue, setInputValue] = useState("");
@@ -206,7 +212,15 @@ export function REPL({
 
         {isLoading && !streamingContent && (
           <Box marginTop={messages.length > 0 ? 1 : 0}>
-            {spinner ?? <Spinner tokenCount={spinnerTokenCount} detail={spinnerDetail} />}
+            {spinner ?? (
+              <Spinner
+                tokenCount={spinnerTokenCount}
+                verb={spinnerVerb}
+                status={spinnerStatus}
+                running={spinnerRunning}
+                completed={spinnerCompleted}
+              />
+            )}
           </Box>
         )}
       </Box>
