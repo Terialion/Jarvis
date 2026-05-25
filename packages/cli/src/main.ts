@@ -180,11 +180,12 @@ export function registerSkillCommands(
   skills: SkillRegistry,
 ): void {
   for (const skill of skills.listLoadable()) {
-    if (!skill.slashCommand) continue;
+    // Prefer explicit slashCommand, fall back to skill name (CC/Codex convention)
+    const cmdName = skill.slashCommand || skill.name;
     commands.register({
-      name: skill.slashCommand,
+      name: cmdName,
       description: skill.description,
-      usage: `/${skill.slashCommand}`,
+      usage: `/${cmdName}`,
       category: 'skills',
       execute: async (_args, _ctx) => {
         return `Skill "${skill.name}" activated. Your next message will be processed with this skill's instructions.`;

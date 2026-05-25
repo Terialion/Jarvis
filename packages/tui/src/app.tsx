@@ -631,27 +631,35 @@ function buildReplCommands(
     },
   }));
 
-  // Add skill-derived slash commands
+  // Auto-derive slash commands from skill names (CC/Codex convention)
   if (skills) {
+    const seen = new Set(builtins.map((c) => c.name));
     const skillCmds = skills.listLoadable()
-      .filter((s) => s.slashCommand)
-      .map((s) => ({
-        name: s.slashCommand!,
-        description: s.description,
-        onExecute: (_rawArgs: string, fullInput: string) => {
-          const userMsg: Message = {
-            id: `cmd_${Date.now()}`,
-            role: 'user',
-            content: fullInput,
-            timestamp: Date.now(),
-          };
-          setMessages((prev) => [
-            ...prev,
-            userMsg,
-            makeSysMsg(`Skill "${s.name}" activated. Your next message will be processed with this skill's instructions.`),
-          ]);
-        },
-      }));
+      .filter((s) => {
+        const cmdName = s.slashCommand || s.name;
+        return !seen.has(cmdName);
+      })
+      .map((s) => {
+        const cmdName = s.slashCommand || s.name;
+        seen.add(cmdName);
+        return {
+          name: cmdName,
+          description: s.description,
+          onExecute: (_rawArgs: string, fullInput: string) => {
+            const userMsg: Message = {
+              id: `cmd_${Date.now()}`,
+              role: 'user',
+              content: fullInput,
+              timestamp: Date.now(),
+            };
+            setMessages((prev) => [
+              ...prev,
+              userMsg,
+              makeSysMsg(`Skill "${s.name}" activated. Your next message will be processed with this skill's instructions.`),
+            ]);
+          },
+        };
+      });
 
     return [...builtins, ...skillCmds];
   }
