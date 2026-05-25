@@ -46,6 +46,10 @@ export interface AgentLoopConfig {
   onToken?: (token: string) => void;
   /** Streaming reasoning/thinking callback. */
   onReasoningDelta?: (delta: string) => void;
+  /** Called when a tool starts executing. */
+  onToolStart?: (toolCallId: string, toolName: string, args: Record<string, unknown>) => void;
+  /** Called when a tool finishes executing. */
+  onToolEnd?: (toolCallId: string, toolName: string, result: ToolResult) => void;
 }
 
 export interface TurnResult {
@@ -332,6 +336,7 @@ export class AgentLoop {
           this.eventBus?.emit('tool:executing', {
             turnId, turn, toolName: tc.name, args: tc.arguments,
           });
+          this.config.onToolStart?.(tc.callId, tc.name, tc.arguments);
 
           let toolResult: ToolResult;
           if (this.tools) {
@@ -375,6 +380,7 @@ export class AgentLoop {
             contentLength: toolResult.content.length,
             durationMs: toolResult.durationMs,
           });
+          this.config.onToolEnd?.(tc.callId, tc.name, toolResult);
         }
         continue;
       }
@@ -663,6 +669,7 @@ export class AgentLoop {
 
           toolCallsLog.push({ name: call.name, arguments: call.arguments, callId: call.callId });
           this._emit(events, turnId, 'tool_call_started', { step, tool_call: { name: call.name, arguments: call.arguments } });
+          this.config.onToolStart?.(call.callId, call.name, call.arguments);
 
           // Execute tool
           let result: ToolResult;
@@ -725,6 +732,7 @@ export class AgentLoop {
           const resultDict = { ...result, content: result.content };
           toolResultsLog.push(resultDict);
           this._emit(events, turnId, 'tool_call_completed', { step, tool_result: resultDict });
+          this.config.onToolEnd?.(call.callId, call.name, result);
 
           // Hooks: post_tool_use (fire-and-forget, audit-only)
           if (this.hooks) {

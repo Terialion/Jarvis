@@ -929,9 +929,37 @@ export function App({ options }: { options: TUIOptions }): React.ReactNode {
             if (!prev || !prev.startsWith('Thinking')) return `Thinking: ${delta}`;
             return prev + delta;
           });
-          // Extract **bold** text from reasoning as spinner detail
           const match = delta.match(/\*\*([^*]+)\*\*/);
           if (match) setSpinnerDetail(match[1]);
+        },
+        onToolStart: (callId, toolName, args) => {
+          const argPreview = typeof args === 'object' && args !== null
+            ? Object.entries(args as Record<string, unknown>).slice(0, 2).map(([k, v]) => `${k}=${String(v).slice(0, 40)}`).join(', ')
+            : '';
+          setMessages((prev) => [...prev, {
+            id: `tool_${callId}`,
+            role: 'assistant',
+            content: [{
+              type: 'tool_use' as const,
+              toolName,
+              input: argPreview,
+              status: 'running' as const,
+            }],
+            timestamp: Date.now(),
+          }]);
+        },
+        onToolEnd: (callId, toolName, result) => {
+          setMessages((prev) => prev.map((m) => {
+            if (m.id === `tool_${callId}`) {
+              const content = [...(m.content as MessageContent[])];
+              const toolBlock = content.find((c) => c.type === 'tool_use');
+              if (toolBlock && 'status' in toolBlock) {
+                const updated = { ...toolBlock, status: result.ok ? 'success' as const : 'error' as const, result: result.content.slice(0, 2000) };
+                return { ...m, content: content.map((c) => c.type === 'tool_use' ? updated : c) };
+              }
+            }
+            return m;
+          }));
         },
       });
     }
@@ -1009,15 +1037,9 @@ export function App({ options }: { options: TUIOptions }): React.ReactNode {
             taskCountRef.current = parsed.counts;
           }
           content.push(parsed);
-        } else {
-          content.push({
-            type: 'tool_use',
-            toolName: tr.name,
-            input: '',
-            result: tr.content.slice(0, 2000),
-            status: tr.ok ? 'success' : 'error',
-          });
         }
+        // Note: tool_use blocks already pushed via onToolStart/onToolEnd
+        // during agent execution — skip here to avoid duplicates.
       }
 
       if (result.answer) {
