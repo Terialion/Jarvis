@@ -14,14 +14,21 @@ export type WelcomeScreenProps = {
   color?: string;
 };
 
-export function ClawdLogo({ color = DEFAULT_COLOR }: { color?: string }): React.ReactNode {
+export function ArcReactorLogo({ color = DEFAULT_COLOR }: { color?: string }): React.ReactNode {
   return (
     <Box flexDirection="column">
-      <Text color={color}>{" ▐▛███▜▌"}</Text>
-      <Text color={color}>{"▝▜█████▛▘"}</Text>
-      <Text color={color}>{"  ▘▘ ▝▝  "}</Text>
+      <Text color={color}>{"   ╭─────────╮"}</Text>
+      <Text color={color}>{"  ╱  ▗▖  ▗▖  ╲"}</Text>
+      <Text color={color}>{"  │   ◈▽◈   │"}</Text>
+      <Text color={color}>{"  ╲  ▝▖  ▝▖  ╱"}</Text>
+      <Text color={color}>{"   ╰─────────╯"}</Text>
     </Box>
   );
+}
+
+/** @deprecated Use ArcReactorLogo instead */
+export function ClawdLogo({ color = DEFAULT_COLOR }: { color?: string }): React.ReactNode {
+  return <ArcReactorLogo color={color} />;
 }
 
 export function WelcomeScreen({
@@ -33,7 +40,7 @@ export function WelcomeScreen({
   model,
   color = DEFAULT_COLOR,
 }: WelcomeScreenProps): React.ReactNode {
-  const logoNode = logo ?? <ClawdLogo color={color} />;
+  const logoNode = logo ?? <ArcReactorLogo color={color} />;
   const tipKeys = tips ? getStableKeys(tips, (tip) => tip) : [];
 
   return (

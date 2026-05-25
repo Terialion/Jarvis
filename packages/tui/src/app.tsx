@@ -1156,7 +1156,7 @@ export function App({ options }: { options: TUIOptions }): React.ReactNode {
       statusSegments={statusSegments}
       commands={replCommands}
       askUserQuestion={askUserQuestion}
-      welcome={<WelcomeScreen appName="Jarvis" subtitle="AI Coding Assistant" model={parseModelName(modelRef.current).cleanName} tips={['Type a message to start', 'Use /help to see commands', 'Ctrl+C twice to exit']} />}
+      welcome={<WelcomeScreen appName="Jarvis" subtitle="AI Coding Assistant" model={parseModelName(modelRef.current).cleanName} color="#00BFFF" tips={['Type a message to start', 'Use /help to see commands', 'Ctrl+C twice to exit']} />}
     />
   );
 }
