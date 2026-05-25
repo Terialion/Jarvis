@@ -8,6 +8,7 @@ import { REPL } from './vendor/ui/REPL.js';
 import type { Message, MessageContent } from './vendor/ui/MessageList.js';
 import type { StatusLineSegment } from './vendor/ui/StatusLine.js';
 import { WelcomeScreen, ClawdLogo } from './vendor/ui/WelcomeScreen.js';
+import { loadSettings, saveSettings, type UserSettings } from './settings-store.js';
 import { AgentLoop, ConversationSummarizer, TokenTracker, formatTokensCompact, parseModelName } from '@jarvis/agent';
 import {
   ToolRegistry,
@@ -37,6 +38,7 @@ import type { ChatMessage } from '@jarvis/shared';
 interface SlashCommandCtx {
   store: SessionStore | null;
   sid: string | null;
+  skills?: SkillRegistry | null;
   historyRef: React.MutableRefObject<ChatMessage[]>;
   messages: Message[];
   setMessages: (v: Message[] | ((prev: Message[]) => Message[])) => void;
@@ -260,6 +262,7 @@ const SLASH_COMMANDS: SlashCommandDef[] = [
     handler: (args, ctx) => {
       if (args.length > 0) {
         ctx.modelRef.current = args[0];
+        saveSettings({ model: args[0] });
         return `Model set to: ${args[0]} (effective on next turn)`;
       }
       return `Current model: ${parseModelName(ctx.modelRef.current).cleanName}`;
@@ -440,6 +443,7 @@ const SLASH_COMMANDS: SlashCommandDef[] = [
       if (key === 'model') {
         if (!value) return `model = ${ctx.modelRef.current}`;
         ctx.modelRef.current = value;
+        saveSettings({ model: value });
         return `model = ${value} (effective next turn)`;
       }
 
@@ -474,6 +478,7 @@ const SLASH_COMMANDS: SlashCommandDef[] = [
         return `Invalid style "${style}". Options: ${validStyles.join(', ')}`;
       }
       ctx.outputStyleRef.current = style;
+      saveSettings({ output_style: style as UserSettings['output_style'] });
       return `Output style set to: ${style}`;
     },
   },
@@ -553,7 +558,30 @@ const SLASH_COMMANDS: SlashCommandDef[] = [
         return `Invalid mode "${mode}". Options: ${modes.join(', ')}`;
       }
       ctx.permissionModeRef.current = mode;
+      saveSettings({ permission_mode: mode as UserSettings['permission_mode'] });
       return `Permission mode set to: ${mode}`;
+    },
+  },
+  {
+    name: 'skills',
+    description: 'List available skills with descriptions',
+    usage: '/skills [search]',
+    handler: (_args, ctx) => {
+      if (!ctx.skills) return 'Skills not loaded yet.';
+      const all = ctx.skills.listLoadable();
+      const search = _args.join(' ').toLowerCase();
+      const filtered = search
+        ? all.filter((s) => s.name.toLowerCase().includes(search) || s.description.toLowerCase().includes(search))
+        : all;
+      if (filtered.length === 0) return `No skills matching "${search}".`;
+      const lines = filtered.map((s) => {
+        const tagStr = s.tags?.length ? ` [${s.tags.join(', ')}]` : '';
+        return `  ${s.name}${tagStr} — ${s.description}`;
+      });
+      const header = search
+        ? `Skills matching "${search}" (${filtered.length}):`
+        : `Available skills (${filtered.length}):`;
+      return `${header}\n\n${lines.join('\n')}`;
     },
   },
 ];
@@ -701,10 +729,11 @@ export function App({ options }: { options: TUIOptions }): React.ReactNode {
   const sessionStoreRef = useRef<SessionStore | null>(null);
   const sessionIdRef = useRef<string | null>(null);
   const sessionReadyRef = useRef(false);
-  const modelRef = useRef<string>(options.model);
+  const savedSettings = loadSettings();
+  const modelRef = useRef<string>(savedSettings.model || options.model);
   const modifiedFilesRef = useRef<Set<string>>(new Set());
-  const outputStyleRef = useRef<string>('default');
-  const permissionModeRef = useRef<string>('workspace_write');
+  const outputStyleRef = useRef<string>(savedSettings.output_style || 'default');
+  const permissionModeRef = useRef<string>(savedSettings.permission_mode || 'workspace_write');
   const poolRef = useRef<SubagentPool | null>(null);
   const mcpRef = useRef<MCPClient | null>(null);
   const tokenTrackerRef = useRef<TokenTracker | null>(null);
@@ -1039,6 +1068,7 @@ export function App({ options }: { options: TUIOptions }): React.ReactNode {
         {
           store: sessionStoreRef.current,
           sid: sessionIdRef.current,
+          skills: skillsRef.current,
           historyRef,
           messages,
           setMessages,
