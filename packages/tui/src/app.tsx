@@ -681,6 +681,7 @@ export function App({ options }: { options: TUIOptions }): React.ReactNode {
   const tokenTrackerRef = useRef<TokenTracker | null>(null);
   const elapsedRef = useRef<number>(0);
   const elapsedTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const taskCountRef = useRef<{ pending: number; in_progress: number; completed: number }>({ pending: 0, in_progress: 0, completed: 0 });
 
   // AskUserQuestion bridge state
   const [askQuestions, setAskQuestions] = useState<AskQuestionDef[] | null>(null);
@@ -895,6 +896,9 @@ export function App({ options }: { options: TUIOptions }): React.ReactNode {
 
         const parsed = parseToolContent(tr.name, tr.content);
         if (parsed) {
+          if (parsed.type === 'task_result' && parsed.counts) {
+            taskCountRef.current = parsed.counts;
+          }
           content.push(parsed);
         } else {
           content.push({
@@ -1013,6 +1017,17 @@ export function App({ options }: { options: TUIOptions }): React.ReactNode {
       segs.push({
         content: `${formatTokensCompact(blended)} tokens (${pct}% left)`,
       });
+    }
+
+    // Task count
+    const tc = taskCountRef.current;
+    const activeCount = tc.pending + tc.in_progress;
+    if (activeCount > 0 || tc.completed > 0) {
+      const parts: string[] = [];
+      if (tc.in_progress > 0) parts.push(`▶${tc.in_progress}`);
+      if (tc.pending > 0) parts.push(`○${tc.pending}`);
+      if (tc.completed > 0) parts.push(`✓${tc.completed}`);
+      segs.push({ content: `tasks: ${parts.join(' ')}` });
     }
 
     // Elapsed time
