@@ -32,17 +32,19 @@ export { webSearchTool, webSearchSchema, createWebSearchTool, createWebSearchHan
 export { webFetchTool, webFetchSchema, createWebFetchHandler, type WebFetchBackend } from './builtin/web-fetch.js';
 export { askUserQuestionTool, setAskUserQuestionBridge } from './builtin/ask-user-question.js';
 export type { AskQuestionDef, AskUserQuestionCallback } from './builtin/ask-user-question.js';
-export { taskCreateTool, taskUpdateTool, taskListTool, taskGetTool } from './builtin/task.js';
-export type { TaskItem } from './builtin/task.js';
+export { taskCreateTool, taskUpdateTool, taskListTool, taskGetTool, taskOutputTool, taskStopTool, getBackgroundTaskRegistry } from './builtin/task.js';
+export type { TaskItem, BackgroundTask } from './builtin/task.js';
 export { enterPlanModeTool, exitPlanModeTool } from './builtin/plan-mode.js';
 export { notebookEditTool, notebookEditSchema } from './builtin/notebook-edit.js';
 export { cronCreateTool, cronDeleteTool, cronListTool, scheduleWakeupTool } from './builtin/cron.js';
 export { CronScheduler, getCronScheduler } from './builtin/cron-scheduler.js';
 export type { CronJob } from './builtin/cron-scheduler.js';
 export { enterWorktreeTool, exitWorktreeTool } from './builtin/worktree.js';
-export { createSkillLoadTool, createSkillLoadHandler, type SkillSupplier } from './builtin/skill-load.js';
+export { createSkillLoadTool, createSkillLoadHandler, createSkillTool, createSkillHandler, type SkillSupplier } from './builtin/skill-load.js';
 export { createAgentTool, createAgentHandler, type AgentPool } from './builtin/agent.js';
 export { createListMcpResourcesTool, createReadMcpResourceTool, type McpResourceClient } from './builtin/mcp-resource.js';
+export { createMcpToolEntries, type McpToolClient } from './builtin/mcp-tools.js';
+export { TavilySearchBackend, TavilyFetchBackend, tryCreateTavilySearch, tryCreateTavilyFetch, type TavilyOptions } from './builtin/tavily-backend.js';
 
 import type { ToolEntry } from './registry.js';
 import { bashTool } from './builtin/bash.js';
@@ -51,10 +53,8 @@ import { writeFileTool } from './builtin/file-write.js';
 import { editFileTool } from './builtin/file-edit.js';
 import { globTool } from './builtin/glob.js';
 import { grepTool } from './builtin/grep.js';
-import { webSearchTool } from './builtin/web-search.js';
-import { webFetchTool } from './builtin/web-fetch.js';
 import { askUserQuestionTool } from './builtin/ask-user-question.js';
-import { taskCreateTool, taskUpdateTool, taskListTool, taskGetTool } from './builtin/task.js';
+import { taskCreateTool, taskUpdateTool, taskListTool, taskGetTool, taskOutputTool, taskStopTool } from './builtin/task.js';
 import { enterPlanModeTool, exitPlanModeTool } from './builtin/plan-mode.js';
 import { notebookEditTool } from './builtin/notebook-edit.js';
 import { cronCreateTool, cronDeleteTool, cronListTool, scheduleWakeupTool } from './builtin/cron.js';
@@ -68,13 +68,13 @@ export const allBuiltinTools: ToolEntry[] = [
   editFileTool,
   globTool,
   grepTool,
-  webSearchTool,
-  webFetchTool,
   askUserQuestionTool,
   taskCreateTool,
   taskUpdateTool,
   taskListTool,
   taskGetTool,
+  taskOutputTool,
+  taskStopTool,
   enterPlanModeTool,
   exitPlanModeTool,
   notebookEditTool,

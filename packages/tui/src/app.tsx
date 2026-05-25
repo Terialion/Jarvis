@@ -13,9 +13,11 @@ import {
   allBuiltinTools,
   setAskUserQuestionBridge,
   createSkillLoadTool,
+  createSkillTool,
   createAgentTool,
   createListMcpResourcesTool,
   createReadMcpResourceTool,
+  createMcpToolEntries,
 } from '@jarvis/tools';
 import type { AskQuestionDef } from '@jarvis/tools';
 import { SkillRegistry, SkillExecutor } from '@jarvis/skills';
@@ -721,13 +723,17 @@ export function App({ options }: { options: TUIOptions }): React.ReactNode {
         executorRef.current = new SkillExecutor(skillsRef.current);
       }
       tools.register(createSkillLoadTool(skillsRef.current));
+      tools.register(createSkillTool(skillsRef.current));
 
-      // MCP client — wire resource listing/reading tools
+      // MCP client — wire resource listing/reading tools + dynamic tool exposure
       if (!mcpRef.current) {
         mcpRef.current = new MCPClient();
       }
       tools.register(createListMcpResourcesTool(mcpRef.current));
       tools.register(createReadMcpResourceTool(mcpRef.current));
+      for (const mcpTool of createMcpToolEntries(mcpRef.current)) {
+        tools.register(mcpTool);
+      }
 
       // Subagent pool — wire Agent tool
       if (!poolRef.current) {
@@ -746,6 +752,7 @@ export function App({ options }: { options: TUIOptions }): React.ReactNode {
             }
           }
           subTools.register(createSkillLoadTool(skillsRef.current!));
+          subTools.register(createSkillTool(skillsRef.current!));
 
           const subLoop = new AgentLoop({
             model: {

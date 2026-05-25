@@ -6,6 +6,7 @@ import * as fs from 'node:fs';
 import { exec, type ExecOptions } from 'node:child_process';
 import { toOpenAITool } from '@jarvis/shared';
 import type { ToolEntry, ToolHandler, ToolContext } from '../registry.js';
+import { getBackgroundTaskRegistry } from './task.js';
 
 // ---- schema ----
 
@@ -27,6 +28,11 @@ export const bashSchema = toOpenAITool({
         type: 'number',
         default: 120000,
         description: 'Maximum execution time in milliseconds',
+      },
+      run_in_background: {
+        type: 'boolean',
+        default: false,
+        description: 'Set to true to run in the background. Returns a task_id for use with task_output/task_stop.',
       },
     },
     required: ['command'],
@@ -53,61 +59,57 @@ function detectShell(): string {
 
 // ---- handler ----
 
-const bashHandler: ToolHandler = (args, _context) => {
-  return new Promise<string>((resolve) => {
-    const command = String(args.command ?? '');
-    const timeout = Number(args.timeout ?? 120_000);
-    const workdir = args.workdir ? String(args.workdir) : undefined;
-
-    if (!command.trim()) {
-      resolve(JSON.stringify({ error: 'No command provided' }));
-      return;
-    }
-
-    const options: ExecOptions = {
-      timeout,
-      maxBuffer: 10 * 1024 * 1024, // 10 MB
-      cwd: workdir,
-      shell: detectShell(),
-    };
-
+function doExec(command: string, timeout: number, workdir?: string): Promise<{ result?: string; error?: string }> {
+  return new Promise((resolve) => {
+    const options: ExecOptions = { timeout, maxBuffer: 10 * 1024 * 1024, cwd: workdir, shell: detectShell() };
+    let settled = false;
     const child = exec(command, options, (error, stdout, stderr) => {
+      if (settled) return;
+      settled = true;
       if (error) {
-        // exec error — non-zero exit or timeout
-        const errAny = error as { code?: number; killed?: boolean; message: string };
-        resolve(
-          JSON.stringify({
-            exitCode: errAny.code ?? 1,
-            stdout: stdout || '',
-            stderr: stderr || '',
-            killed: errAny.killed ?? false,
-            error: error.message,
-          }),
-        );
+        resolve({ result: JSON.stringify({ exitCode: (error as { code?: number }).code ?? 1, stdout: stdout || '', stderr: stderr || '', killed: (error as { killed?: boolean }).killed ?? false, error: error.message }) });
       } else {
-        resolve(
-          JSON.stringify({
-            exitCode: 0,
-            stdout,
-            stderr,
-          }),
-        );
+        resolve({ result: JSON.stringify({ exitCode: 0, stdout, stderr }) });
       }
     });
-
-    // If no response within timeout, kill the process
-    const killTimer = setTimeout(() => {
-      child.kill('SIGTERM');
-      // Give it a moment, then force kill
-      setTimeout(() => {
-        if (!child.killed) {
-          child.kill('SIGKILL');
-        }
-      }, 2000);
-    }, timeout);
-
+    const killTimer = setTimeout(() => { child.kill('SIGTERM'); setTimeout(() => { if (!child.killed) child.kill('SIGKILL'); }, 2000); }, timeout);
     child.on('close', () => clearTimeout(killTimer));
   });
+}
+
+const bashHandler: ToolHandler = (args, _context) => {
+  const command = String(args.command ?? '');
+  const timeout = Number(args.timeout ?? 120_000);
+  const workdir = args.workdir ? String(args.workdir) : undefined;
+  const runInBackground = args.run_in_background === true;
+
+  if (!command.trim()) return JSON.stringify({ error: 'No command provided' });
+
+  if (runInBackground) {
+    const registry = getBackgroundTaskRegistry();
+    let cancelFn!: () => void;
+    const taskPromise = new Promise<{ result?: string; error?: string }>((resolve) => {
+      const options: ExecOptions = { timeout, maxBuffer: 10 * 1024 * 1024, cwd: workdir, shell: detectShell() };
+      let settled = false;
+      const child = exec(command, options, (error, stdout, stderr) => {
+        if (settled) return;
+        settled = true;
+        if (error) {
+          resolve({ result: JSON.stringify({ exitCode: (error as { code?: number }).code ?? 1, stdout: stdout || '', stderr: stderr || '', killed: (error as { killed?: boolean }).killed ?? false, error: error.message }) });
+        } else {
+          resolve({ result: JSON.stringify({ exitCode: 0, stdout, stderr }) });
+        }
+      });
+      cancelFn = () => { if (!settled) { settled = true; child.kill('SIGKILL'); resolve({ result: JSON.stringify({ exitCode: -1, stdout: '', stderr: '', killed: true, error: 'Task cancelled' }) }); } };
+      const killTimer = setTimeout(() => { child.kill('SIGTERM'); setTimeout(() => { if (!child.killed && !settled) child.kill('SIGKILL'); }, 2000); }, timeout);
+      child.on('close', () => clearTimeout(killTimer));
+    });
+    const taskId = registry.register({ type: 'bash', status: 'running', description: `bash: ${command.slice(0, 80)}`, promise: taskPromise, cancel: cancelFn });
+    return JSON.stringify({ task_id: taskId, status: 'running', message: `Background task "${taskId}" started: ${command.slice(0, 80)}` });
+  }
+
+  // Foreground mode
+  return doExec(command, timeout, workdir).then((r) => r.result ?? JSON.stringify({ error: 'Unknown error' }));
 };
 
 // ---- availability check ----

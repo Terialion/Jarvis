@@ -45,25 +45,22 @@ export const exitPlanModeSchema = toOpenAITool({
         description: 'One-line summary of the plan.',
       },
       steps: {
-        type: 'array',
-        minItems: 1,
+        type: 'array', minItems: 1,
         items: {
           type: 'object',
           properties: {
             step: { type: 'string', description: 'Step description.' },
-            files: {
-              type: 'array',
-              items: { type: 'string' },
-              description: 'Files that will be modified.',
-            },
-            verification: {
-              type: 'string',
-              description: 'How to verify this step is correct.',
-            },
+            files: { type: 'array', items: { type: 'string' }, description: 'Files that will be modified.' },
+            verification: { type: 'string', description: 'How to verify this step is correct.' },
           },
           required: ['step'],
         },
         description: 'Ordered implementation steps.',
+      },
+      allowedPrompts: {
+        type: 'array',
+        items: { type: 'object', properties: { tool: { type: 'string', enum: ['Bash'] }, prompt: { type: 'string' } }, required: ['tool', 'prompt'] },
+        description: 'Prompt-based permissions needed to implement the plan.',
       },
     },
     required: ['summary'],
@@ -71,8 +68,9 @@ export const exitPlanModeSchema = toOpenAITool({
 });
 
 const exitPlanModeHandler: ToolHandler = (args) => {
-  const params = args as { summary: string; steps?: Array<{ step: string; files?: string[]; verification?: string }> };
+  const params = args as { summary: string; steps?: Array<{ step: string; files?: string[]; verification?: string }>; allowedPrompts?: Array<{ tool: string; prompt: string }> };
   const steps = params.steps ?? [];
+  const allowedPrompts = params.allowedPrompts ?? [];
   const planLines = [
     `## Plan: ${params.summary}`,
     '',
@@ -81,12 +79,9 @@ const exitPlanModeHandler: ToolHandler = (args) => {
       const verify = s.verification ? ` → verify: ${s.verification}` : '';
       return `${i + 1}. ${s.step}${files}${verify}`;
     }),
+    ...(allowedPrompts.length > 0 ? ['', '## Required permissions', ...allowedPrompts.map((p) => `- **${p.tool}**: ${p.prompt}`)] : []),
   ];
-
-  return JSON.stringify({
-    plan_mode: false,
-    message: planLines.join('\n'),
-  });
+  return JSON.stringify({ plan_mode: false, message: planLines.join('\n'), allowedPrompts: allowedPrompts.length > 0 ? allowedPrompts : undefined });
 };
 
 // ---- entries ----

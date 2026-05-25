@@ -311,14 +311,14 @@ describe('built-in commands', () => {
     const result = await registry.execute('memory', [], ctx);
     expect(result).toBeTruthy();
     expect(typeof result).toBe('string');
-    expect(result.length).toBeGreaterThan(0);
+    expect(result!.length).toBeGreaterThan(0);
   });
 
   it('/sessions returns session information', async () => {
     const result = await registry.execute('sessions', [], ctx);
     expect(result).toBeTruthy();
     expect(typeof result).toBe('string');
-    expect(result.length).toBeGreaterThan(0);
+    expect(result!.length).toBeGreaterThan(0);
   });
 
   it('has built-in commands', () => {

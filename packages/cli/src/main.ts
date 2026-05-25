@@ -7,7 +7,7 @@ import * as path from 'node:path';
 import * as fs from 'node:fs';
 import { parseArgs } from 'node:util';
 import { LLMProvider, AgentLoop } from '@jarvis/agent';
-import { ToolRegistry, allBuiltinTools, createSkillLoadTool, createAgentTool, createListMcpResourcesTool, createReadMcpResourceTool } from '@jarvis/tools';
+import { ToolRegistry, allBuiltinTools, createSkillLoadTool, createSkillTool, createAgentTool, createListMcpResourcesTool, createReadMcpResourceTool, createMcpToolEntries, webSearchTool, webFetchTool, createWebSearchTool, createWebFetchHandler, tryCreateTavilySearch, tryCreateTavilyFetch } from '@jarvis/tools';
 import { HookRegistry } from '@jarvis/hooks';
 import { SkillRegistry, SkillExecutor } from '@jarvis/skills';
 import { SubagentPool, toolWhitelistForType, type SubagentConfig } from '@jarvis/subagents';
@@ -194,6 +194,19 @@ export function registerSkillCommands(
 }
 
 // ============================================================================
+// Web tool wiring
+// ============================================================================
+
+function registerWebTools(tools: ToolRegistry): void {
+  const tavilySearch = tryCreateTavilySearch();
+  const tavilyFetch = tryCreateTavilyFetch();
+  if (tavilySearch) { tools.register(createWebSearchTool(tavilySearch)); }
+  else { tools.register(webSearchTool); }
+  if (tavilyFetch) { tools.register({ ...webFetchTool, handler: createWebFetchHandler(tavilyFetch) }); }
+  else { tools.register(webFetchTool); }
+}
+
+// ============================================================================
 // Bootstrap
 // ============================================================================
 
@@ -212,17 +225,22 @@ export function bootstrap(options: CLIOptions): CLIContext {
   for (const tool of allBuiltinTools) {
     tools.register(tool);
   }
+  registerWebTools(tools);
 
   // Skills
   const skills = createSkillRegistry();
 
-  // Register skill.load tool (links tool registry to skill system)
+  // Register skill tools (load + direct invocation)
   tools.register(createSkillLoadTool(skills));
+  tools.register(createSkillTool(skills));
 
-  // MCP client — wire resource listing/reading tools
+  // MCP client — wire resource + dynamic tool exposure
   const mcpClient = new MCPClient();
   tools.register(createListMcpResourcesTool(mcpClient));
   tools.register(createReadMcpResourceTool(mcpClient));
+  for (const mcpTool of createMcpToolEntries(mcpClient)) {
+    tools.register(mcpTool);
+  }
 
   // Subagent pool — wire Agent tool for subagent spawning
   const subagentPool = new SubagentPool();
@@ -238,6 +256,7 @@ export function bootstrap(options: CLIOptions): CLIContext {
       }
     }
     subTools.register(createSkillLoadTool(skills));
+    subTools.register(createSkillTool(skills));
 
     const subLoop = new AgentLoop({
       model: { model: options.model },
@@ -323,15 +342,20 @@ export async function runOneShot(options: CLIOptions): Promise<string> {
   for (const tool of allBuiltinTools) {
     tools.register(tool);
   }
+  registerWebTools(tools);
 
   const skills = createSkillRegistry();
   tools.register(createSkillLoadTool(skills));
+  tools.register(createSkillTool(skills));
   const skillExecutor = new SkillExecutor(skills);
 
-  // MCP client — wire resource tools
+  // MCP client — wire resource tools + dynamic tool exposure
   const mcpClient = new MCPClient();
   tools.register(createListMcpResourcesTool(mcpClient));
   tools.register(createReadMcpResourceTool(mcpClient));
+  for (const mcpTool of createMcpToolEntries(mcpClient)) {
+    tools.register(mcpTool);
+  }
 
   // Subagent pool — wire Agent tool
   const subagentPool = new SubagentPool();
@@ -344,6 +368,7 @@ export async function runOneShot(options: CLIOptions): Promise<string> {
       }
     }
     subTools.register(createSkillLoadTool(skills));
+    subTools.register(createSkillTool(skills));
 
     const subLoop = new AgentLoop({
       model: { model: options.model },

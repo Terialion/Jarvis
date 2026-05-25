@@ -284,3 +284,110 @@ export const taskGetTool: ToolEntry = {
   emoji: '🔍',
   description: 'Get full details of a single task by ID.',
 };
+
+// ============================================================================
+// Background task registry
+// ============================================================================
+
+export interface BackgroundTask {
+  id: string;
+  type: 'bash' | 'agent';
+  status: 'running' | 'completed' | 'errored';
+  description: string;
+  startedAt: number;
+  promise: Promise<{ result?: string; error?: string }>;
+  cancel: () => void;
+}
+
+const backgroundTasks = new Map<string, BackgroundTask>();
+let bgTaskSeq = 0;
+
+export function getBackgroundTaskRegistry() {
+  return {
+    register(task: Omit<BackgroundTask, 'id' | 'startedAt'>): string {
+      const id = `bg_${++bgTaskSeq}`;
+      const bgTask: BackgroundTask = { ...task, id, startedAt: Date.now() };
+      backgroundTasks.set(id, bgTask);
+      bgTask.promise
+        .then(() => { const t = backgroundTasks.get(id); if (t) t.status = 'completed'; })
+        .catch(() => { const t = backgroundTasks.get(id); if (t) t.status = 'errored'; })
+        .finally(() => { setTimeout(() => backgroundTasks.delete(id), 10 * 60_000); });
+      return id;
+    },
+    get(id: string): BackgroundTask | undefined { return backgroundTasks.get(id); },
+    list(): BackgroundTask[] { return [...backgroundTasks.values()]; },
+    cancel(id: string): boolean {
+      const task = backgroundTasks.get(id);
+      if (!task) return false;
+      if (task.status === 'running') task.cancel();
+      backgroundTasks.delete(id);
+      return true;
+    },
+  };
+}
+
+// ---- task_output ----
+
+export const taskOutputSchema = toOpenAITool({
+  name: 'task_output',
+  description: 'Retrieve output from a running or completed background task (shell, agent, or remote session). Takes a task_id and optionally block=true to wait for completion.',
+  parameters: {
+    type: 'object',
+    properties: {
+      task_id: { type: 'string', description: 'The task ID to get output from.' },
+      block: { type: 'boolean', default: true, description: 'Whether to wait for completion.' },
+      timeout: { type: 'number', default: 30000, description: 'Max wait time in ms.' },
+    },
+    required: ['task_id'],
+  },
+});
+
+const taskOutputHandler: ToolHandler = async (args, _context) => {
+  const taskId = String(args.task_id ?? '').trim();
+  const block = args.block !== false && args.block !== 'false';
+  const timeout = Math.min(600_000, Math.max(1000, Number(args.timeout ?? 30000)));
+  if (!taskId) return JSON.stringify({ error: 'Missing required parameter: task_id' });
+  const registry = getBackgroundTaskRegistry();
+  const task = registry.get(taskId);
+  if (!task) return JSON.stringify({ error: `Background task not found: ${taskId}` });
+  if (!block) return JSON.stringify({ task_id: task.id, type: task.type, status: task.status, description: task.description, message: 'Task status checked without blocking.' });
+  try {
+    const result = await Promise.race([
+      task.promise,
+      new Promise<{ _timeout: true }>((r) => setTimeout(() => r({ _timeout: true }), timeout)),
+    ]);
+    if ((result as { _timeout?: boolean })._timeout) return JSON.stringify({ task_id: task.id, type: task.type, status: task.status, message: `Task still running after ${timeout}ms timeout.` });
+    const { result: output, error } = result as { result?: string; error?: string };
+    return JSON.stringify({ task_id: task.id, type: task.type, status: error ? 'errored' : 'completed', output: output ?? '', error: error ?? null });
+  } catch (err) {
+    return JSON.stringify({ task_id: task.id, status: 'errored', error: err instanceof Error ? err.message : String(err) });
+  }
+};
+
+// ---- task_stop ----
+
+export const taskStopSchema = toOpenAITool({
+  name: 'task_stop',
+  description: 'Stop a running background task by its ID.',
+  parameters: {
+    type: 'object',
+    properties: { task_id: { type: 'string', description: 'The ID of the background task to stop.' } },
+    required: ['task_id'],
+  },
+});
+
+const taskStopHandler: ToolHandler = (args, _context) => {
+  const taskId = String(args.task_id ?? '').trim();
+  if (!taskId) return JSON.stringify({ error: 'Missing required parameter: task_id' });
+  const registry = getBackgroundTaskRegistry();
+  const ok = registry.cancel(taskId);
+  return JSON.stringify(ok ? { message: `Background task "${taskId}" stopped.` } : { error: `Background task not found: ${taskId}` });
+};
+
+export const taskOutputTool: ToolEntry = {
+  name: 'task_output', toolset: 'orchestration', schema: taskOutputSchema, handler: taskOutputHandler, isAsync: true, emoji: '📤', description: 'Retrieve output from a background task.',
+};
+
+export const taskStopTool: ToolEntry = {
+  name: 'task_stop', toolset: 'orchestration', schema: taskStopSchema, handler: taskStopHandler, isAsync: false, emoji: '🛑', description: 'Stop a running background task.',
+};

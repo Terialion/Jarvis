@@ -5,6 +5,7 @@
 
 import { toOpenAITool } from '@jarvis/shared';
 import type { ToolEntry, ToolHandler, ToolContext } from '../registry.js';
+import { getBackgroundTaskRegistry } from './task.js';
 
 // ---- minimal pool interface (avoids coupling to @jarvis/subagents) ----
 
@@ -86,16 +87,14 @@ export function createAgentHandler(pool: AgentPool): ToolHandler {
       activeAgents.set(agentId, { cancel: handle.cancel });
 
       if (runInBackground) {
-        // Don't await — return immediately
-        handle.completion
-          .then(() => activeAgents.delete(agentId))
-          .catch(() => activeAgents.delete(agentId));
-
-        return JSON.stringify({
-          agentId,
-          status: handle.status,
-          message: `Agent "${agentId}" started in background for task: ${description}`,
-        });
+        const bgRegistry = getBackgroundTaskRegistry();
+        const bgCompletion = handle.completion.then((result) => ({
+          result: JSON.stringify({ agentId: result.agentId, status: result.status, answer: result.answer ?? '', error: result.error ?? null, turnsUsed: result.turnsUsed ?? 0 }),
+        }));
+        const origCancel = handle.cancel.bind(handle);
+        const taskId = bgRegistry.register({ type: 'agent', status: 'running', description: `Agent: ${description}`, promise: bgCompletion, cancel: () => { activeAgents.delete(agentId); origCancel(); } });
+        handle.completion.then(() => activeAgents.delete(agentId)).catch(() => activeAgents.delete(agentId));
+        return JSON.stringify({ task_id: taskId, agentId, status: handle.status, message: `Agent "${agentId}" started in background (task: ${taskId}) for: ${description}` });
       }
 
       // Foreground: wait for completion

@@ -82,3 +82,46 @@ export function createSkillLoadTool(supplier: SkillSupplier): ToolEntry {
     maxResultSizeChars: 50_000,
   };
 }
+
+// ============================================================================
+// Skill — direct skill invocation (Claude Code parity)
+// ============================================================================
+
+export const skillSchema = toOpenAITool({
+  name: 'Skill',
+  description: 'Execute a skill within the main conversation. When a user invokes a slash command or skill by name, call this tool. The skill body will be loaded and its instructions should be followed step by step.',
+  parameters: {
+    type: 'object',
+    properties: {
+      skill: { type: 'string', description: 'The name of a skill to invoke.' },
+      args: { type: 'string', description: 'Optional arguments to pass to the skill.' },
+    },
+    required: ['skill'],
+  },
+});
+
+export function createSkillHandler(supplier: SkillSupplier): ToolHandler {
+  return (args: Record<string, unknown>, _context: ToolContext): string => {
+    const skillName = String(args.skill ?? '').trim();
+    const skillArgs = typeof args.args === 'string' ? args.args.trim() : undefined;
+    if (!skillName) return JSON.stringify({ error: 'Missing required parameter: skill' });
+    const skill = supplier.get(skillName);
+    if (!skill) {
+      const available = supplier.listLoadable().map((s) => s.name).join(', ');
+      return JSON.stringify({ error: `Skill "${skillName}" not found. Available skills: ${available}` });
+    }
+    if (!skill.enabled || skill.quarantined) return JSON.stringify({ error: `Skill "${skillName}" is not available (disabled or quarantined).` });
+    const body = supplier.loadBody(skill);
+    if (!body) return JSON.stringify({ error: `Skill "${skillName}" found but body could not be loaded.` });
+    let instructions = body;
+    if (skillArgs) instructions = `**Args:** ${skillArgs}\n\n${body}`;
+    return JSON.stringify({ skill_name: skill.name, body: instructions, metadata: { name: skill.name, description: skill.description, allowedTools: skill.allowedTools } });
+  };
+}
+
+export function createSkillTool(supplier: SkillSupplier): ToolEntry {
+  return {
+    name: 'Skill', toolset: 'skill', schema: skillSchema, handler: createSkillHandler(supplier),
+    isAsync: false, emoji: '🎯', maxResultSizeChars: 50_000,
+  };
+}

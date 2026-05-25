@@ -17,7 +17,7 @@ describe('E2E: Tools', () => {
     }
   });
 
-  it('registers all 8 builtin tools', () => {
+  it('registers all builtin tools', () => {
     const names = registry.getAllToolNames().sort();
     expect(names).toContain('bash');
     expect(names).toContain('read_file');
@@ -25,8 +25,15 @@ describe('E2E: Tools', () => {
     expect(names).toContain('edit_file');
     expect(names).toContain('glob');
     expect(names).toContain('grep');
-    expect(names).toContain('web_fetch');
-    expect(names).toContain('web_search');
+    expect(names).toContain('ask_user_question');
+    expect(names).toContain('task_create');
+    expect(names).toContain('task_get');
+    expect(names).toContain('task_output');
+    expect(names).toContain('task_stop');
+    expect(names).toContain('notebook_edit');
+    expect(names).toContain('cron_create');
+    expect(names).toContain('enter_worktree');
+    expect(names).toContain('exit_worktree');
   });
 
   it('bash: executes echo command', async () => {
