@@ -174,25 +174,44 @@ const SLASH_COMMANDS: SlashCommandDef[] = [
     description: 'List recent sessions for this directory',
     usage: '/sessions',
     handler: async (_args, ctx) => {
-      if (!ctx.store) return 'Session store not available.';
-      const sessionIds = await ctx.store.listSessions();
-      const lines: string[] = [];
-      for (const id of sessionIds.slice(-10).reverse()) {
-        try {
-          const sc = await ctx.store.getSidecar(id);
-          const cwd = sc.cwd ?? '?';
-          const title = sc.title ?? '(no title)';
-          const updated = sc.updated_at.slice(0, 19).replace('T', ' ');
-          const marker = id === ctx.sid ? ' *' : '  ';
-          const shortId = id.slice(-16);
-          lines.push(`${marker} ${shortId}  ${updated}  ${cwd}  ${title}`);
-        } catch {
-          lines.push(`    ${id.slice(-16)}  (no sidecar)`);
+      // Try SessionStore first
+      if (ctx.store) {
+        const sessionIds = await ctx.store.listSessions();
+        const lines: string[] = [];
+        for (const id of sessionIds.slice(-10).reverse()) {
+          try {
+            const sc = await ctx.store.getSidecar(id);
+            const cwd = sc.cwd ?? '?';
+            const title = sc.title ?? '(no title)';
+            const updated = sc.updated_at.slice(0, 19).replace('T', ' ');
+            const marker = id === ctx.sid ? ' *' : '  ';
+            const shortId = id.slice(-16);
+            lines.push(`${marker} ${shortId}  ${updated}  ${cwd}  ${title}`);
+          } catch {
+            lines.push(`    ${id.slice(-16)}  (no sidecar)`);
+          }
         }
+        if (lines.length > 0) return `Sessions (recent first, * = current):\n\n${lines.join('\n')}`;
+        return 'No sessions found.';
       }
-      return lines.length > 0
-        ? `Sessions (recent first, * = current):\n\n${lines.join('\n')}`
-        : 'No sessions found.';
+
+      // Fallback: read from .jarvis/sessions/ directory
+      try {
+        const sessionsDir = join(process.cwd(), '.jarvis', 'sessions');
+        if (existsSync(sessionsDir)) {
+          const files = readdirSync(sessionsDir, { withFileTypes: true })
+            .filter((f) => f.isFile() && f.name.endsWith('.json'))
+            .slice(-10).reverse();
+          if (files.length === 0) return 'No sessions found in .jarvis/sessions/.';
+          let output = `Sessions from .jarvis/sessions/ (${files.length}):\n\n`;
+          for (const f of files) {
+            output += `  ${f.name.replace('.json', '')}\n`;
+          }
+          return output.trim();
+        }
+      } catch { /* ignore */ }
+
+      return 'No session store available and no .jarvis/sessions/ directory found.';
     },
   },
   {
@@ -1079,10 +1098,7 @@ export function App({ options }: { options: TUIOptions }): React.ReactNode {
       const assistantMsg: Message = {
         id: `msg_${Date.now()}`,
         role: 'assistant',
-        content:
-          content.length === 1 && content[0].type === 'text'
-            ? (content[0] as { type: 'text'; text: string }).text
-            : content,
+        content: content.length > 0 ? content : [{ type: 'text' as const, text: result.answer }],
         timestamp: Date.now(),
       };
 
