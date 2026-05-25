@@ -2,6 +2,7 @@ import { Box, Text, Ansi } from "../ink-renderer/index.js";
 import type React from "react";
 import { useState, useEffect } from "react";
 import { Spinner } from "./Spinner";
+import { Markdown } from "./Markdown";
 import { getStableKeys, getStableLineEntries } from "./utils/stableKeys";
 
 let _highlightFn: ((code: string, opts: { language?: string }) => string) | null | undefined;
@@ -393,7 +394,7 @@ function ContentBlock({
 }): React.ReactNode {
   switch (block.type) {
     case "text":
-      return <TextBlock text={block.text} />;
+      return <Markdown>{block.text}</Markdown>;
     case "tool_use":
       return <ToolUseBlock content={block} allExpanded={allToolResultsExpanded} />;
     case "thinking":
