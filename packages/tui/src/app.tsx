@@ -7,7 +7,7 @@ import { platform, arch, totalmem, freemem, uptime } from 'node:os';
 import { REPL } from './vendor/ui/REPL.js';
 import type { Message, MessageContent } from './vendor/ui/MessageList.js';
 import type { StatusLineSegment } from './vendor/ui/StatusLine.js';
-import { AgentLoop, ConversationSummarizer, TokenTracker, formatTokensCompact } from '@jarvis/agent';
+import { AgentLoop, ConversationSummarizer, TokenTracker, formatTokensCompact, parseModelName } from '@jarvis/agent';
 import {
   ToolRegistry,
   allBuiltinTools,
@@ -824,9 +824,12 @@ export function App({ options }: { options: TUIOptions }): React.ReactNode {
       tools.register(createAgentTool(poolRef.current));
 
       if (!tokenTrackerRef.current) {
-        tokenTrackerRef.current = new TokenTracker(
-          provider.contextWindow,
-        );
+        const mainProvider = new LLMProvider({
+          model: modelRef.current,
+          apiKey: options.apiKey,
+          baseURL: options.baseURL,
+        });
+        tokenTrackerRef.current = new TokenTracker(mainProvider.contextWindow);
       }
       agentRef.current = new AgentLoop({
         model: {
@@ -1017,8 +1020,9 @@ export function App({ options }: { options: TUIOptions }): React.ReactNode {
 
   const statusSegments: StatusLineSegment[] = useMemo(() => {
     const segs: StatusLineSegment[] = [];
-    // Model name
-    segs.push({ content: `model: ${modelRef.current}` });
+    // Model name (strip [size] annotation for display)
+    const displayModel = parseModelName(modelRef.current).cleanName;
+    segs.push({ content: `model: ${displayModel}` });
 
     // Token + context info (updated after each turn)
     const tracker = tokenTrackerRef.current;
