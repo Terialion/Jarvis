@@ -5,6 +5,7 @@
 import type { AgentEvent, ChatMessage, ToolResult } from '@jarvis/shared';
 import type { ToolRegistry } from '@jarvis/tools';
 import type { SkillRegistry, SkillExecutor } from '@jarvis/skills';
+import type { HookRegistry } from '@jarvis/hooks';
 import { LLMProvider, type ModelConfig, type LLMMessage, FakeModelClient } from './model.js';
 import { AgentEventBus } from './events.js';
 import { ContextBuilder, type ContextConfig, type TurnContext, type ContextPack, type SessionStoreLike, type MemoryStoreLike, type SkillRegistryLike } from './context.js';
@@ -26,6 +27,7 @@ export interface AgentLoopConfig {
   provider?: LLMProvider;
   skillRegistry?: SkillRegistry;
   skillExecutor?: SkillExecutor;
+  hooks?: HookRegistry;
   maxSkills?: number;
   // Full-featured options
   projectRoot?: string;
@@ -43,6 +45,7 @@ export interface TurnResult {
   turnId: string;
   messages: ChatMessage[];
   answer: string;
+  reasoning?: string;
   toolResults: ToolResult[];
   stopReason: string;
   turnsUsed: number;
@@ -53,6 +56,7 @@ export interface AgentRunResult {
   sessionId: string;
   turnId: string;
   finalAnswer: string;
+  reasoning?: string;
   events: AgentEvent[];
   summary: Record<string, unknown>;
   stopReason: string;
@@ -82,12 +86,13 @@ const SENSITIVE_MARKERS = [
 ];
 
 export class AgentLoop {
-  private config: Required<Omit<AgentLoopConfig, 'tools' | 'eventBus' | 'provider' | 'skillRegistry' | 'skillExecutor' | 'sessionStore' | 'memoryStore' | 'contextStore'>> & {
+  private config: Required<Omit<AgentLoopConfig, 'tools' | 'eventBus' | 'provider' | 'skillRegistry' | 'skillExecutor' | 'hooks' | 'sessionStore' | 'memoryStore' | 'contextStore'>> & {
     tools?: ToolRegistry;
     eventBus?: AgentEventBus;
     provider?: LLMProvider;
     skillRegistry?: SkillRegistry;
     skillExecutor?: SkillExecutor;
+    hooks?: HookRegistry;
     sessionStore?: SessionStoreLike;
     memoryStore?: MemoryStoreLike;
     contextStore?: { retrieveRecentContext(sessionId: string): Record<string, unknown> };
@@ -99,6 +104,7 @@ export class AgentLoop {
   private promptBuilder: PromptBuilder;
   private skillRegistry?: SkillRegistry;
   private skillExecutor?: SkillExecutor;
+  private hooks?: HookRegistry;
   private summaryComposer: ResponseComposer;
   private errorClassifier: ErrorClassifier;
   private toolRetryPolicy: ToolRetryPolicy;
@@ -145,6 +151,7 @@ export class AgentLoop {
     this.autoApprove = this.config.autoApprove;
     this.skillRegistry = config.skillRegistry;
     this.skillExecutor = config.skillExecutor;
+    this.hooks = config.hooks;
 
     this.modelInfo = this._getModelInfo();
 
@@ -387,7 +394,7 @@ export class AgentLoop {
       toolResults: allToolResults,
       stopReason,
       turnsUsed,
-    };
+    }; // note: reasoning not captured in compressed path (no model call)
   }
 
   // ========================================================================
@@ -409,11 +416,13 @@ export class AgentLoop {
     const toolResultsLog: Record<string, unknown>[] = [];
     let stopReason = 'max_steps';
     let finalAnswer = '';
+    let reasoning = '';
     let outputType = 'answer';
     const availableSkills: string[] = this.skillRegistry
       ? this.skillRegistry.listLoadable().map((s) => s.name)
       : [];
     const loadedSkills: string[] = [];
+    let activeAllowedTools: string[] | undefined = undefined; // undefined = all tools allowed
     const skillResultsLog: Record<string, unknown>[] = [];
     const skillsUsed: string[] = [];
 
@@ -446,10 +455,16 @@ export class AgentLoop {
 
     const { messages } = this.contextBuilder.buildMessagesFromContext(turnContext, this.promptBuilder);
 
-    // Tool specs
-    const toolSpecs = this.tools
-      ? this.tools.getDefinitions()
-      : [];
+    // Obtain tool specs filtered by activeAllowedTools (updated dynamically per-step)
+    const getToolSpecs = (): Record<string, unknown>[] => {
+      return this.tools
+        ? this.tools.getDefinitions(
+            activeAllowedTools
+              ? [...new Set([...activeAllowedTools, 'skill.load'])]
+              : undefined,
+          )
+        : [];
+    };
 
     // Failure tracking
     const failureTracker = new FailureTracker(5, 4, 3);
@@ -482,11 +497,17 @@ export class AgentLoop {
 
         // Model call with retry
         this._emit(events, turnId, 'model_call_started', { step });
-        const modelResp = await this._callModelWithRetry(events, turnId, step, messages as LLMMessage[], toolSpecs);
+        const modelResp = await this._callModelWithRetry(events, turnId, step, messages as LLMMessage[], getToolSpecs());
         this._emit(events, turnId, 'model_call_completed', {
           step,
           finish_reason: modelResp.finishReason,
         });
+
+        // Capture reasoning for TUI display (separate from finalAnswer)
+        const stepReasoning = modelResp.reasoningSummary;
+        if (stepReasoning && stepReasoning !== finalAnswer) {
+          reasoning = stepReasoning;
+        }
 
         // Handle length (truncated)
         if (modelResp.finishReason === 'length' && retryWithLengthCount < 1) {
@@ -626,6 +647,39 @@ export class AgentLoop {
 
           // Execute tool
           let result: ToolResult;
+
+          // Hooks: pre_tool_use gate
+          if (this.hooks) {
+            const hookResult = await this.hooks.runPreToolUse({
+              toolName: call.name,
+              toolArgs: call.arguments,
+              sessionId,
+              turnId,
+            });
+            if (!hookResult.allowed) {
+              result = {
+                callId: call.callId,
+                name: call.name,
+                ok: false,
+                content: JSON.stringify({
+                  error: `Tool "${call.name}" blocked: ${hookResult.reason ?? hookResult.message ?? 'denied by hook'}`,
+                }),
+                error: hookResult.reason ?? 'denied',
+                durationMs: 0,
+              };
+              const blockedDict = { ...result, content: result.content };
+              toolResultsLog.push(blockedDict);
+              this._emit(events, turnId, 'tool_call_completed', { step, tool_result: { ...result, ok: false } });
+              messages.push({
+                role: 'tool',
+                tool_call_id: call.callId,
+                content: this._observationText(result),
+              });
+              failureTracker.recordFailure(result.name, 'blocked', result.error ?? '', step);
+              continue;
+            }
+          }
+
           if (this.tools) {
             const rawResult = await this.tools.dispatch(call.name, call.arguments);
             let parsed: Record<string, unknown> | null = null;
@@ -653,11 +707,32 @@ export class AgentLoop {
           toolResultsLog.push(resultDict);
           this._emit(events, turnId, 'tool_call_completed', { step, tool_result: resultDict });
 
+          // Hooks: post_tool_use (fire-and-forget, audit-only)
+          if (this.hooks) {
+            this.hooks.runPostToolUse({
+              toolName: call.name,
+              toolArgs: call.arguments,
+              toolResult: result.content,
+              sessionId,
+              turnId,
+            }).catch(() => {});
+          }
+
           // skill.load handling
           if (call.name === 'skill.load' && result.ok) {
             const resultMeta = (result as unknown as { metadata?: Record<string, unknown> }).metadata;
             const skillName = String(resultMeta?.['skill_name'] || call.arguments['name'] || '').trim();
             if (skillName && !loadedSkills.includes(skillName)) loadedSkills.push(skillName);
+            // Merge allowed-tools from the loaded skill
+            if (skillName && this.skillRegistry) {
+              const skillSpec = this.skillRegistry.get(skillName);
+              const skillAllowed = skillSpec?.allowedTools ?? [];
+              if (skillAllowed.length > 0) {
+                activeAllowedTools = activeAllowedTools === undefined
+                  ? [...skillAllowed]
+                  : [...new Set([...activeAllowedTools, ...skillAllowed])];
+              }
+            }
             const skillBody = this._observationText(result);
             messages.push({
               role: 'tool',
@@ -827,6 +902,7 @@ export class AgentLoop {
         sessionId,
         turnId,
         finalAnswer,
+        reasoning: reasoning || undefined,
         events,
         summary,
         stopReason,
@@ -863,6 +939,7 @@ export class AgentLoop {
         sessionId,
         turnId,
         finalAnswer: friendlyMsg,
+        reasoning: reasoning || undefined,
         events,
         summary,
         stopReason: mappedReason,

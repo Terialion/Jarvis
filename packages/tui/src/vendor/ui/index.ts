@@ -54,6 +54,8 @@ export { MarkdownTable } from "./MarkdownTable";
 export {
   type Message,
   type MessageContent,
+  type TaskResultItem,
+  type PlanStep,
   MessageList,
   type MessageListProps,
 } from "./MessageList";

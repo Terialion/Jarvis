@@ -102,6 +102,11 @@ export class SkillRegistry {
     return [...this.specs.values()].filter((s) => s.source === source);
   }
 
+  /** Export a lightweight index suitable for prompt rendering. */
+  exportIndex(): Array<{ name: string; description: string }> {
+    return this.listLoadable().map((s) => ({ name: s.name, description: s.description }));
+  }
+
   /** Load the full body of a skill's SKILL.md file. */
   loadBody(skill: SkillSpec): string | null {
     try {

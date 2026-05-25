@@ -151,14 +151,21 @@ describe('normalizeAllowedTools', () => {
 
   it('splits by commas and spaces', () => {
     const result = normalizeAllowedTools('read, bash, glob');
-    expect(result).toContain('read');
+    expect(result).toContain('read_file');
     expect(result).toContain('bash');
     expect(result).toContain('glob');
   });
 
   it('deduplicates', () => {
     const result = normalizeAllowedTools('read, read, bash');
-    expect(result).toEqual(['read', 'bash']);
+    expect(result).toEqual(['read_file', 'bash']);
+  });
+
+  it('handles mixed case', () => {
+    const result = normalizeAllowedTools('Read, Bash, Write');
+    expect(result).toContain('read_file');
+    expect(result).toContain('bash');
+    expect(result).toContain('write_file');
   });
 });
 
@@ -174,9 +181,11 @@ describe('inferRiskLevel', () => {
 
   it('infers from allowed tools when no explicit level', () => {
     expect(inferRiskLevel(undefined, ['bash'])).toBe('command');
-    expect(inferRiskLevel(undefined, ['web-fetch'])).toBe('network');
-    expect(inferRiskLevel(undefined, ['write'])).toBe('write_approval_required');
-    expect(inferRiskLevel(undefined, ['read'])).toBe('read_only');
+    expect(inferRiskLevel(undefined, ['web_fetch'])).toBe('network');
+    expect(inferRiskLevel(undefined, ['web_search'])).toBe('network');
+    expect(inferRiskLevel(undefined, ['write_file'])).toBe('write_approval_required');
+    expect(inferRiskLevel(undefined, ['edit_file'])).toBe('write_approval_required');
+    expect(inferRiskLevel(undefined, ['read_file'])).toBe('read_only');
   });
 });
 

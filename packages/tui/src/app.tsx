@@ -8,7 +8,13 @@ import { REPL } from './vendor/ui/REPL.js';
 import type { Message, MessageContent } from './vendor/ui/MessageList.js';
 import type { StatusLineSegment } from './vendor/ui/StatusLine.js';
 import { AgentLoop, ConversationSummarizer } from '@jarvis/agent';
-import { ToolRegistry, allBuiltinTools } from '@jarvis/tools';
+import {
+  ToolRegistry,
+  allBuiltinTools,
+  setAskUserQuestionBridge,
+  createSkillLoadTool,
+} from '@jarvis/tools';
+import type { AskQuestionDef } from '@jarvis/tools';
 import { SkillRegistry, SkillExecutor } from '@jarvis/skills';
 import { SessionStore } from '@jarvis/store';
 import type { TUIOptions } from './types.js';
@@ -48,6 +54,36 @@ function makeSysMsg(msg: string): Message {
     content: [{ type: 'text', text: msg } as MessageContent],
     timestamp: Date.now(),
   };
+}
+
+const TASK_TOOLS = new Set(['task_create', 'task_update', 'task_list']);
+
+function parseToolContent(name: string, raw: string): MessageContent | null {
+  if (!TASK_TOOLS.has(name)) return null;
+  try {
+    const data = JSON.parse(raw) as Record<string, unknown>;
+    const tasks = (Array.isArray(data.tasks) ? data.tasks : data.task ? [data.task] : []) as Array<{
+      id: string;
+      subject: string;
+      status: string;
+    }>;
+    const counts = (data.counts ?? { pending: 0, in_progress: 0, completed: 0 }) as {
+      pending: number;
+      in_progress: number;
+      completed: number;
+    };
+    return {
+      type: 'task_result',
+      tasks: tasks.map((t) => ({
+        id: t.id,
+        subject: t.subject,
+        status: t.status as 'pending' | 'in_progress' | 'completed',
+      })),
+      counts,
+    };
+  } catch {
+    return null;
+  }
 }
 
 const REVIEW_PROMPT = `Review the uncommitted changes shown below. Focus on:
@@ -527,7 +563,7 @@ function resolveSlashCommand(input: string): { command: SlashCommandDef; args: s
 type REPLCommandDef = {
   name: string;
   description: string;
-  onExecute: (args: string) => void;
+  onExecute: (args: string, fullInput: string) => void;
 };
 
 function buildReplCommands(
@@ -537,13 +573,21 @@ function buildReplCommands(
   return SLASH_COMMANDS.map((cmd) => ({
     name: cmd.name,
     description: cmd.description,
-    onExecute: (rawArgs: string) => {
+    onExecute: (rawArgs: string, fullInput: string) => {
+      const userMsg: Message = {
+        id: `cmd_${Date.now()}`,
+        role: 'user',
+        content: fullInput,
+        timestamp: Date.now(),
+      };
       const args = rawArgs ? rawArgs.split(/\s+/) : [];
       const result = cmd.handler(args, ctx);
       if (result instanceof Promise) {
-        result.then((text) => setMessages((prev) => [...prev, makeSysMsg(text)]));
+        result.then((text) =>
+          setMessages((prev) => [...prev, userMsg, makeSysMsg(text)]),
+        );
       } else {
-        setMessages((prev) => [...prev, makeSysMsg(result)]);
+        setMessages((prev) => [...prev, userMsg, makeSysMsg(result)]);
       }
     },
   }));
@@ -584,6 +628,23 @@ export function App({ options }: { options: TUIOptions }): React.ReactNode {
   const modifiedFilesRef = useRef<Set<string>>(new Set());
   const outputStyleRef = useRef<string>('default');
   const permissionModeRef = useRef<string>('workspace_write');
+
+  // AskUserQuestion bridge state
+  const [askQuestions, setAskQuestions] = useState<AskQuestionDef[] | null>(null);
+  const askResolveRef = useRef<((answers: Record<string, string>) => void) | null>(null);
+  const askRejectRef = useRef<((err: Error) => void) | null>(null);
+
+  // Set up the AskUserQuestion bridge for the tool
+  useEffect(() => {
+    setAskUserQuestionBridge((questions) => {
+      return new Promise<Record<string, string>>((resolve, reject) => {
+        askResolveRef.current = resolve;
+        askRejectRef.current = reject;
+        setAskQuestions(questions);
+      });
+    });
+    return () => setAskUserQuestionBridge(null);
+  }, []);
 
   // Initialize session store and restore previous session for this directory
   useEffect(() => {
@@ -643,12 +704,14 @@ export function App({ options }: { options: TUIOptions }): React.ReactNode {
       if (!skillsRef.current) {
         skillsRef.current = new SkillRegistry();
         skillsRef.current.discover({
+          builtinDir: 'skills',
           projectDir: '.jarvis/skills',
         });
       }
       if (!executorRef.current) {
         executorRef.current = new SkillExecutor(skillsRef.current);
       }
+      tools.register(createSkillLoadTool(skillsRef.current));
 
       agentRef.current = new AgentLoop({
         model: {
@@ -694,14 +757,27 @@ export function App({ options }: { options: TUIOptions }): React.ReactNode {
 
       const content: MessageContent[] = [];
 
-      for (const tr of result.toolResults) {
+      // Show reasoning as a collapsible thinking block
+      if ('reasoning' in result && typeof result.reasoning === 'string' && result.reasoning) {
         content.push({
-          type: 'tool_use',
-          toolName: tr.name,
-          input: '',
-          result: tr.content.slice(0, 2000),
-          status: tr.ok ? 'success' : 'error',
+          type: 'thinking',
+          text: result.reasoning,
         });
+      }
+
+      for (const tr of result.toolResults) {
+        const parsed = parseToolContent(tr.name, tr.content);
+        if (parsed) {
+          content.push(parsed);
+        } else {
+          content.push({
+            type: 'tool_use',
+            toolName: tr.name,
+            input: '',
+            result: tr.content.slice(0, 2000),
+            status: tr.ok ? 'success' : 'error',
+          });
+        }
       }
 
       if (result.answer) {
@@ -787,6 +863,28 @@ export function App({ options }: { options: TUIOptions }): React.ReactNode {
     { content: `model: ${modelRef.current}` },
   ];
 
+  // AskUserQuestion submit handler
+  const handleAskSubmit = useCallback(
+    (answers: Record<string, string>) => {
+      askResolveRef.current?.(answers);
+      askResolveRef.current = null;
+      askRejectRef.current = null;
+      setAskQuestions(null);
+    },
+    [],
+  );
+
+  const handleAskCancel = useCallback(() => {
+    askRejectRef.current?.(new Error('User cancelled'));
+    askResolveRef.current = null;
+    askRejectRef.current = null;
+    setAskQuestions(null);
+  }, []);
+
+  const askUserQuestion = askQuestions
+    ? { questions: askQuestions, onSubmit: handleAskSubmit, onCancel: handleAskCancel }
+    : undefined;
+
   return (
     <REPL
       messages={messages}
@@ -795,6 +893,7 @@ export function App({ options }: { options: TUIOptions }): React.ReactNode {
       model={modelRef.current}
       statusSegments={statusSegments}
       commands={replCommands}
+      askUserQuestion={askUserQuestion}
     />
   );
 }

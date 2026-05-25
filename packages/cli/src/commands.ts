@@ -2,6 +2,17 @@
 // SlashCommandRegistry — built-in slash commands for the CLI
 // ============================================================================
 
+import { readFileSync, readdirSync, existsSync } from 'node:fs';
+import { join } from 'node:path';
+import { homedir } from 'node:os';
+
+function parentDir(p: string): string {
+  const sep = p.includes('\\') ? '\\' : '/';
+  const parts = p.split(sep);
+  parts.pop();
+  return parts.join(sep) || sep;
+}
+
 // ============================================================================
 // Types
 // ============================================================================
@@ -144,7 +155,7 @@ export function registerBuiltinCommands(registry: SlashCommandRegistry): void {
     usage: '/memory [search-term]',
     category: 'session',
     execute: (_args, _ctx) => {
-      return 'Memory search not yet implemented.';
+      return executeMemorySearch(_args);
     },
   });
 
@@ -154,8 +165,8 @@ export function registerBuiltinCommands(registry: SlashCommandRegistry): void {
     description: 'List recent sessions',
     usage: '/sessions',
     category: 'session',
-    execute: (_args, _ctx) => {
-      return 'Session listing not yet implemented.';
+    execute: async (_args, _ctx) => {
+      return executeSessionList(_ctx);
     },
   });
 
@@ -173,4 +184,189 @@ export function registerBuiltinCommands(registry: SlashCommandRegistry): void {
       ].join('\n');
     },
   });
+}
+
+// ============================================================================
+// /memory implementation
+// ============================================================================
+
+function findMemoryDir(): string | null {
+  // Check project-local memory first, then global user memory
+  const cwd = process.cwd();
+  // Walk up from cwd to find .claude/projects/<project>/memory
+  let dir = cwd;
+  for (let i = 0; i < 10; i++) {
+    const claudeDir = join(dir, '.claude');
+    if (existsSync(claudeDir)) {
+      // Check for project-specific memory
+      try {
+        const projectsDir = join(claudeDir, 'projects');
+        if (existsSync(projectsDir)) {
+          const entries = readdirSync(projectsDir, { withFileTypes: true });
+          for (const entry of entries) {
+            if (entry.isDirectory()) {
+              const memPath = join(projectsDir, entry.name, 'memory');
+              if (existsSync(memPath)) return memPath;
+            }
+          }
+        }
+      } catch { /* continue */ }
+    }
+    const parent = parentDir(dir);
+    if (parent === dir) break;
+    dir = parent;
+  }
+
+  // Fallback: global user memory
+  const userMem = join(homedir(), '.claude', 'memory');
+  if (existsSync(userMem)) return userMem;
+
+  return null;
+}
+
+function executeMemorySearch(args: string[]): string {
+  const memDir = findMemoryDir();
+  if (!memDir) {
+    return 'No memory directory found. Create memories by asking Claude to remember things.';
+  }
+
+  try {
+    const indexFile = join(memDir, 'MEMORY.md');
+    const allFiles = readdirSync(memDir, { withFileTypes: true })
+      .filter((f) => f.isFile() && f.name.endsWith('.md'))
+      .map((f) => f.name);
+
+    if (allFiles.length === 0) {
+      return 'No memory entries found. Create memories by asking Claude to remember things.';
+    }
+
+    const searchTerm = args.join(' ').toLowerCase().trim();
+
+    if (!searchTerm) {
+      // List all memories
+      let output = 'Memory entries:\n\n';
+      for (const file of allFiles) {
+        try {
+          const content = readFileSync(join(memDir, file), 'utf-8');
+          const firstLine = content.split('\n')[0]?.replace(/^#+\s*/, '') ?? file;
+          output += `  ${file} — ${firstLine.slice(0, 80)}\n`;
+        } catch {
+          output += `  ${file}\n`;
+        }
+      }
+      return output.trim() || 'No memory entries found.';
+    }
+
+    // Search mode
+    let output = `Memory search results for "${searchTerm}":\n\n`;
+    let found = 0;
+    for (const file of allFiles) {
+      try {
+        const content = readFileSync(join(memDir, file), 'utf-8');
+        if (content.toLowerCase().includes(searchTerm)) {
+          found++;
+          const lines = content.split('\n');
+          const title = lines[0]?.replace(/^#+\s*/, '') ?? file;
+          const matchLines = lines
+            .map((l, i) => (l.toLowerCase().includes(searchTerm) ? `    ${i + 1}: ${l.trim().slice(0, 100)}` : null))
+            .filter(Boolean)
+            .slice(0, 3);
+          output += `  ${file} — ${title.slice(0, 80)}\n`;
+          output += `${matchLines.join('\n')}\n\n`;
+        }
+      } catch { /* skip unreadable files */ }
+    }
+
+    if (found === 0) {
+      return `No memory entries matching "${searchTerm}" found.`;
+    }
+
+    return output.trim();
+  } catch (err) {
+    return `Error reading memory: ${err instanceof Error ? err.message : String(err)}`;
+  }
+}
+
+// ============================================================================
+// /sessions implementation
+// ============================================================================
+
+function findSessionsDir(): string | null {
+  const cwd = process.cwd();
+  let dir = cwd;
+  for (let i = 0; i < 10; i++) {
+    const claudeDir = join(dir, '.claude');
+    if (existsSync(claudeDir)) {
+      const sessionsDir = join(claudeDir, 'sessions');
+      if (existsSync(sessionsDir)) return sessionsDir;
+    }
+    const parent = parentDir(dir);
+    if (parent === dir) break;
+    dir = parent;
+  }
+  return null;
+}
+
+async function executeSessionList(_ctx: CommandContext): Promise<string> {
+  const sessionsDir = findSessionsDir();
+
+  if (!sessionsDir) {
+    // Try the store package as fallback
+    try {
+      // Dynamic import to avoid hard dependency on store package
+      const sessionsApi = await tryLoadSessionsFromStore();
+      if (sessionsApi) return sessionsApi;
+    } catch { /* fall through */ }
+    return 'No sessions directory found. Sessions are stored in .claude/sessions/.';
+  }
+
+  try {
+    const files = readdirSync(sessionsDir, { withFileTypes: true })
+      .filter((f) => f.isFile() && f.name.endsWith('.json'))
+      .map((f) => {
+        const stat = readFileSync(join(sessionsDir, f.name), 'utf-8');
+        try {
+          const session = JSON.parse(stat) as Record<string, unknown>;
+          return {
+            name: f.name.replace('.json', ''),
+            mtime: f.name, // modified time from filename if it's a timestamp
+            turns: Array.isArray(session['messages']) ? session['messages'].length : '?',
+            model: session['model'] ?? '?',
+          };
+        } catch {
+          return { name: f.name.replace('.json', ''), mtime: '?', turns: '?', model: '?' };
+        }
+      })
+      .slice(0, 20);
+
+    if (files.length === 0) {
+      return 'No sessions found.';
+    }
+
+    let output = `Recent sessions (${files.length}):\n\n`;
+    for (const s of files) {
+      output += `  ${s.name} — ${s.turns} turns, model: ${s.model}\n`;
+    }
+    return output.trim();
+  } catch (err) {
+    return `Error reading sessions: ${err instanceof Error ? err.message : String(err)}`;
+  }
+}
+
+async function tryLoadSessionsFromStore(): Promise<string | null> {
+  // Attempt to use the @jarvis/store session provider if available
+  try {
+    const { SessionStore } = await import('@jarvis/store');
+    const store = new SessionStore();
+    if (typeof (store as unknown as Record<string, unknown>)['listRecent'] === 'function') {
+      const sessions = await (store as unknown as { listRecent: (limit: number) => Promise<Array<{ id: string; turnCount: number; modelName: string; updatedAt: string }>> }).listRecent(20);
+      if (sessions.length === 0) return 'No sessions found.';
+      let output = `Recent sessions (${sessions.length}):\n\n`;
+      for (const s of sessions) {
+        output += `  ${s.id} — ${s.turnCount} turns, model: ${s.modelName}, updated: ${s.updatedAt}\n`;
+      }
+      return output.trim();
+    }
+  } catch { /* store not available */ }
+  return null;
 }

@@ -1,6 +1,8 @@
 import { Box, type Key, useApp, useInput } from "../ink-renderer/index.js";
 import type React from "react";
 import { useCallback, useRef, useState } from "react";
+import { AskUserQuestion } from "./AskUserQuestion";
+import type { AskQuestionDef } from "@jarvis/tools";
 import { Divider } from "./Divider";
 import { type Message, MessageList } from "./MessageList";
 import { type PermissionAction, PermissionRequest } from "./PermissionRequest";
@@ -12,7 +14,7 @@ import { StatusLine, type StatusLineSegment } from "./StatusLine";
 type REPLCommand = {
   name: string;
   description: string;
-  onExecute: (args: string) => void;
+  onExecute: (args: string, fullInput: string) => void;
 };
 
 type PermissionRequestState = {
@@ -21,6 +23,12 @@ type PermissionRequestState = {
   details?: string;
   preview?: React.ReactNode;
   onDecision: (action: PermissionAction) => void;
+};
+
+type AskUserQuestionState = {
+  questions: AskQuestionDef[];
+  onSubmit: (answers: Record<string, string>) => void;
+  onCancel: () => void;
 };
 
 export type REPLProps = {
@@ -34,6 +42,7 @@ export type REPLProps = {
   welcome?: React.ReactNode;
 
   permissionRequest?: PermissionRequestState;
+  askUserQuestion?: AskUserQuestionState;
 
   commands?: REPLCommand[];
   model?: string;
@@ -55,6 +64,7 @@ export function REPL({
   streamingContent,
   welcome,
   permissionRequest,
+  askUserQuestion,
   commands = [],
   model,
   statusSegments,
@@ -68,6 +78,8 @@ export function REPL({
   const [inputValue, setInputValue] = useState("");
   const [internalHistory, setInternalHistory] = useState<string[]>([]);
   const [searchOpen, setSearchOpen] = useState(false);
+  const [thinkingExpanded, setThinkingExpanded] = useState(false);
+  const [toolResultsExpanded, setToolResultsExpanded] = useState(false);
   const submittingRef = useRef(false);
 
   const history = externalHistory ?? internalHistory;
@@ -98,7 +110,7 @@ export function REPL({
         const cmd = commands.find((c) => c.name === cmdName);
         if (cmd) {
           setInputValue("");
-          cmd.onExecute(cmdArgs);
+          cmd.onExecute(cmdArgs, trimmed);
           return;
         }
       }
@@ -136,6 +148,12 @@ export function REPL({
       if (key.ctrl && _input === "f") {
         setSearchOpen(true);
       }
+      if (key.ctrl && _input === "t") {
+        setThinkingExpanded((prev) => !prev);
+      }
+      if (key.ctrl && _input === "o") {
+        setToolResultsExpanded((prev) => !prev);
+      }
     },
     // Deactivate when search overlay is open so only SearchOverlay handles input.
     { isActive: !searchOpen },
@@ -154,6 +172,8 @@ export function REPL({
           messages={messages}
           streamingContent={streamingContent}
           renderMessage={renderMessage}
+          allThinkingExpanded={thinkingExpanded}
+          allToolResultsExpanded={toolResultsExpanded}
         />
 
         {isLoading && !streamingContent && (
@@ -172,7 +192,13 @@ export function REPL({
 
       <Divider />
 
-      {showPermission ? (
+      {askUserQuestion ? (
+        <AskUserQuestion
+          questions={askUserQuestion.questions}
+          onSubmit={askUserQuestion.onSubmit}
+          onCancel={askUserQuestion.onCancel}
+        />
+      ) : showPermission ? (
         <PermissionRequest
           toolName={permissionRequest.toolName}
           description={permissionRequest.description}

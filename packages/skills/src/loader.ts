@@ -41,6 +41,7 @@ export class SkillLoader {
         ? parseInt(parsed['trust_level'], 10) || 50
         : 50,
       tags: this._parseTags(parsed['tags'] as string | undefined),
+      slashCommand: ((parsed['slash_command'] ?? '') as string).replace(/^\/+/, '') || undefined,
       mtimeMs: stat.mtimeMs,
     };
   }
@@ -142,16 +143,20 @@ export function normalizeAllowedTools(
   const parts = raw.split(/[,;\s]+/).filter(Boolean);
 
   const aliasMap: Record<string, string> = {
-    read: 'read',
-    write: 'write',
-    edit: 'edit',
+    read: 'read_file',
+    write: 'write_file',
+    edit: 'edit_file',
     bash: 'bash',
     glob: 'glob',
     grep: 'grep',
-    web: 'web-fetch',
+    web: 'web_fetch',
+    search: 'web_search',
   };
 
-  return [...new Set(parts.map((p) => aliasMap[p] ?? p))];
+  return [...new Set(parts.map((p) => {
+    const key = p.trim().toLowerCase();
+    return aliasMap[key] ?? key;
+  }))];
 }
 
 /**
@@ -176,8 +181,8 @@ export function inferRiskLevel(
   // Infer from allowed tools
   const toolSet = new Set(allowedTools);
   if (toolSet.has('bash') || toolSet.has('shell')) return 'command';
-  if (toolSet.has('web-fetch') || toolSet.has('web-search')) return 'network';
-  if (toolSet.has('write') || toolSet.has('edit')) return 'write_approval_required';
+  if (toolSet.has('web_fetch') || toolSet.has('web_search')) return 'network';
+  if (toolSet.has('write_file') || toolSet.has('edit_file')) return 'write_approval_required';
   return 'read_only';
 }
 

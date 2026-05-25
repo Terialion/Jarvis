@@ -29,6 +29,8 @@ export interface SkillSpec {
   examples?: string[];
   /** When-to-use guidance for matching */
   when_to_use?: string;
+  /** Slash command name (without leading /), if this skill registers one */
+  slashCommand?: string;
   /** Skill type: unknown, executable, hybrid, or reference */
   skill_type?: string;
   /** Raw file modification time (for cache invalidation) */

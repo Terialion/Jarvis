@@ -8,7 +8,7 @@
     ".": "./src/index.ts"
   },
   "bin": {
-    "jarvis": "./dist/main.js"
+    "jarvis": "./bin/jarvis.js"
   },
   "scripts": {
     "build": "tsc",

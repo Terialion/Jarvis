@@ -1,3 +1,4 @@
+#!/usr/bin/env node
 // ============================================================================
 // CLI main — argument parsing, agent bootstrap, and one-shot / interactive loop
 // ============================================================================
@@ -6,7 +7,7 @@ import * as path from 'node:path';
 import * as fs from 'node:fs';
 import { parseArgs } from 'node:util';
 import { LLMProvider, AgentLoop } from '@jarvis/agent';
-import { ToolRegistry, allBuiltinTools } from '@jarvis/tools';
+import { ToolRegistry, allBuiltinTools, createSkillLoadTool } from '@jarvis/tools';
 import { HookRegistry } from '@jarvis/hooks';
 import { SkillRegistry, SkillExecutor } from '@jarvis/skills';
 import { SlashCommandRegistry, registerBuiltinCommands } from './commands.js';
@@ -154,20 +155,40 @@ function findProjectRoot(): string {
 export function createSkillRegistry(projectRoot?: string): SkillRegistry {
   const registry = new SkillRegistry();
   const root = projectRoot ?? findProjectRoot();
-  const skillsDir = path.join(root, '.jarvis', 'skills');
+  const builtinSkillsDir = path.join(root, 'skills');
+  const projectSkillsDir = path.join(root, '.jarvis', 'skills');
 
   const skills = registry.discover({
-    projectDir: skillsDir,
+    builtinDir: builtinSkillsDir,
+    projectDir: projectSkillsDir,
   });
 
   if (process.env['JARVIS_DEBUG']) {
-    console.error('[skills] Discovered %d skill(s) from %s', skills.length, skillsDir);
+    console.error('[skills] Discovered %d skill(s) from %s + %s', skills.length, builtinSkillsDir, projectSkillsDir);
     for (const s of skills) {
       console.error('[skills]   - %s (tags: %s)', s.name, s.tags?.join(', ') ?? 'none');
     }
   }
 
   return registry;
+}
+
+export function registerSkillCommands(
+  commands: SlashCommandRegistry,
+  skills: SkillRegistry,
+): void {
+  for (const skill of skills.listLoadable()) {
+    if (!skill.slashCommand) continue;
+    commands.register({
+      name: skill.slashCommand,
+      description: skill.description,
+      usage: `/${skill.slashCommand}`,
+      category: 'skills',
+      execute: async (_args, _ctx) => {
+        return `Skill "${skill.name}" activated. Your next message will be processed with this skill's instructions.`;
+      },
+    });
+  }
 }
 
 // ============================================================================
@@ -196,6 +217,7 @@ export function bootstrap(options: CLIOptions): CLIContext {
   // Slash commands
   const commands = new SlashCommandRegistry();
   registerBuiltinCommands(commands);
+  registerSkillCommands(commands, skills);
 
   const cmdContext: CommandContext = {
     cwd: process.cwd(),
@@ -255,6 +277,7 @@ export async function runOneShot(options: CLIOptions): Promise<string> {
   }
 
   const skills = createSkillRegistry();
+  tools.register(createSkillLoadTool(skills));
   const skillExecutor = new SkillExecutor(skills);
 
   const loop = new AgentLoop({
@@ -265,6 +288,7 @@ export async function runOneShot(options: CLIOptions): Promise<string> {
     provider,
     skillRegistry: skills,
     skillExecutor,
+    hooks: new HookRegistry(),
   });
 
   const result = await loop.run(options.oneShot ?? 'Hello');

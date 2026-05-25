@@ -1,2 +1,0 @@
-"""Jarvis benchmark package."""
-

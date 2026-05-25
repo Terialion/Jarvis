@@ -10,7 +10,8 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@jarvis/shared": "workspace:*"
+    "@jarvis/shared": "workspace:*",
+    "pdf-parse": "^2.4.5"
   },
   "devDependencies": {
     "typescript": "^5.8.0",

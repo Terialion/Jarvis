@@ -2,6 +2,7 @@
 name: arxiv-reader
 description: "通过 marketplace 的 arxiv-reader 引擎读取并总结单篇 arXiv 论文。"
 allowed-tools: Read,Write,Bash
+slash_command: /arxiv
 ---
 
 # arxiv-reader

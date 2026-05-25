@@ -12,6 +12,7 @@
     "@jarvis/shared": "workspace:*",
     "@jarvis/tools": "workspace:*",
     "@jarvis/store": "workspace:*",
+    "@jarvis/hooks": "workspace:*",
     "@jarvis/skills": "workspace:*",
     "openai": "^6.0.0"
   },
