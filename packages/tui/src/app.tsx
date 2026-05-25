@@ -913,6 +913,13 @@ export function App({ options }: { options: TUIOptions }): React.ReactNode {
         onToken: (token: string) => {
           setStreamingContent((prev) => (prev ?? '') + token);
         },
+        onReasoningDelta: (delta: string) => {
+          setStreamingContent((prev) => {
+            // First reasoning delta starts with header
+            if (!prev || !prev.startsWith('Thinking')) return `Thinking: ${delta}`;
+            return prev + delta;
+          });
+        },
       });
     }
     return agentRef.current;

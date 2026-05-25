@@ -44,6 +44,8 @@ export interface AgentLoopConfig {
   tokenTracker?: TokenTracker;
   /** Streaming token callback — each token is emitted as it arrives. */
   onToken?: (token: string) => void;
+  /** Streaming reasoning/thinking callback. */
+  onReasoningDelta?: (delta: string) => void;
 }
 
 export interface TurnResult {
@@ -256,7 +258,10 @@ export class AgentLoop {
           response = await (this.provider as LLMProvider).chatStream(
             llmMessages,
             toolDefs,
-            { onToken: this.config.onToken },
+            {
+              onToken: this.config.onToken,
+              onReasoningDelta: this.config.onReasoningDelta,
+            },
           );
         } else {
           response = await withRetry(

@@ -73,6 +73,7 @@ export interface LLMMessage {
 export interface StreamCallbacks {
   onToken?: (token: string) => void;
   onToolCall?: (toolCall: ToolCall) => void;
+  onReasoningDelta?: (delta: string) => void;
 }
 
 // ============================================================================
@@ -416,6 +417,12 @@ export class LLMProvider {
     for await (const chunk of stream) {
       const delta = chunk.choices?.[0]?.delta;
       const chunkFinishReason = chunk.choices?.[0]?.finish_reason;
+
+      // Reasoning content (DeepSeek R1, Qwen reasoner, etc.)
+      const reasoningDelta = (delta as Record<string, unknown>)?.['reasoning_content'] as string | undefined;
+      if (reasoningDelta) {
+        callbacks?.onReasoningDelta?.(reasoningDelta);
+      }
 
       if (delta?.content) {
         content += delta.content;
