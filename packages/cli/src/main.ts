@@ -205,14 +205,20 @@ export function bootstrap(options: CLIOptions): CLIContext {
     timeout: 120_000,
   });
 
-  // Tool registry
+  // Tool registry — register all builtin tools
   const tools = new ToolRegistry();
-
-  // Hook registry
-  const hooks = new HookRegistry();
+  for (const tool of allBuiltinTools) {
+    tools.register(tool);
+  }
 
   // Skills
   const skills = createSkillRegistry();
+
+  // Register skill.load tool (links tool registry to skill system)
+  tools.register(createSkillLoadTool(skills));
+
+  // Hook registry
+  const hooks = new HookRegistry();
 
   // Slash commands
   const commands = new SlashCommandRegistry();
