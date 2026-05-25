@@ -261,7 +261,7 @@ const SLASH_COMMANDS: SlashCommandDef[] = [
         ctx.modelRef.current = args[0];
         return `Model set to: ${args[0]} (effective on next turn)`;
       }
-      return `Current model: ${ctx.modelRef.current}`;
+      return `Current model: ${parseModelName(ctx.modelRef.current).cleanName}`;
     },
   },
   {
@@ -850,6 +850,11 @@ export function App({ options }: { options: TUIOptions }): React.ReactNode {
   }, [options]);
 
   const onSubmit = useCallback(async (prompt: string) => {
+    // Interrupt any in-progress run (supports type-ahead)
+    if (abortRef.current) {
+      abortRef.current.abort();
+    }
+
     const userMsg: Message = {
       id: `msg_${Date.now()}`,
       role: 'user',

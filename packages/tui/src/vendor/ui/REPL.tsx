@@ -237,7 +237,7 @@ export function REPL({
           onSubmit={handleSubmit}
           prefix={prefix}
           placeholder={placeholder}
-          disabled={isLoading || searchOpen}
+          disabled={searchOpen}
           commands={promptCommands}
           history={history}
         />
