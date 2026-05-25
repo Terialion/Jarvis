@@ -56,6 +56,8 @@ export type REPLProps = {
 
   renderMessage?: (message: Message) => React.ReactNode;
   spinner?: React.ReactNode;
+  spinnerTokenCount?: number;
+  spinnerDetail?: string;
 };
 
 export function REPL({
@@ -76,6 +78,8 @@ export function REPL({
   history: externalHistory,
   renderMessage,
   spinner,
+  spinnerTokenCount,
+  spinnerDetail,
 }: REPLProps): React.ReactNode {
   const { exit } = useApp();
   const [inputValue, setInputValue] = useState("");
@@ -201,7 +205,9 @@ export function REPL({
         />
 
         {isLoading && !streamingContent && (
-          <Box marginTop={messages.length > 0 ? 1 : 0}>{spinner ?? <Spinner />}</Box>
+          <Box marginTop={messages.length > 0 ? 1 : 0}>
+            {spinner ?? <Spinner tokenCount={spinnerTokenCount} detail={spinnerDetail} />}
+          </Box>
         )}
       </Box>
 

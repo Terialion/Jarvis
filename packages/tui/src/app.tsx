@@ -755,6 +755,7 @@ export function App({ options }: { options: TUIOptions }): React.ReactNode {
   const askResolveRef = useRef<((answers: Record<string, string>) => void) | null>(null);
   const askRejectRef = useRef<((err: Error) => void) | null>(null);
   const [streamingContent, setStreamingContent] = useState<string | null>(null);
+  const [spinnerDetail, setSpinnerDetail] = useState<string | undefined>(undefined);
   const streamBufferRef = useRef<string>('');
   const streamFlushRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -925,10 +926,12 @@ export function App({ options }: { options: TUIOptions }): React.ReactNode {
         },
         onReasoningDelta: (delta: string) => {
           setStreamingContent((prev) => {
-            // First reasoning delta starts with header
             if (!prev || !prev.startsWith('Thinking')) return `Thinking: ${delta}`;
             return prev + delta;
           });
+          // Extract **bold** text from reasoning as spinner detail
+          const match = delta.match(/\*\*([^*]+)\*\*/);
+          if (match) setSpinnerDetail(match[1]);
         },
       });
     }
@@ -951,6 +954,7 @@ export function App({ options }: { options: TUIOptions }): React.ReactNode {
     setMessages((prev) => [...prev, userMsg]);
     setIsLoading(true);
     setStreamingContent(null);
+    setSpinnerDetail(undefined);
     streamBufferRef.current = ''; // Clear buffer
     if (streamFlushRef.current) { clearTimeout(streamFlushRef.current); streamFlushRef.current = null; }
 
@@ -1215,6 +1219,8 @@ export function App({ options }: { options: TUIOptions }): React.ReactNode {
       statusSegments={statusSegments}
       commands={replCommands}
       askUserQuestion={askUserQuestion}
+      spinnerTokenCount={tokenTrackerRef.current?.totalBlended}
+      spinnerDetail={spinnerDetail}
       welcome={<WelcomeScreen appName="Jarvis" subtitle="AI Coding Assistant" model={parseModelName(modelRef.current).cleanName} color="#00BFFF" tips={['Type a message to start', 'Use /help to see commands', 'Ctrl+C twice to exit']} />}
     />
   );
