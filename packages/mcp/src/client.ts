@@ -18,8 +18,13 @@ import type {
 // ============================================================================
 
 export class MCPClient {
-  private connections: MCPConnection[] = [];
+  private _connections: MCPConnection[] = [];
   private nextId = 1;
+
+  /** View of active MCP connections (for resource listing tools). */
+  get connections(): MCPConnection[] {
+    return this._connections;
+  }
 
   // ========================================================================
   // Connection management
@@ -93,7 +98,7 @@ export class MCPClient {
       prompts,
     };
 
-    this.connections.push(connection);
+    this._connections.push(connection);
     return connection;
   }
 
@@ -183,14 +188,14 @@ export class MCPClient {
 
   disconnect(connection: MCPConnection): void {
     connection.transport.close();
-    const idx = this.connections.indexOf(connection);
-    if (idx !== -1) this.connections.splice(idx, 1);
+    const idx = this._connections.indexOf(connection);
+    if (idx !== -1) this._connections.splice(idx, 1);
   }
 
   disconnectAll(): void {
-    for (const conn of this.connections) {
+    for (const conn of this._connections) {
       conn.transport.close();
     }
-    this.connections = [];
+    this._connections = [];
   }
 }

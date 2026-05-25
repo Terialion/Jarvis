@@ -24,6 +24,8 @@
     "@jarvis/hooks": "workspace:*",
     "@jarvis/skills": "workspace:*",
     "@jarvis/plugins": "workspace:*",
+    "@jarvis/subagents": "workspace:*",
+    "@jarvis/mcp": "workspace:*",
     "@jarvis/tui": "workspace:*"
   },
   "devDependencies": {

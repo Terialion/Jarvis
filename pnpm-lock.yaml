@@ -60,6 +60,9 @@ importers:
       '@jarvis/hooks':
         specifier: workspace:*
         version: link:../hooks
+      '@jarvis/mcp':
+        specifier: workspace:*
+        version: link:../mcp
       '@jarvis/plugins':
         specifier: workspace:*
         version: link:../plugins
@@ -72,6 +75,9 @@ importers:
       '@jarvis/store':
         specifier: workspace:*
         version: link:../store
+      '@jarvis/subagents':
+        specifier: workspace:*
+        version: link:../subagents
       '@jarvis/tools':
         specifier: workspace:*
         version: link:../tools
@@ -230,6 +236,9 @@ importers:
       '@jarvis/hooks':
         specifier: workspace:*
         version: link:../hooks
+      '@jarvis/mcp':
+        specifier: workspace:*
+        version: link:../mcp
       '@jarvis/shared':
         specifier: workspace:*
         version: link:../shared
@@ -239,6 +248,9 @@ importers:
       '@jarvis/store':
         specifier: workspace:*
         version: link:../store
+      '@jarvis/subagents':
+        specifier: workspace:*
+        version: link:../subagents
       '@jarvis/tools':
         specifier: workspace:*
         version: link:../tools

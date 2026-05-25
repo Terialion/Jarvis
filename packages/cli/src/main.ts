@@ -7,9 +7,11 @@ import * as path from 'node:path';
 import * as fs from 'node:fs';
 import { parseArgs } from 'node:util';
 import { LLMProvider, AgentLoop } from '@jarvis/agent';
-import { ToolRegistry, allBuiltinTools, createSkillLoadTool } from '@jarvis/tools';
+import { ToolRegistry, allBuiltinTools, createSkillLoadTool, createAgentTool, createListMcpResourcesTool, createReadMcpResourceTool } from '@jarvis/tools';
 import { HookRegistry } from '@jarvis/hooks';
 import { SkillRegistry, SkillExecutor } from '@jarvis/skills';
+import { SubagentPool, toolWhitelistForType, type SubagentConfig } from '@jarvis/subagents';
+import { MCPClient } from '@jarvis/mcp';
 import { SlashCommandRegistry, registerBuiltinCommands } from './commands.js';
 import type { CommandContext } from './commands.js';
 
@@ -217,6 +219,46 @@ export function bootstrap(options: CLIOptions): CLIContext {
   // Register skill.load tool (links tool registry to skill system)
   tools.register(createSkillLoadTool(skills));
 
+  // MCP client — wire resource listing/reading tools
+  const mcpClient = new MCPClient();
+  tools.register(createListMcpResourcesTool(mcpClient));
+  tools.register(createReadMcpResourceTool(mcpClient));
+
+  // Subagent pool — wire Agent tool for subagent spawning
+  const subagentPool = new SubagentPool();
+  // The runner is wired lazily: Agent tool calls submit() which delegates
+  // to a nested AgentLoop with restricted tools when the pool is active.
+  subagentPool.setRunner(async (config: SubagentConfig) => {
+    // Create a restricted toolset for the subagent
+    const subTools = new ToolRegistry();
+    const whitelist = toolWhitelistForType(config.agentType);
+    for (const tool of allBuiltinTools) {
+      if (!whitelist || whitelist.includes(tool.name)) {
+        subTools.register(tool);
+      }
+    }
+    subTools.register(createSkillLoadTool(skills));
+
+    const subLoop = new AgentLoop({
+      model: { model: options.model },
+      maxTurns: config.budgetSteps ?? 5,
+      tools: subTools,
+      provider,
+      skillRegistry: skills,
+      skillExecutor: new SkillExecutor(skills),
+      hooks,
+    });
+
+    const result = await subLoop.run(config.task);
+    return {
+      agentId: config.agentId,
+      status: 'completed',
+      answer: result.answer,
+      turnsUsed: result.turnsUsed,
+    };
+  });
+  tools.register(createAgentTool(subagentPool));
+
   // Hook registry
   const hooks = new HookRegistry();
 
@@ -285,6 +327,43 @@ export async function runOneShot(options: CLIOptions): Promise<string> {
   const skills = createSkillRegistry();
   tools.register(createSkillLoadTool(skills));
   const skillExecutor = new SkillExecutor(skills);
+
+  // MCP client — wire resource tools
+  const mcpClient = new MCPClient();
+  tools.register(createListMcpResourcesTool(mcpClient));
+  tools.register(createReadMcpResourceTool(mcpClient));
+
+  // Subagent pool — wire Agent tool
+  const subagentPool = new SubagentPool();
+  subagentPool.setRunner(async (config: SubagentConfig) => {
+    const subTools = new ToolRegistry();
+    const whitelist = toolWhitelistForType(config.agentType);
+    for (const tool of allBuiltinTools) {
+      if (!whitelist || whitelist.includes(tool.name)) {
+        subTools.register(tool);
+      }
+    }
+    subTools.register(createSkillLoadTool(skills));
+
+    const subLoop = new AgentLoop({
+      model: { model: options.model },
+      maxTurns: config.budgetSteps ?? 5,
+      tools: subTools,
+      provider,
+      skillRegistry: skills,
+      skillExecutor: new SkillExecutor(skills),
+      hooks: new HookRegistry(),
+    });
+
+    const result = await subLoop.run(config.task);
+    return {
+      agentId: config.agentId,
+      status: 'completed',
+      answer: result.answer,
+      turnsUsed: result.turnsUsed,
+    };
+  });
+  tools.register(createAgentTool(subagentPool));
 
   const loop = new AgentLoop({
     model: { model: options.model },

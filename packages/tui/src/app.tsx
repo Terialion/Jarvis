@@ -13,10 +13,17 @@ import {
   allBuiltinTools,
   setAskUserQuestionBridge,
   createSkillLoadTool,
+  createAgentTool,
+  createListMcpResourcesTool,
+  createReadMcpResourceTool,
 } from '@jarvis/tools';
 import type { AskQuestionDef } from '@jarvis/tools';
 import { SkillRegistry, SkillExecutor } from '@jarvis/skills';
 import { SessionStore } from '@jarvis/store';
+import { SubagentPool, toolWhitelistForType, type SubagentConfig } from '@jarvis/subagents';
+import { MCPClient } from '@jarvis/mcp';
+import { HookRegistry } from '@jarvis/hooks';
+import { LLMProvider } from '@jarvis/agent';
 import type { TUIOptions } from './types.js';
 import type { ChatMessage } from '@jarvis/shared';
 
@@ -628,6 +635,8 @@ export function App({ options }: { options: TUIOptions }): React.ReactNode {
   const modifiedFilesRef = useRef<Set<string>>(new Set());
   const outputStyleRef = useRef<string>('default');
   const permissionModeRef = useRef<string>('workspace_write');
+  const poolRef = useRef<SubagentPool | null>(null);
+  const mcpRef = useRef<MCPClient | null>(null);
 
   // AskUserQuestion bridge state
   const [askQuestions, setAskQuestions] = useState<AskQuestionDef[] | null>(null);
@@ -712,6 +721,56 @@ export function App({ options }: { options: TUIOptions }): React.ReactNode {
         executorRef.current = new SkillExecutor(skillsRef.current);
       }
       tools.register(createSkillLoadTool(skillsRef.current));
+
+      // MCP client — wire resource listing/reading tools
+      if (!mcpRef.current) {
+        mcpRef.current = new MCPClient();
+      }
+      tools.register(createListMcpResourcesTool(mcpRef.current));
+      tools.register(createReadMcpResourceTool(mcpRef.current));
+
+      // Subagent pool — wire Agent tool
+      if (!poolRef.current) {
+        poolRef.current = new SubagentPool();
+        const provider = new LLMProvider({
+          model: modelRef.current,
+          apiKey: options.apiKey,
+          baseURL: options.baseURL,
+        });
+        poolRef.current.setRunner(async (config: SubagentConfig) => {
+          const subTools = new ToolRegistry();
+          const whitelist = toolWhitelistForType(config.agentType);
+          for (const tool of allBuiltinTools) {
+            if (!whitelist || whitelist.includes(tool.name)) {
+              subTools.register(tool);
+            }
+          }
+          subTools.register(createSkillLoadTool(skillsRef.current!));
+
+          const subLoop = new AgentLoop({
+            model: {
+              model: modelRef.current,
+              apiKey: options.apiKey,
+              baseURL: options.baseURL,
+            },
+            maxTurns: config.budgetSteps ?? 5,
+            tools: subTools,
+            provider,
+            skillRegistry: skillsRef.current!,
+            skillExecutor: executorRef.current!,
+            hooks: new HookRegistry(),
+          });
+
+          const result = await subLoop.run(config.task);
+          return {
+            agentId: config.agentId,
+            status: 'completed' as const,
+            answer: result.answer,
+            turnsUsed: result.turnsUsed,
+          };
+        });
+      }
+      tools.register(createAgentTool(poolRef.current));
 
       agentRef.current = new AgentLoop({
         model: {
