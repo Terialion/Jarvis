@@ -1,8 +1,20 @@
-import { Box, Text } from "../ink-renderer/index.js";
+import { Box, Text, Ansi } from "../ink-renderer/index.js";
 import type React from "react";
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { Spinner } from "./Spinner";
 import { getStableKeys, getStableLineEntries } from "./utils/stableKeys";
+
+let _highlightFn: ((code: string, opts: { language?: string }) => string) | null | undefined;
+async function getHighlighter(): Promise<((code: string, opts: { language?: string }) => string) | null> {
+  if (_highlightFn !== undefined) return _highlightFn;
+  try {
+    const mod = await import('cli-highlight');
+    _highlightFn = (mod as { highlight: (code: string, opts: { language?: string }) => string }).highlight;
+  } catch {
+    _highlightFn = null;
+  }
+  return _highlightFn;
+}
 
 export type TaskResultItem = {
   id: string;
@@ -233,8 +245,35 @@ function CodeBlock({
   content: Extract<MessageContent, { type: "code" }>;
 }): React.ReactNode {
   const language = content.language ?? "";
-  const codeLines = getStableLineEntries(content.code, `code:${language || "plain"}`);
+  const [highlighted, setHighlighted] = useState<string | null>(null);
 
+  useEffect(() => {
+    let cancelled = false;
+    getHighlighter().then((hl) => {
+      if (cancelled || !hl) return;
+      try {
+        const result = hl(content.code, { language: language || undefined });
+        if (!cancelled) setHighlighted(result);
+      } catch { /* fallback to plain text */ }
+    });
+    return () => { cancelled = true; };
+  }, [content.code, language]);
+
+  // Show highlighted ANSI text
+  if (highlighted) {
+    return (
+      <Box flexDirection="column" marginLeft={2}>
+        <Text dimColor>```{language}</Text>
+        <Box marginLeft={2}>
+          <Ansi>{highlighted}</Ansi>
+        </Box>
+        <Text dimColor>```</Text>
+      </Box>
+    );
+  }
+
+  // Fallback: plain text
+  const codeLines = getStableLineEntries(content.code, `code:${language || "plain"}`);
   return (
     <Box flexDirection="column" marginLeft={2}>
       <Text dimColor>```{language}</Text>
