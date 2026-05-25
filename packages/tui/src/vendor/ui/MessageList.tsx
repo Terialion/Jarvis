@@ -232,11 +232,12 @@ function CodeBlock({
 }: {
   content: Extract<MessageContent, { type: "code" }>;
 }): React.ReactNode {
-  const codeLines = getStableLineEntries(content.code, `code:${content.language ?? "plain"}`);
+  const language = content.language ?? "";
+  const codeLines = getStableLineEntries(content.code, `code:${language || "plain"}`);
 
   return (
     <Box flexDirection="column" marginLeft={2}>
-      <Text dimColor>```{content.language ?? ""}</Text>
+      <Text dimColor>```{language}</Text>
       {codeLines.map(({ key, line }) => (
         <Box key={key} marginLeft={2}>
           <Text>{line}</Text>

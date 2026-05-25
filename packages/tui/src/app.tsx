@@ -579,8 +579,9 @@ type REPLCommandDef = {
 function buildReplCommands(
   ctx: SlashCommandCtx,
   setMessages: (v: Message[] | ((prev: Message[]) => Message[])) => void,
+  skills?: SkillRegistry | null,
 ): REPLCommandDef[] {
-  return SLASH_COMMANDS.map((cmd) => ({
+  const builtins = SLASH_COMMANDS.map((cmd) => ({
     name: cmd.name,
     description: cmd.description,
     onExecute: (rawArgs: string, fullInput: string) => {
@@ -601,6 +602,33 @@ function buildReplCommands(
       }
     },
   }));
+
+  // Add skill-derived slash commands
+  if (skills) {
+    const skillCmds = skills.listLoadable()
+      .filter((s) => s.slashCommand)
+      .map((s) => ({
+        name: s.slashCommand!,
+        description: s.description,
+        onExecute: (_rawArgs: string, fullInput: string) => {
+          const userMsg: Message = {
+            id: `cmd_${Date.now()}`,
+            role: 'user',
+            content: fullInput,
+            timestamp: Date.now(),
+          };
+          setMessages((prev) => [
+            ...prev,
+            userMsg,
+            makeSysMsg(`Skill "${s.name}" activated. Your next message will be processed with this skill's instructions.`),
+          ]);
+        },
+      }));
+
+    return [...builtins, ...skillCmds];
+  }
+
+  return builtins;
 }
 
 // ============================================================================
@@ -1024,6 +1052,7 @@ export function App({ options }: { options: TUIOptions }): React.ReactNode {
           permissionModeRef,
         },
         setMessages,
+        skillsRef.current,
       ),
     // Rebuild only when getAgent changes (lazy init via useCallback)
     // eslint-disable-next-line react-hooks/exhaustive-deps
