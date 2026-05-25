@@ -7,7 +7,7 @@ import { platform, arch, totalmem, freemem, uptime } from 'node:os';
 import { REPL } from './vendor/ui/REPL.js';
 import type { Message, MessageContent } from './vendor/ui/MessageList.js';
 import type { StatusLineSegment } from './vendor/ui/StatusLine.js';
-import { AgentLoop, ConversationSummarizer } from '@jarvis/agent';
+import { AgentLoop, ConversationSummarizer, TokenTracker, formatTokensCompact } from '@jarvis/agent';
 import {
   ToolRegistry,
   allBuiltinTools,
@@ -639,6 +639,9 @@ export function App({ options }: { options: TUIOptions }): React.ReactNode {
   const permissionModeRef = useRef<string>('workspace_write');
   const poolRef = useRef<SubagentPool | null>(null);
   const mcpRef = useRef<MCPClient | null>(null);
+  const tokenTrackerRef = useRef<TokenTracker | null>(null);
+  const elapsedRef = useRef<number>(0);
+  const elapsedTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   // AskUserQuestion bridge state
   const [askQuestions, setAskQuestions] = useState<AskQuestionDef[] | null>(null);
@@ -779,6 +782,11 @@ export function App({ options }: { options: TUIOptions }): React.ReactNode {
       }
       tools.register(createAgentTool(poolRef.current));
 
+      if (!tokenTrackerRef.current) {
+        tokenTrackerRef.current = new TokenTracker(
+          provider.contextWindow,
+        );
+      }
       agentRef.current = new AgentLoop({
         model: {
           model: modelRef.current,
@@ -790,6 +798,7 @@ export function App({ options }: { options: TUIOptions }): React.ReactNode {
         tools,
         skillRegistry: skillsRef.current,
         skillExecutor: executorRef.current,
+        tokenTracker: tokenTrackerRef.current,
       });
     }
     return agentRef.current;
@@ -805,6 +814,14 @@ export function App({ options }: { options: TUIOptions }): React.ReactNode {
     };
     setMessages((prev) => [...prev, userMsg]);
     setIsLoading(true);
+
+    // Start elapsed timer
+    const startTime = Date.now();
+    if (elapsedTimerRef.current) clearInterval(elapsedTimerRef.current);
+    elapsedRef.current = 0;
+    elapsedTimerRef.current = setInterval(() => {
+      elapsedRef.current = Date.now() - startTime;
+    }, 1000);
 
     try {
       const agent = getAgent();
@@ -896,6 +913,11 @@ export function App({ options }: { options: TUIOptions }): React.ReactNode {
       setMessages((prev) => [...prev, errMsg]);
     } finally {
       setIsLoading(false);
+      // Stop elapsed timer
+      if (elapsedTimerRef.current) {
+        clearInterval(elapsedTimerRef.current);
+        elapsedTimerRef.current = null;
+      }
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [getAgent, options.model]);
@@ -925,9 +947,39 @@ export function App({ options }: { options: TUIOptions }): React.ReactNode {
     [getAgent, options.maxTurns, messages],
   );
 
-  const statusSegments: StatusLineSegment[] = [
-    { content: `model: ${modelRef.current}` },
-  ];
+  const statusSegments: StatusLineSegment[] = useMemo(() => {
+    const segs: StatusLineSegment[] = [];
+    // Model name
+    segs.push({ content: `model: ${modelRef.current}` });
+
+    // Token + context info (updated after each turn)
+    const tracker = tokenTrackerRef.current;
+    if (tracker && tracker.turnCount > 0) {
+      const blended = tracker.totalBlended;
+      const pct = tracker.contextPercentRemaining;
+      segs.push({
+        content: `${formatTokensCompact(blended)} tokens (${pct}% left)`,
+      });
+    }
+
+    // Elapsed time
+    if (elapsedRef.current > 0) {
+      const secs = Math.floor(elapsedRef.current / 1000);
+      if (secs < 60) {
+        segs.push({ content: `${secs}s` });
+      } else if (secs < 3600) {
+        const m = Math.floor(secs / 60);
+        const s = secs % 60;
+        segs.push({ content: `${m}m ${s.toString().padStart(2, '0')}s` });
+      } else {
+        const h = Math.floor(secs / 3600);
+        const m = Math.floor((secs % 3600) / 60);
+        segs.push({ content: `${h}h ${m}m` });
+      }
+    }
+
+    return segs;
+  }, [messages.length, modelRef.current]);
 
   // AskUserQuestion submit handler
   const handleAskSubmit = useCallback(

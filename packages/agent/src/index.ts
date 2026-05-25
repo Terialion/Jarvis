@@ -26,6 +26,10 @@ export type {
   ParsedModelName,
 } from './model-catalog.js';
 
+// token tracker
+export { TokenTracker, formatTokensCompact } from './token-tracker.js';
+export type { TokenSnapshot } from './token-tracker.js';
+
 // retry
 export {
   ErrorClassifier,

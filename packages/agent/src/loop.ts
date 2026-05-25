@@ -7,6 +7,7 @@ import type { ToolRegistry } from '@jarvis/tools';
 import type { SkillRegistry, SkillExecutor } from '@jarvis/skills';
 import type { HookRegistry } from '@jarvis/hooks';
 import { LLMProvider, type ModelConfig, type LLMMessage, FakeModelClient } from './model.js';
+import { TokenTracker } from './token-tracker.js';
 import { AgentEventBus } from './events.js';
 import { ContextBuilder, type ContextConfig, type TurnContext, type ContextPack, type SessionStoreLike, type MemoryStoreLike, type SkillRegistryLike } from './context.js';
 import { PromptBuilder, AGENT_SYSTEM_PROMPT } from './prompt-builder.js';
@@ -39,6 +40,8 @@ export interface AgentLoopConfig {
   timeoutS?: number;
   toolTimeoutS?: number;
   autoApprove?: boolean;
+  /** Token tracker for accumulating usage across turns. */
+  tokenTracker?: TokenTracker;
 }
 
 export interface TurnResult {
@@ -1065,6 +1068,9 @@ export class AgentLoop {
           messages,
           toolSpecs,
         );
+        if (chatResp.usage && this.config.tokenTracker) {
+          this.config.tokenTracker.record(chatResp.usage);
+        }
         return {
           assistantText: chatResp.content,
           toolCalls: chatResp.toolCalls.map((tc) => ({
