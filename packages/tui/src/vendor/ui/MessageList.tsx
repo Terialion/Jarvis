@@ -114,6 +114,11 @@ function ToolUseBlock({
   const statusColor =
     content.status === "error" ? "red" : content.status === "success" ? "green" : undefined;
 
+  const bgColor = content.status === 'running' ? '#1A2A33'
+    : content.status === 'success' ? '#1A2D1F'
+    : content.status === 'error' ? '#2F1A1A'
+    : undefined;
+
   const isRunning = content.status === "running";
   const hasResult = content.result != null;
 
@@ -122,7 +127,12 @@ function ToolUseBlock({
     const displayLabel = content.input || content.toolName;
     return (
       <Box marginLeft={2}>
-        <Box onClick={() => setLocalExpanded(true)}>
+        <Box
+          backgroundColor={bgColor}
+          paddingLeft={1}
+          paddingRight={1}
+          onClick={() => setLocalExpanded(true)}
+        >
           <Text dimColor>{GUTTER} </Text>
           {content.status === 'success' && <Text color="green">{'[OK] '}</Text>}
           {content.status === 'error' && <Text color="red">{'[FAIL] '}</Text>}
@@ -138,36 +148,43 @@ function ToolUseBlock({
 
   return (
     <Box flexDirection="column" marginLeft={2}>
-      <Box onClick={() => setLocalExpanded((c) => !c)}>
-        <Text dimColor>{GUTTER} </Text>
-        <Text bold>{content.input || content.toolName}</Text>
-        <Text dimColor> {expanded ? "(click to collapse)" : ""}</Text>
-      </Box>
-      {inputLines.map(({ key, line }) => (
-        <Box key={key} marginLeft={4}>
-          <Text dimColor>{line}</Text>
+      <Box
+        backgroundColor={bgColor}
+        paddingLeft={1}
+        paddingRight={1}
+        flexDirection="column"
+      >
+        <Box onClick={() => setLocalExpanded((c) => !c)}>
+          <Text dimColor>{GUTTER} </Text>
+          <Text bold>{content.input || content.toolName}</Text>
+          <Text dimColor> {expanded ? "(click to collapse)" : ""}</Text>
         </Box>
-      ))}
-      {isRunning && (
-        <Box marginLeft={4}>
-          <Spinner label={content.toolName} showElapsed />
-        </Box>
-      )}
-      {hasResult && (
-        <Box flexDirection="column" marginLeft={4}>
-          <Box>
-            <Text dimColor>{GUTTER} </Text>
-            <Text color={statusColor}>result ({content.status ?? "done"})</Text>
+        {inputLines.map(({ key, line }) => (
+          <Box key={key} marginLeft={4}>
+            <Text dimColor>{line}</Text>
           </Box>
-          {resultLines.map(({ key, line }) => (
-            <Box key={key} marginLeft={6}>
-              <Text color={statusColor} dimColor={!statusColor}>
-                {line}
-              </Text>
+        ))}
+        {isRunning && (
+          <Box marginLeft={4}>
+            <Spinner label={content.toolName} showElapsed />
+          </Box>
+        )}
+        {hasResult && (
+          <Box flexDirection="column" marginLeft={4}>
+            <Box>
+              <Text dimColor>{GUTTER} </Text>
+              <Text color={statusColor}>result ({content.status ?? "done"})</Text>
             </Box>
-          ))}
-        </Box>
-      )}
+            {resultLines.map(({ key, line }) => (
+              <Box key={key} marginLeft={6}>
+                <Text color={statusColor} dimColor={!statusColor}>
+                  {line}
+                </Text>
+              </Box>
+            ))}
+          </Box>
+        )}
+      </Box>
     </Box>
   );
 }
