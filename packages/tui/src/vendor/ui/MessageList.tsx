@@ -4,6 +4,7 @@ import { useState, useEffect } from "react";
 import { Spinner } from "./Spinner";
 import { Markdown } from "./Markdown";
 import { getStableKeys, getStableLineEntries } from "./utils/stableKeys";
+import { formatDuration } from "./tool-display";
 
 let _highlightFn: ((code: string, opts: { language?: string }) => string) | null | undefined;
 async function getHighlighter(): Promise<((code: string, opts: { language?: string }) => string) | null> {
@@ -37,6 +38,7 @@ export type MessageContent =
       input: string;
       result?: string;
       status?: "running" | "success" | "error";
+      durationMs?: number;
     }
   | { type: "thinking"; text: string; collapsed?: boolean }
   | { type: "diff"; filename: string; diff: string }
@@ -117,26 +119,16 @@ function ToolUseBlock({
 
   // Collapsed: show summary line only (like openclaw's chat-tool-msg-summary)
   if (!expanded && !isRunning) {
-    const preview =
-      hasResult
-        ? content.result!.slice(0, 80).replace(/\n/g, " ")
-        : inputLines.length > 0
-          ? content.input.slice(0, 80).replace(/\n/g, " ")
-          : "";
+    const displayLabel = content.input || content.toolName;
     return (
       <Box marginLeft={2}>
         <Box onClick={() => setLocalExpanded(true)}>
           <Text dimColor>{GUTTER} </Text>
-          <Text bold>{content.toolName}</Text>
-          {preview ? (
-            <Text dimColor>
-              {" "}
-              {preview}
-              {preview.length >= 80 ? "…" : ""}
-            </Text>
-          ) : null}
-          {hasResult && (
-            <Text color={statusColor}> {content.status === "error" ? "(error)" : "(done)"}</Text>
+          {content.status === 'success' && <Text color="green">{'[OK] '}</Text>}
+          {content.status === 'error' && <Text color="red">{'[FAIL] '}</Text>}
+          <Text>{displayLabel}</Text>
+          {content.durationMs != null && (
+            <Text dimColor> ({formatDuration(content.durationMs)})</Text>
           )}
           <Text dimColor> (Ctrl+O to expand)</Text>
         </Box>
@@ -148,7 +140,7 @@ function ToolUseBlock({
     <Box flexDirection="column" marginLeft={2}>
       <Box onClick={() => setLocalExpanded((c) => !c)}>
         <Text dimColor>{GUTTER} </Text>
-        <Text bold>{content.toolName}</Text>
+        <Text bold>{content.input || content.toolName}</Text>
         <Text dimColor> {expanded ? "(click to collapse)" : ""}</Text>
       </Box>
       {inputLines.map(({ key, line }) => (

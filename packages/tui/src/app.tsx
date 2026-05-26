@@ -30,6 +30,7 @@ import { HookRegistry } from '@jarvis/hooks';
 import { LLMProvider } from '@jarvis/agent';
 import type { TUIOptions } from './types.js';
 import type { ChatMessage } from '@jarvis/shared';
+import { formatToolLine } from './vendor/ui/tool-display.js';
 
 // ============================================================================
 // Slash command definitions
@@ -1018,16 +1019,17 @@ export function App({ options }: { options: TUIOptions }): React.ReactNode {
         onToolStart: (callId, toolName, args) => {
           setSpinnerRunning(toolName);
           drainAndCommit(); // Drain flush buffer then commit text before tool
-          const argPreview = typeof args === 'object' && args !== null
-            ? Object.entries(args as Record<string, unknown>).slice(0, 2).map(([k, v]) => `${k}=${String(v).slice(0, 40)}`).join(', ')
-            : '';
+          const argRecord = typeof args === 'object' && args !== null
+            ? (args as Record<string, unknown>)
+            : undefined;
+          const input = formatToolLine(toolName, argRecord);
           setMessages((prev) => [...prev, {
             id: `tool_${callId}`,
             role: 'assistant',
             content: [{
               type: 'tool_use' as const,
               toolName,
-              input: argPreview,
+              input,
               status: 'running' as const,
             }],
             timestamp: Date.now(),
@@ -1038,10 +1040,12 @@ export function App({ options }: { options: TUIOptions }): React.ReactNode {
           setSpinnerCompleted((prev) => [...prev, toolName]);
           setMessages((prev) => prev.map((m) => {
             if (m.id === `tool_${callId}`) {
+              const now = Date.now();
               const content = [...(m.content as MessageContent[])];
               const toolBlock = content.find((c) => c.type === 'tool_use');
               if (toolBlock && 'status' in toolBlock) {
-                const updated = { ...toolBlock, status: result.ok ? 'success' as const : 'error' as const, result: result.content.slice(0, 2000) };
+                const durationMs = m.timestamp ? now - m.timestamp : undefined;
+                const updated = { ...toolBlock, status: result.ok ? 'success' as const : 'error' as const, result: result.content.slice(0, 2000), durationMs };
                 return { ...m, content: content.map((c) => c.type === 'tool_use' ? updated : c) };
               }
             }
