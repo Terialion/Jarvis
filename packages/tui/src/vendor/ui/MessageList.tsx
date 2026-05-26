@@ -70,6 +70,7 @@ export type Message = {
 export type MessageListProps = {
   messages: Message[];
   streamingContent?: string | null;
+  streamingThinking?: string | null;
   renderMessage?: (message: Message) => React.ReactNode;
   allThinkingExpanded?: boolean;
   allToolResultsExpanded?: boolean;
@@ -495,6 +496,7 @@ function MessageItem({
 export function MessageList({
   messages,
   streamingContent,
+  streamingThinking,
   renderMessage,
   allThinkingExpanded,
   allToolResultsExpanded,
@@ -502,6 +504,10 @@ export function MessageList({
   const streamingLines =
     streamingContent != null && streamingContent.length > 0
       ? getStableLineEntries(streamingContent, "streaming")
+      : [];
+  const thinkingLines =
+    streamingThinking != null && streamingThinking.length > 0
+      ? getStableLineEntries(streamingThinking.slice(-4096), "streaming-thinking")
       : [];
 
   return (
@@ -516,6 +522,21 @@ export function MessageList({
           />
         </Box>
       ))}
+
+      {/* Live thinking display — grows as model reasons (CC/OpenClaw pattern) */}
+      {thinkingLines.length > 0 && (
+        <Box flexDirection="column" marginTop={messages.length > 0 ? 1 : 0} marginLeft={2}>
+          <Box>
+            <Text dimColor>{GUTTER} </Text>
+            <Text color="#DA7756">{"✻"} Reasoning</Text>
+          </Box>
+          {thinkingLines.slice(-8).map(({ key, line }) => (
+            <Box key={key} marginLeft={4}>
+              <Text dimColor>{line}</Text>
+            </Box>
+          ))}
+        </Box>
+      )}
 
       {streamingContent != null && streamingContent.length > 0 && (
         <Box flexDirection="column" marginTop={messages.length > 0 ? 1 : 0}>

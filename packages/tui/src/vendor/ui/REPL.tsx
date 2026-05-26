@@ -40,6 +40,7 @@ export type REPLProps = {
   messages: Message[];
   isLoading?: boolean;
   streamingContent?: string | null;
+  streamingThinking?: string | null;
 
   welcome?: React.ReactNode;
 
@@ -70,6 +71,7 @@ export function REPL({
   messages,
   isLoading = false,
   streamingContent,
+  streamingThinking,
   welcome,
   permissionRequest,
   askUserQuestion,
@@ -205,12 +207,13 @@ export function REPL({
         <MessageList
           messages={messages}
           streamingContent={streamingContent}
+          streamingThinking={streamingThinking}
           renderMessage={renderMessage}
           allThinkingExpanded={thinkingExpanded}
           allToolResultsExpanded={toolResultsExpanded}
         />
 
-        {isLoading && !streamingContent && (
+        {isLoading && !streamingContent && !streamingThinking && (
           <Box marginTop={messages.length > 0 ? 1 : 0}>
             {spinner ?? (
               <Spinner

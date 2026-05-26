@@ -775,6 +775,7 @@ export function App({ options }: { options: TUIOptions }): React.ReactNode {
   const askResolveRef = useRef<((answers: Record<string, string>) => void) | null>(null);
   const askRejectRef = useRef<((err: Error) => void) | null>(null);
   const [streamingContent, setStreamingContent] = useState<string | null>(null);
+  const [streamingThinking, setStreamingThinking] = useState<string | null>(null);
   const [spinnerVerb, setSpinnerVerb] = useState<string | undefined>(undefined);
   const [spinnerStatus, setSpinnerStatus] = useState<string | undefined>(undefined);
   const [spinnerCompleted, setSpinnerCompleted] = useState<string[]>([]);
@@ -783,6 +784,7 @@ export function App({ options }: { options: TUIOptions }): React.ReactNode {
   const streamFlushRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const reasoningBufferRef = useRef<string>('');
   const reasoningFlushedRef = useRef(false);
+  const reasoningDisplayThrottle = useRef<number>(0);
   const streamingContentRef = useRef<string | null>(null);
 
   // Commit current streaming content as an assistant message (CC/OpenClaw pattern:
@@ -981,6 +983,7 @@ export function App({ options }: { options: TUIOptions }): React.ReactNode {
             const thinkingText = reasoningBufferRef.current;
             reasoningBufferRef.current = '';
             reasoningFlushedRef.current = true;
+            setStreamingThinking(null); // clear live thinking display
             if (thinkingText.length > 20) {
               setMessages((prev) => [...prev, {
                 id: `thinking_${Date.now()}`,
@@ -1008,6 +1011,12 @@ export function App({ options }: { options: TUIOptions }): React.ReactNode {
         onReasoningDelta: (delta: string) => {
           const buf = reasoningBufferRef.current + delta;
           reasoningBufferRef.current = buf.length > 262144 ? buf.slice(-262144) : buf;
+          // Live thinking display: throttle React state updates (CC/OpenClaw pattern)
+          const now = Date.now();
+          if (now - reasoningDisplayThrottle.current > 200) {
+            reasoningDisplayThrottle.current = now;
+            setStreamingThinking(buf);
+          }
           const boldMatch = delta.match(/\*\*([^*]+)\*\*/);
           if (boldMatch) {
             setSpinnerVerb(boldMatch[1]);
@@ -1073,6 +1082,7 @@ export function App({ options }: { options: TUIOptions }): React.ReactNode {
     setMessages((prev) => [...prev, userMsg]);
     setIsLoading(true);
     setStreamingContent(null);
+    setStreamingThinking(null);
     streamingContentRef.current = null;
     setSpinnerVerb(undefined);
     setSpinnerStatus(undefined);
@@ -1080,6 +1090,7 @@ export function App({ options }: { options: TUIOptions }): React.ReactNode {
     setSpinnerRunning(undefined);
     streamBufferRef.current = ''; // Clear buffer
     reasoningBufferRef.current = '';
+    reasoningDisplayThrottle.current = 0;
     reasoningFlushedRef.current = false;
     if (streamFlushRef.current) { clearTimeout(streamFlushRef.current); streamFlushRef.current = null; }
 
@@ -1335,6 +1346,7 @@ export function App({ options }: { options: TUIOptions }): React.ReactNode {
       messages={messages}
       isLoading={isLoading}
       streamingContent={streamingContent}
+      streamingThinking={streamingThinking}
       onSubmit={onSubmit}
       onInterrupt={handleInterrupt}
       onExit={handleExit}
