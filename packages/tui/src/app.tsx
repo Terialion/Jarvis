@@ -782,6 +782,44 @@ export function App({ options }: { options: TUIOptions }): React.ReactNode {
   const streamFlushRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const reasoningBufferRef = useRef<string>('');
   const reasoningFlushedRef = useRef(false);
+  const streamingContentRef = useRef<string | null>(null);
+
+  // Commit current streaming content as an assistant message (CC/OpenClaw pattern:
+  // model text between tool calls should appear as separate messages)
+  const commitStreaming = useCallback((): boolean => {
+    const text = streamingContentRef.current;
+    if (text && text.trim()) {
+      const msg: Message = {
+        id: `msg_${Date.now()}`,
+        role: 'assistant',
+        content: [{ type: 'text' as const, text }],
+        timestamp: Date.now(),
+      };
+      setMessages((prev) => [...prev, msg]);
+      streamingContentRef.current = null;
+      setStreamingContent(null);
+      return true;
+    }
+    return false;
+  }, []);
+
+  const drainAndCommit = useCallback((): boolean => {
+    if (streamFlushRef.current) {
+      clearTimeout(streamFlushRef.current);
+      const chunk = streamBufferRef.current;
+      streamBufferRef.current = '';
+      streamFlushRef.current = null;
+      if (chunk) {
+        setStreamingContent((prev) => {
+          const next = (prev ?? '') + chunk;
+          streamingContentRef.current = next;
+          return next;
+        });
+      }
+    }
+    return commitStreaming();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // Set up the AskUserQuestion bridge for the tool
   useEffect(() => {
@@ -958,7 +996,11 @@ export function App({ options }: { options: TUIOptions }): React.ReactNode {
               const chunk = streamBufferRef.current;
               streamBufferRef.current = '';
               streamFlushRef.current = null;
-              setStreamingContent((prev) => (prev ?? '') + chunk);
+              setStreamingContent((prev) => {
+                const next = (prev ?? '') + chunk;
+                streamingContentRef.current = next;
+                return next;
+              });
             }, 50);
           }
         },
@@ -975,6 +1017,7 @@ export function App({ options }: { options: TUIOptions }): React.ReactNode {
         },
         onToolStart: (callId, toolName, args) => {
           setSpinnerRunning(toolName);
+          drainAndCommit(); // Drain flush buffer then commit text before tool
           const argPreview = typeof args === 'object' && args !== null
             ? Object.entries(args as Record<string, unknown>).slice(0, 2).map(([k, v]) => `${k}=${String(v).slice(0, 40)}`).join(', ')
             : '';
@@ -1026,6 +1069,7 @@ export function App({ options }: { options: TUIOptions }): React.ReactNode {
     setMessages((prev) => [...prev, userMsg]);
     setIsLoading(true);
     setStreamingContent(null);
+    streamingContentRef.current = null;
     setSpinnerVerb(undefined);
     setSpinnerStatus(undefined);
     setSpinnerCompleted([]);
@@ -1064,6 +1108,10 @@ export function App({ options }: { options: TUIOptions }): React.ReactNode {
         }
       }
 
+      // Drain and commit any remaining streaming text BEFORE building
+      // the final message (so we know if text was already committed)
+      const textWasCommitted = drainAndCommit();
+
       const content: MessageContent[] = [];
 
       // Show reasoning as a collapsible thinking block
@@ -1091,11 +1139,10 @@ export function App({ options }: { options: TUIOptions }): React.ReactNode {
         // during agent execution — skip here to avoid duplicates.
       }
 
-      if (result.answer) {
-        content.push({
-          type: 'text',
-          text: result.answer,
-        });
+      // result.answer was already committed via drainAndCommit() above
+      // Only add it if streaming didn't already handle it
+      if (result.answer && !textWasCommitted) {
+        content.push({ type: 'text', text: result.answer });
       }
 
       // Append file change summary if any files were modified
@@ -1107,14 +1154,15 @@ export function App({ options }: { options: TUIOptions }): React.ReactNode {
         });
       }
 
-      const assistantMsg: Message = {
-        id: `msg_${Date.now()}`,
-        role: 'assistant',
-        content: content.length > 0 ? content : [{ type: 'text' as const, text: result.answer }],
-        timestamp: Date.now(),
-      };
-
-      setMessages((prev) => [...prev, assistantMsg]);
+      if (content.length > 0 || (!textWasCommitted && result.answer)) {
+        const assistantMsg: Message = {
+          id: `msg_${Date.now()}`,
+          role: 'assistant',
+          content: content.length > 0 ? content : [{ type: 'text' as const, text: result.answer }],
+          timestamp: Date.now(),
+        };
+        setMessages((prev) => [...prev, assistantMsg]);
+      }
 
       // Persist new messages from this turn to SessionStore
       historyRef.current = result.messages;
@@ -1149,6 +1197,9 @@ export function App({ options }: { options: TUIOptions }): React.ReactNode {
       };
       setMessages((prev) => [...prev, errMsg]);
     } finally {
+      // Cleanup: commit any remaining text (handles error/abort path —
+      // on success path this is a no-op since drainAndCommit already ran)
+      commitStreaming();
       abortRef.current = null;
       setIsLoading(false);
       setStreamingContent(null);
