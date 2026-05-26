@@ -780,6 +780,8 @@ export function App({ options }: { options: TUIOptions }): React.ReactNode {
   const [spinnerRunning, setSpinnerRunning] = useState<string | undefined>(undefined);
   const streamBufferRef = useRef<string>('');
   const streamFlushRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const reasoningBufferRef = useRef<string>('');
+  const reasoningFlushedRef = useRef(false);
 
   // Set up the AskUserQuestion bridge for the tool
   useEffect(() => {
@@ -936,11 +938,21 @@ export function App({ options }: { options: TUIOptions }): React.ReactNode {
         skillExecutor: executorRef.current,
         tokenTracker: tokenTrackerRef.current,
         onToken: (token: string) => {
-          streamBufferRef.current += token;
-          // When content starts flowing, mark reasoning as complete
-          if (!spinnerStatus && spinnerVerb) {
-            setSpinnerStatus(`thought for ${Math.floor(Date.now() / 100) / 10}s`);
+          if (!reasoningFlushedRef.current && reasoningBufferRef.current) {
+            const thinkingText = reasoningBufferRef.current;
+            reasoningBufferRef.current = '';
+            reasoningFlushedRef.current = true;
+            if (thinkingText.length > 20) {
+              setMessages((prev) => [...prev, {
+                id: `thinking_${Date.now()}`,
+                role: 'assistant',
+                content: [{ type: 'thinking' as const, text: thinkingText.slice(0, 65536) }],
+                timestamp: Date.now(),
+              }]);
+            }
+            setSpinnerStatus(`thought for ${Math.floor(elapsedRef.current / 100) / 10}s`);
           }
+          streamBufferRef.current += token;
           if (!streamFlushRef.current) {
             streamFlushRef.current = setTimeout(() => {
               const chunk = streamBufferRef.current;
@@ -951,10 +963,8 @@ export function App({ options }: { options: TUIOptions }): React.ReactNode {
           }
         },
         onReasoningDelta: (delta: string) => {
-          setStreamingContent((prev) => {
-            if (!prev || !prev.startsWith('Thinking')) return `Thinking: ${delta}`;
-            return prev + delta;
-          });
+          const buf = reasoningBufferRef.current + delta;
+          reasoningBufferRef.current = buf.length > 262144 ? buf.slice(-262144) : buf;
           const boldMatch = delta.match(/\*\*([^*]+)\*\*/);
           if (boldMatch) {
             setSpinnerVerb(boldMatch[1]);
@@ -1021,6 +1031,8 @@ export function App({ options }: { options: TUIOptions }): React.ReactNode {
     setSpinnerCompleted([]);
     setSpinnerRunning(undefined);
     streamBufferRef.current = ''; // Clear buffer
+    reasoningBufferRef.current = '';
+    reasoningFlushedRef.current = false;
     if (streamFlushRef.current) { clearTimeout(streamFlushRef.current); streamFlushRef.current = null; }
 
     // Create abort controller for this run
