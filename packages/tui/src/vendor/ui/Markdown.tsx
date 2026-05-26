@@ -4,6 +4,7 @@ import type React from "react";
 import { Suspense, use, useMemo, useRef } from "react";
 import { useTheme } from "./design-system/ThemeProvider";
 import { MarkdownTable } from "./MarkdownTable";
+import { addOsc8Links } from "./osc8.js";
 import { hashContent } from "./utils/hash";
 import { configureMarked, formatToken } from "./utils/markdown";
 import { type CliHighlight, getCliHighlightPromise } from "./utils/optional/cliHighlight";
@@ -103,7 +104,7 @@ function MarkdownBody({
   configureMarked();
 
   const elements = useMemo(() => {
-    const tokens = cachedLexer(stripPromptXMLTags(children));
+    const tokens = cachedLexer(addOsc8Links(stripPromptXMLTags(children)));
     const elements: React.ReactNode[] = [];
     let nonTableContent = "";
 
