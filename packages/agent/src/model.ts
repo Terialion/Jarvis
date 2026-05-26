@@ -504,11 +504,14 @@ export class LLMProvider {
 
     // Fallback: some reasoning models (deepseek-v4-flash-ascend) put the
     // entire response in reasoning_content, leaving content empty.
+    // Fire onToken in small chunks for progressive TUI display.
     if (!content && reasoningContent) {
       content = reasoningContent;
-      // Also fire onToken so the TUI can display the text
       if (callbacks?.onToken) {
-        callbacks.onToken(content);
+        const chunkSize = 20;
+        for (let i = 0; i < content.length; i += chunkSize) {
+          callbacks.onToken(content.slice(i, i + chunkSize));
+        }
       }
     }
 

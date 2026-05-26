@@ -780,8 +780,8 @@ export function App({ options }: { options: TUIOptions }): React.ReactNode {
   const [spinnerStatus, setSpinnerStatus] = useState<string | undefined>(undefined);
   const [spinnerCompleted, setSpinnerCompleted] = useState<string[]>([]);
   const [spinnerRunning, setSpinnerRunning] = useState<string | undefined>(undefined);
-  const streamBufferRef = useRef<string>('');
   const streamFlushRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const streamAccumRef = useRef<string>(''); // full accumulated content (OpenClaw replacement mode)
   const reasoningBufferRef = useRef<string>('');
   const reasoningFlushedRef = useRef(false);
   const reasoningDisplayThrottle = useRef<number>(0);
@@ -809,8 +809,8 @@ export function App({ options }: { options: TUIOptions }): React.ReactNode {
   const drainAndCommit = useCallback((): boolean => {
     if (streamFlushRef.current) {
       clearTimeout(streamFlushRef.current);
-      const chunk = streamBufferRef.current;
-      streamBufferRef.current = '';
+      const chunk = streamAccumRef.current;
+      streamAccumRef.current = '';
       streamFlushRef.current = null;
       if (chunk) {
         setStreamingContent((prev) => {
@@ -979,11 +979,11 @@ export function App({ options }: { options: TUIOptions }): React.ReactNode {
         skillExecutor: executorRef.current,
         tokenTracker: tokenTrackerRef.current,
         onToken: (token: string) => {
+          // First content token: flush live reasoning as thinking block
           if (!reasoningFlushedRef.current && reasoningBufferRef.current) {
             const thinkingText = reasoningBufferRef.current;
-            reasoningBufferRef.current = '';
             reasoningFlushedRef.current = true;
-            setStreamingThinking(null); // clear live thinking display
+            setStreamingThinking(null);
             if (thinkingText.length > 20) {
               setMessages((prev) => [...prev, {
                 id: `thinking_${Date.now()}`,
@@ -994,11 +994,14 @@ export function App({ options }: { options: TUIOptions }): React.ReactNode {
             }
             setSpinnerStatus(`thought for ${Math.floor(elapsedRef.current / 100) / 10}s`);
           }
-          streamBufferRef.current += token;
+          // Skip DSML tool call tags leaked into visible text
+          if (token.includes('｜')) return;
+          // Buffer tokens and flush periodically (append mode)
+          streamAccumRef.current += token;
           if (!streamFlushRef.current) {
             streamFlushRef.current = setTimeout(() => {
-              const chunk = streamBufferRef.current;
-              streamBufferRef.current = '';
+              const chunk = streamAccumRef.current;
+              streamAccumRef.current = '';
               streamFlushRef.current = null;
               setStreamingContent((prev) => {
                 const next = (prev ?? '') + chunk;
@@ -1088,7 +1091,7 @@ export function App({ options }: { options: TUIOptions }): React.ReactNode {
     setSpinnerStatus(undefined);
     setSpinnerCompleted([]);
     setSpinnerRunning(undefined);
-    streamBufferRef.current = ''; // Clear buffer
+    streamAccumRef.current = ''; // Clear accumulated content
     reasoningBufferRef.current = '';
     reasoningDisplayThrottle.current = 0;
     reasoningFlushedRef.current = false;
@@ -1169,6 +1172,20 @@ export function App({ options }: { options: TUIOptions }): React.ReactNode {
         });
       }
 
+      // Add elapsed time at end (CC/Codex "Churned for" pattern)
+      if (elapsedRef.current > 0) {
+        const secs = Math.floor(elapsedRef.current / 1000);
+        let elapsed: string;
+        if (secs < 60) {
+          elapsed = `${secs}s`;
+        } else if (secs < 3600) {
+          elapsed = `${Math.floor(secs / 60)}m ${(secs % 60).toString().padStart(2, '0')}s`;
+        } else {
+          elapsed = `${Math.floor(secs / 3600)}h ${Math.floor((secs % 3600) / 60)}m`;
+        }
+        content.push({ type: 'text', text: `\n\n---\n*Churned for ${elapsed}*` } as MessageContent);
+      }
+
       if (content.length > 0 || (!textWasCommitted && result.answer)) {
         const assistantMsg: Message = {
           id: `msg_${Date.now()}`,
@@ -1218,7 +1235,7 @@ export function App({ options }: { options: TUIOptions }): React.ReactNode {
       abortRef.current = null;
       setIsLoading(false);
       setStreamingContent(null);
-      streamBufferRef.current = '';
+      streamAccumRef.current = '';
       if (streamFlushRef.current) { clearTimeout(streamFlushRef.current); streamFlushRef.current = null; }
       // Stop elapsed timer
       if (elapsedTimerRef.current) {

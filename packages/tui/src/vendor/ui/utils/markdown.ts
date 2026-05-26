@@ -63,6 +63,25 @@ export function configureMarked(): void {
   });
 }
 
+// Simple HTML entity decode — some models (deepseek) emit &quot; &amp; etc.
+const HTML_ENTITIES: Record<string, string> = {
+  '&quot;': '"', '&amp;': '&', '&lt;': '<', '&gt;': '>',
+  '&#39;': "'", '&apos;': "'", '&nbsp;': ' ',
+};
+function decodeHtmlEntities(text: string): string {
+  return text.replace(/&(?:quot|amp|lt|gt|apos|nbsp|#39);/g, (m) => HTML_ENTITIES[m] ?? m);
+}
+
+// Strip DeepSeek DSML tool call tags leaked into visible text.
+// DSML uses full-width pipe (U+FF5C) as delimiter. These tags
+// appear when the model outputs tool calls as XML instead of
+// native function calling format.
+const DSML_RE = /<｜[^>]*>[\s\S]*?<\/｜[^>]*>|<｜[^>]*\/>/g;
+function stripDSML(text: string): string {
+  if (!text.includes('｜')) return text;
+  return text.replace(DSML_RE, '').replace(/\n{3,}/g, '\n\n');
+}
+
 export function applyMarkdown(
   content: string,
   theme: ThemeName,
@@ -70,7 +89,7 @@ export function applyMarkdown(
 ): string {
   configureMarked();
   return marked
-    .lexer(content)
+    .lexer(stripDSML(decodeHtmlEntities(content)))
     .map((_) => formatToken(_, theme, 0, null, null, highlight))
     .join("")
     .trim();
