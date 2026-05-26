@@ -120,6 +120,7 @@ temp/
 tmp/
 *.tmp
 .workbuddy/
+.jarvis/
 hermes-agent/
 openclaw/
 codex/

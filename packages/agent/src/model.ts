@@ -407,6 +407,7 @@ export class LLMProvider {
     const stream = await this.client.chat.completions.create(params);
 
     let content = '';
+    let reasoningContent = ''; // fallback for models that only use reasoning_content
     const toolCallAccumulators = new Map<
       number,
       { id: string; name: string; arguments: string }
@@ -421,6 +422,7 @@ export class LLMProvider {
       // Reasoning content (DeepSeek R1, Qwen reasoner, etc.)
       const reasoningDelta = (delta as Record<string, unknown>)?.['reasoning_content'] as string | undefined;
       if (reasoningDelta) {
+        reasoningContent += reasoningDelta;
         callbacks?.onReasoningDelta?.(reasoningDelta);
       }
 
@@ -498,6 +500,16 @@ export class LLMProvider {
         source: 'model',
       });
       callbacks?.onToolCall?.(toolCalls[toolCalls.length - 1]);
+    }
+
+    // Fallback: some reasoning models (deepseek-v4-flash-ascend) put the
+    // entire response in reasoning_content, leaving content empty.
+    if (!content && reasoningContent) {
+      content = reasoningContent;
+      // Also fire onToken so the TUI can display the text
+      if (callbacks?.onToken) {
+        callbacks.onToken(content);
+      }
     }
 
     return { content, toolCalls, finishReason, usage };

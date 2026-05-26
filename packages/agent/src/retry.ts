@@ -158,6 +158,29 @@ export interface ErrorClassification {
 }
 
 export class ErrorClassifier {
+  /** Detect context overflow from provider error messages. */
+  static isContextOverflow(error: unknown): boolean {
+    const msg = error instanceof Error ? error.message : String(error ?? '');
+    const lowered = msg.toLowerCase();
+    const patterns = [
+      'context_length_exceeded',
+      'context length exceeded',
+      'reduce the length',
+      'maximum context length',
+      'reduce your context',
+      'context is too long',
+      'context window',
+      'maximum token',
+      'max token',
+      'too many tokens',
+      'token limit',
+      'context size',
+      'input length',
+      '4003', // OpenAI context_length_exceeded error code variant
+    ];
+    return patterns.some((p) => lowered.includes(p));
+  }
+
   classify(toolResult: ToolResult): ErrorClassification {
     const err = (toolResult.error ?? '').toLowerCase();
     if (!err) {

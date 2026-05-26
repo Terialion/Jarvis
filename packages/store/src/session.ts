@@ -22,7 +22,10 @@ export interface SessionRecord {
     | 'skill_obs'
     | 'research_obs'
     | 'approval'
-    | 'task_plan';
+    | 'task_plan'
+    | 'compaction_checkpoint'
+    | 'branch_point'
+    | 'fork_point';
   timestamp?: string; // ISO-8601 UTC, auto-set on write if missing
   [key: string]: unknown;
 }
@@ -297,6 +300,62 @@ export class SessionStore {
     }
   }
 
+  /**
+   * Enforce a disk budget for sessions by removing the oldest sessions
+   * until the total is under maxBytes. Uses file mtime for ordering.
+   */
+  async enforceSessionDiskBudget(maxBytes: number): Promise<{ removed: number; freedBytes: number }> {
+    let removed = 0;
+    let freedBytes = 0;
+
+    try {
+      const entries = await fs.readdir(this.sessionsDir, { withFileTypes: true });
+      const files = entries
+        .filter((e) => e.isFile() && (e.name.endsWith('.jsonl') || e.name.endsWith('.json')))
+        .map((e) => ({
+          name: e.name,
+          path: path.join(this.sessionsDir, e.name),
+        }));
+
+      // Get sizes and sort by name (which includes timestamps for session IDs)
+      const withSizes: Array<{ name: string; path: string; size: number }> = [];
+      let totalSize = 0;
+      for (const f of files) {
+        try {
+          const stat = await fs.stat(f.path);
+          withSizes.push({ ...f, size: stat.size });
+          totalSize += stat.size;
+        } catch {
+          withSizes.push({ ...f, size: 0 });
+        }
+      }
+
+      if (totalSize <= maxBytes) return { removed: 0, freedBytes: 0 };
+
+      // Sort by name (oldest sessions first — session IDs are sortable timestamps)
+      withSizes.sort((a, b) => a.name.localeCompare(b.name));
+
+      for (const f of withSizes) {
+        if (totalSize <= maxBytes * 0.8) break; // Soft cap at 80%
+        try {
+          await fs.unlink(f.path);
+          totalSize -= f.size;
+          freedBytes += f.size;
+          removed++;
+        } catch { /* skip unremovable */ }
+      }
+
+      // Invalidate caches for removed sessions
+      for (const f of withSizes.slice(0, removed)) {
+        const sid = f.name.replace(/\.(jsonl|json)$/, '');
+        this._cache.delete(sid);
+        this._sidecarCache.delete(sid);
+      }
+    } catch { /* best-effort */ }
+
+    return { removed, freedBytes };
+  }
+
   /** Check whether a session exists. */
   async sessionExists(sessionId: string): Promise<boolean> {
     try {
@@ -313,6 +372,184 @@ export class SessionStore {
     }
   }
 
+  // ── Session repair ─────────────────────────────────────────────────
+
+  /**
+   * Repair a corrupted session: remove unparseable JSONL lines,
+   * rebuild sidecar from JSONL if sidecar is corrupted.
+   * Returns repair report.
+   */
+  async repairSession(sessionId: string): Promise<{ repaired: boolean; issues: string[] }> {
+    const issues: string[] = [];
+    let repaired = false;
+
+    // 1. Repair JSONL: remove malformed lines
+    const jsonlPath = this._jsonlPath(sessionId);
+    try {
+      const raw = await fs.readFile(jsonlPath, 'utf-8');
+      const lines = raw.split('\n');
+      const validLines: string[] = [];
+      let removedCount = 0;
+      for (const line of lines) {
+        const trimmed = line.trim();
+        if (!trimmed) continue;
+        try {
+          JSON.parse(trimmed);
+          validLines.push(trimmed);
+        } catch {
+          removedCount++;
+          repaired = true;
+        }
+      }
+      if (removedCount > 0) {
+        issues.push(`Removed ${removedCount} malformed JSONL line(s)`);
+        await this._writeLock.acquire();
+        try {
+          await fs.writeFile(jsonlPath, validLines.join('\n') + (validLines.length > 0 ? '\n' : ''), 'utf-8');
+          // Invalidate cache so next read picks up fixed file
+          this._cache.delete(sessionId);
+        } finally {
+          this._writeLock.release();
+        }
+      }
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code !== 'ENOENT') {
+        issues.push(`JSONL read error: ${err instanceof Error ? err.message : String(err)}`);
+      }
+    }
+
+    // 2. Repair sidecar: rebuild from JSONL if corrupted or missing
+    const sidecarPath = this._sidecarPath(sessionId);
+    let sidecarOk = false;
+    try {
+      const raw = await fs.readFile(sidecarPath, 'utf-8');
+      JSON.parse(raw); // validate parseability
+      sidecarOk = true;
+    } catch {
+      sidecarOk = false;
+    }
+
+    if (!sidecarOk) {
+      // Rebuild sidecar from JSONL data
+      try {
+        const records = await this._readJsonl(sessionId);
+        const firstRecord = records[0];
+        const lastRecord = records[records.length - 1];
+        const title = firstRecord
+          ? String((firstRecord as Record<string, unknown>)['output_summary'] ?? '').slice(0, 80) || null
+          : null;
+        const sidecar: SessionSidecar = {
+          session_id: sessionId,
+          title,
+          created_at: String(firstRecord?.timestamp ?? utcNow()),
+          updated_at: String(lastRecord?.timestamp ?? utcNow()),
+          project_id: null,
+          cwd: null,
+        };
+        this._sidecarCache.set(sessionId, sidecar);
+        await this._saveSidecar(sessionId);
+        repaired = true;
+        issues.push('Sidecar rebuilt from JSONL');
+      } catch {
+        // Can't rebuild — leave as-is
+        issues.push('Sidecar missing and could not be rebuilt');
+      }
+    }
+
+    return { repaired, issues };
+  }
+
+  /**
+   * Truncate the session JSONL after compaction, removing message entries
+   * before firstKeptMessageId while preserving non-message state entries
+   * (compaction checkpoints, task plans, approvals, summaries, skill/research obs).
+   * Must acquire write lock.
+   */
+  async truncateAfterCompaction(
+    sessionId: string,
+    firstKeptMessageId: string,
+  ): Promise<{ removed: number; kept: number }> {
+    await this._writeLock.acquire();
+    try {
+      const jsonlPath = this._jsonlPath(sessionId);
+      let raw: string;
+      try {
+        raw = await fs.readFile(jsonlPath, 'utf-8');
+      } catch {
+        return { removed: 0, kept: 0 };
+      }
+
+      const allLines = raw.split('\n');
+      const keptLines: string[] = [];
+      let foundCutoff = false;
+      let removed = 0;
+
+      // Non-message types that should survive truncation even before cutoff
+      const SURVIVING_TYPES = new Set([
+        'compaction_checkpoint',
+        'task_plan',
+        'approval',
+        'summary',
+        'skill_obs',
+        'research_obs',
+      ]);
+
+      for (const line of allLines) {
+        const trimmed = line.trim();
+        if (!trimmed) continue;
+
+        try {
+          const obj = JSON.parse(trimmed) as Record<string, unknown>;
+          const recordType = String(obj['type'] ?? '');
+
+          // Check if this is the cutoff message
+          if (!foundCutoff && recordType === 'message') {
+            const msgId = String(obj['message_id'] ?? '');
+            if (msgId === firstKeptMessageId) {
+              foundCutoff = true;
+            }
+          }
+
+          if (!foundCutoff) {
+            if (recordType === 'message' || recordType === 'tool_call' || recordType === 'tool_result') {
+              removed++;
+              continue; // Drop old messages/tool calls/results
+            }
+            if (SURVIVING_TYPES.has(recordType) || recordType === 'turn') {
+              keptLines.push(trimmed); // Preserve state records
+              continue;
+            }
+            removed++;
+            continue;
+          }
+
+          keptLines.push(trimmed);
+        } catch {
+          // Skip unparseable lines
+          removed++;
+        }
+      }
+
+      // If cutoff not found, don't truncate
+      if (!foundCutoff) {
+        return { removed: 0, kept: allLines.filter((l) => l.trim()).length };
+      }
+
+      await fs.writeFile(
+        jsonlPath,
+        keptLines.join('\n') + (keptLines.length > 0 ? '\n' : ''),
+        'utf-8',
+      );
+
+      // Invalidate cache
+      this._cache.delete(sessionId);
+
+      return { removed, kept: keptLines.length };
+    } finally {
+      this._writeLock.release();
+    }
+  }
+
   /** Create or resume a session from ChatInput-style data. */
   async createOrResumeSession(input: {
     sessionId?: string | null;
@@ -321,6 +558,12 @@ export class SessionStore {
     cwd?: string | null;
   }): Promise<{ session_id: string; project_id: string | null; cwd: string | null }> {
     const sessionId = input.sessionId || `session_${crypto.randomUUID().slice(0, 12)}`;
+
+    // Auto-repair existing sessions on resume
+    if (input.sessionId) {
+      await this.repairSession(sessionId).catch(() => { /* best-effort */ });
+    }
+
     await this.createSession(sessionId, {
       title: (input.text ?? '').trim().slice(0, 80) || null,
       project_id: input.projectId ?? null,
@@ -584,6 +827,128 @@ export class SessionStore {
       turn_id: s.turn_id ?? '',
       summary: { human: s.human ?? '', machine: s.machine ?? {} },
       created_at: s.timestamp ?? '',
+    }));
+  }
+
+  // ── Branch / DAG support ──────────────────────────────────────────
+
+  /**
+   * Create a named branch point in the session. Stores a branch_point
+   * entry that marks where a subagent or fork can branch from.
+   */
+  async createBranch(
+    sessionId: string,
+    branchName: string,
+  ): Promise<{ branchId: string; entryIndex: number }> {
+    await this._ensureLoaded(sessionId);
+    const branchId = `branch_${crypto.randomUUID().slice(0, 12)}`;
+    const records = this._cache.get(sessionId) ?? [];
+    const entryIndex = records.length;
+    await this._appendLine(sessionId, {
+      type: 'branch_point',
+      branch_id: branchId,
+      branch_name: branchName,
+      entry_index: entryIndex,
+    });
+    await this._touchSidecar(sessionId);
+    return { branchId, entryIndex };
+  }
+
+  /** List all branch points in a session. */
+  async getBranches(
+    sessionId: string,
+  ): Promise<Array<{ branchId: string; branchName: string; entryIndex: number; createdAt: string }>> {
+    const lines = await this._ensureLoaded(sessionId);
+    return lines
+      .filter((l) => l.type === 'branch_point')
+      .map((l) => ({
+        branchId: String(l['branch_id'] ?? ''),
+        branchName: String(l['branch_name'] ?? ''),
+        entryIndex: Number(l['entry_index'] ?? 0),
+        createdAt: String(l.timestamp ?? ''),
+      }));
+  }
+
+  /**
+   * Fork a session from a specific entry index, creating a new session
+   * that starts from that point in history.
+   */
+  async forkSession(
+    sessionId: string,
+    fromEntryIndex: number,
+    newSessionId?: string,
+  ): Promise<string> {
+    const records = await this._ensureLoaded(sessionId);
+    const forkId = newSessionId ?? `fork_${crypto.randomUUID().slice(0, 12)}`;
+    const prefixRecords = records.slice(0, fromEntryIndex);
+
+    // Create the fork session and copy prefix records
+    await this.createSession(forkId, {
+      title: `Fork of ${sessionId}`,
+      cwd: null,
+    });
+
+    for (const record of prefixRecords) {
+      await this._appendLine(forkId, record as Record<string, unknown>);
+    }
+
+    // Mark the fork point
+    await this._appendLine(forkId, {
+      type: 'fork_point',
+      forked_from: sessionId,
+      forked_at_entry: fromEntryIndex,
+    });
+
+    return forkId;
+  }
+
+  // ── Compaction checkpoints ────────────────────────────────────────
+
+  async saveCompactionCheckpoint(
+    sessionId: string,
+    checkpoint: {
+      stage: string;
+      tokensBefore: number;
+      tokensAfter: number;
+      messagesBefore: number;
+      messagesAfter: number;
+      firstKeptIndex?: number;
+      trigger?: string;
+    },
+  ): Promise<void> {
+    await this._appendLine(sessionId, {
+      type: 'compaction_checkpoint',
+      checkpoint_id: `cp_${crypto.randomUUID().slice(0, 12)}`,
+      session_id: sessionId,
+      stage: checkpoint.stage,
+      tokens_before: checkpoint.tokensBefore,
+      tokens_after: checkpoint.tokensAfter,
+      messages_before: checkpoint.messagesBefore,
+      messages_after: checkpoint.messagesAfter,
+      first_kept_index: checkpoint.firstKeptIndex ?? null,
+      trigger: checkpoint.trigger ?? 'budget',
+    });
+    await this._touchSidecar(sessionId);
+  }
+
+  async loadCompactionCheckpoints(
+    sessionId: string,
+    limit: number = 5,
+  ): Promise<Array<Record<string, unknown>>> {
+    const lines = await this._ensureLoaded(sessionId);
+    const checkpointLines = lines.filter((l) => l.type === 'compaction_checkpoint');
+    const recent = checkpointLines.slice(-Math.max(1, limit));
+    return recent.map((c) => ({
+      checkpoint_id: c.checkpoint_id ?? '',
+      session_id: sessionId,
+      stage: c.stage ?? '',
+      tokens_before: Number(c.tokens_before ?? 0),
+      tokens_after: Number(c.tokens_after ?? 0),
+      messages_before: Number(c.messages_before ?? 0),
+      messages_after: Number(c.messages_after ?? 0),
+      first_kept_index: c.first_kept_index ?? null,
+      trigger: c.trigger ?? 'budget',
+      created_at: c.timestamp ?? '',
     }));
   }
 

@@ -5,6 +5,7 @@
 import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
 import * as os from 'node:os';
+import { createHash } from 'node:crypto';
 
 // ============================================================================
 // Types
@@ -73,8 +74,14 @@ function formatFrontmatter(
   body: string,
 ): string {
   const headerLines = ['---'];
-  for (const key of ['name', 'description', 'type']) {
+  const orderedKeys = ['name', 'description', 'type', 'content_hash', 'updated_at'];
+  for (const key of orderedKeys) {
     if (key in meta) {
+      headerLines.push(`${key}: ${meta[key]}`);
+    }
+  }
+  for (const key of Object.keys(meta)) {
+    if (!orderedKeys.includes(key)) {
       headerLines.push(`${key}: ${meta[key]}`);
     }
   }
@@ -174,6 +181,25 @@ export class MarkdownMemoryStore {
     return entries;
   }
 
+  /**
+   * Compute SHA-256 content hash for deduplication.
+   */
+  static hashContent(content: string): string {
+    return createHash('sha256').update(content).digest('hex').slice(0, 16);
+  }
+
+  /**
+   * Compute temporal decay weight based on days since update.
+   * Formula: max(0.1, 1.0 - (daysSince / halfLifeDays) * 0.9)
+   */
+  static computeDecayWeight(updatedAt: string, halfLifeDays: number = 14): number {
+    if (!updatedAt) return 0.5;
+    const updated = new Date(updatedAt).getTime();
+    if (isNaN(updated)) return 0.5;
+    const daysSince = (Date.now() - updated) / (1000 * 60 * 60 * 24);
+    return Math.max(0.1, 1.0 - (daysSince / halfLifeDays) * 0.9);
+  }
+
   /** Write a memory entry to a .md file and update MEMORY.md index. */
   async write(entry: MemoryEntry): Promise<string> {
     await this._writeLock.acquire();
@@ -182,10 +208,36 @@ export class MarkdownMemoryStore {
       const fileName = `${safeName}.md`;
       const filePath = path.join(this.baseDir, fileName);
 
+      const contentHash = MarkdownMemoryStore.hashContent(entry.content);
+      const now = new Date().toISOString();
+
+      // Dedup: check if entry with same content hash already exists
+      const existing = await this._findByHash(contentHash);
+      if (existing) {
+        // Update timestamp but don't rewrite identical content
+        const existingMeta: Record<string, string> = {
+          name: entry.name,
+          description: entry.description,
+          type: entry.memoryType,
+          content_hash: contentHash,
+          updated_at: now,
+        };
+        await fs.mkdir(this.baseDir, { recursive: true });
+        await fs.writeFile(
+          filePath,
+          formatFrontmatter(existingMeta, entry.content),
+          'utf-8',
+        );
+        await this._updateIndex(entry, fileName);
+        return filePath;
+      }
+
       const meta: Record<string, string> = {
         name: entry.name,
         description: entry.description,
         type: entry.memoryType,
+        content_hash: contentHash,
+        updated_at: now,
       };
 
       await fs.mkdir(this.baseDir, { recursive: true });
@@ -200,6 +252,38 @@ export class MarkdownMemoryStore {
     } finally {
       this._writeLock.release();
     }
+  }
+
+  /**
+   * Load all entries with temporal decay weights applied.
+   * Returns entries sorted by (relevance_boost * decayWeight) descending.
+   */
+  async loadWithDecay(): Promise<Array<MemoryEntry & { contentHash: string; decayWeight: number }>> {
+    const entries = await this.loadAll();
+    return entries
+      .map((e) => {
+        const updatedAt = (e as unknown as Record<string, unknown>)['updated_at'] as string ?? '';
+        return {
+          ...e,
+          contentHash: (e as unknown as Record<string, unknown>)['content_hash'] as string ?? '',
+          decayWeight: MarkdownMemoryStore.computeDecayWeight(updatedAt),
+        };
+      })
+      .sort((a, b) => b.decayWeight - a.decayWeight);
+  }
+
+  /** Find an entry by content hash, returns the file path if found. */
+  private async _findByHash(hash: string): Promise<string | null> {
+    try {
+      const entries = await this.loadAll();
+      for (const entry of entries) {
+        const entryHash = (entry as unknown as Record<string, unknown>)['content_hash'] as string;
+        if (entryHash === hash && entry.filePath) {
+          return entry.filePath;
+        }
+      }
+    } catch { /* ignore */ }
+    return null;
   }
 
   /** Delete a memory entry file and remove from MEMORY.md index. */

@@ -1,6 +1,6 @@
 import { Box, Text } from "../ink-renderer/index.js";
 import type React from "react";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, useMemo } from "react";
 import { getStableKeys } from "./utils/stableKeys";
 
 const DEFAULT_CHARACTERS =
@@ -8,6 +8,31 @@ const DEFAULT_CHARACTERS =
 const FRAMES = [...DEFAULT_CHARACTERS, ...[...DEFAULT_CHARACTERS].reverse()];
 const SPINNER_INTERVAL = 80;
 const DEFAULT_COLOR = "#DA7756";
+
+// Shimmer: time-based brightness oscillation (Codex shimmer.rs pattern)
+const SHIMMER_PERIOD_MS = 1500;
+function useShimmerHex(baseColor: string = DEFAULT_COLOR): string {
+  const [brightness, setBrightness] = useState(1.0);
+  useEffect(() => {
+    const start = Date.now();
+    const id = setInterval(() => {
+      const elapsed = (Date.now() - start) % SHIMMER_PERIOD_MS;
+      const phase = elapsed / SHIMMER_PERIOD_MS;
+      // Sine wave: 0.6 → 1.0 → 0.6
+      const b = 0.6 + 0.4 * Math.sin(phase * Math.PI * 2);
+      setBrightness(Math.round(b * 100) / 100);
+    }, 50);
+    return () => clearInterval(id);
+  }, []);
+  // Parse base hex and scale by brightness
+  const r = parseInt(baseColor.slice(1, 3), 16);
+  const g = parseInt(baseColor.slice(3, 5), 16);
+  const b2 = parseInt(baseColor.slice(5, 7), 16);
+  const sr = Math.round(r * brightness).toString(16).padStart(2, '0');
+  const sg = Math.round(g * brightness).toString(16).padStart(2, '0');
+  const sb = Math.round(b2 * brightness).toString(16).padStart(2, '0');
+  return `#${sr}${sg}${sb}`;
+}
 
 export type SpinnerProps = {
   /** Dynamic verb/description — from reasoning or current action */
@@ -69,6 +94,7 @@ export function Spinner({
     : null;
 
   // Use dynamic verb if provided, otherwise rotate fallback
+  const shimmerColor = useShimmerHex(color);
   const displayVerb = verb || fallbackVerbs[verbIdx % fallbackVerbs.length]!;
   const frame = FRAMES[frameIndex]!;
 
@@ -85,7 +111,7 @@ export function Spinner({
     <Box flexDirection="column" marginTop={1}>
       {/* Main line: spinner + verb + stats */}
       <Box>
-        <Text color={color}>{frame}</Text>
+        <Text color={shimmerColor}>{frame}</Text>
         <Text> {displayVerb}</Text>
         {!verb && <Text>...</Text>}
         {verb && <Text dimColor>…</Text>}

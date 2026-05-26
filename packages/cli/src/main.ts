@@ -12,6 +12,8 @@ import { HookRegistry } from '@jarvis/hooks';
 import { SkillRegistry, SkillExecutor } from '@jarvis/skills';
 import { SubagentPool, toolWhitelistForType, type SubagentConfig } from '@jarvis/subagents';
 import { MCPClient } from '@jarvis/mcp';
+import { MarkdownMemoryStore } from '@jarvis/store';
+import { createMemorySearchHandler, createMemoryGetHandler } from '@jarvis/agent';
 import { SlashCommandRegistry, registerBuiltinCommands } from './commands.js';
 import type { CommandContext } from './commands.js';
 
@@ -228,6 +230,53 @@ export function bootstrap(options: CLIOptions): CLIContext {
   }
   registerWebTools(tools);
 
+  // Memory search/get tools
+  const memoryStore = new MarkdownMemoryStore();
+  tools.register({
+    name: 'memory_search',
+    toolset: 'memory',
+    description: 'Search persistent memory entries by keyword',
+    isAsync: true,
+    schema: {
+      type: 'function',
+      function: {
+        name: 'memory_search',
+        description: 'Search persistent memory entries by keyword',
+        parameters: {
+          type: 'object',
+          properties: {
+            query: { type: 'string', description: 'Search query' },
+            maxResults: { type: 'number', description: 'Max results (default 5)' },
+            memoryType: { type: 'string', description: 'Filter by type: user, project, feedback, reference' },
+          },
+          required: ['query'],
+        },
+      },
+    },
+    handler: (args: Record<string, unknown>) => createMemorySearchHandler(memoryStore)(args),
+  });
+  tools.register({
+    name: 'memory_get',
+    toolset: 'memory',
+    description: 'Read a specific memory entry by name',
+    isAsync: true,
+    schema: {
+      type: 'function',
+      function: {
+        name: 'memory_get',
+        description: 'Read a specific memory entry by name',
+        parameters: {
+          type: 'object',
+          properties: {
+            name: { type: 'string', description: 'Memory entry name' },
+          },
+          required: ['name'],
+        },
+      },
+    },
+    handler: (args: Record<string, unknown>) => createMemoryGetHandler(memoryStore)(args),
+  });
+
   // Skills
   const skills = createSkillRegistry();
 
@@ -344,6 +393,53 @@ export async function runOneShot(options: CLIOptions): Promise<string> {
     tools.register(tool);
   }
   registerWebTools(tools);
+
+  // Memory search/get tools
+  const memoryStore2 = new MarkdownMemoryStore();
+  tools.register({
+    name: 'memory_search',
+    toolset: 'memory',
+    description: 'Search persistent memory entries by keyword',
+    isAsync: true,
+    schema: {
+      type: 'function',
+      function: {
+        name: 'memory_search',
+        description: 'Search persistent memory entries by keyword',
+        parameters: {
+          type: 'object',
+          properties: {
+            query: { type: 'string', description: 'Search query' },
+            maxResults: { type: 'number', description: 'Max results (default 5)' },
+            memoryType: { type: 'string', description: 'Filter by type: user, project, feedback, reference' },
+          },
+          required: ['query'],
+        },
+      },
+    },
+    handler: (args: Record<string, unknown>) => createMemorySearchHandler(memoryStore2)(args),
+  });
+  tools.register({
+    name: 'memory_get',
+    toolset: 'memory',
+    description: 'Read a specific memory entry by name',
+    isAsync: true,
+    schema: {
+      type: 'function',
+      function: {
+        name: 'memory_get',
+        description: 'Read a specific memory entry by name',
+        parameters: {
+          type: 'object',
+          properties: {
+            name: { type: 'string', description: 'Memory entry name' },
+          },
+          required: ['name'],
+        },
+      },
+    },
+    handler: (args: Record<string, unknown>) => createMemoryGetHandler(memoryStore2)(args),
+  });
 
   const skills = createSkillRegistry();
   tools.register(createSkillLoadTool(skills));

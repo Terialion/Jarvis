@@ -170,6 +170,28 @@ export class ContextStore {
     };
   }
 
+  /**
+   * Persist project facts to SessionStore sidecar so they survive
+   * process restarts and can be restored in future sessions.
+   */
+  async persistProjectFacts(
+    sessionId: string,
+    projectId?: string | null,
+  ): Promise<void> {
+    if (!projectId || !this.sessionStore) return;
+    const state = this.getState(sessionId);
+    const store = this.sessionStore as unknown as Record<string, unknown>;
+    if (typeof store['saveProjectFacts'] === 'function') {
+      try {
+        await (store['saveProjectFacts'] as (
+          sid: string,
+          pid: string | null,
+          facts: Record<string, unknown> | null,
+        ) => Promise<void>)(sessionId, projectId, { ...state.projectFacts });
+      } catch { /* best-effort */ }
+    }
+  }
+
   retrieveSkillObservation(
     sessionId: string,
     opts?: { skillName?: string | null; relatedFile?: string | null },

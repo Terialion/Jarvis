@@ -72,6 +72,26 @@ export type {
   ResearchObservation,
 } from './context-store.js';
 
+// normalizer
+export { normalizeMessages } from './normalizer.js';
+export type { MessageRecord } from './normalizer.js';
+
+// prompt-builder
+export { AGENT_SYSTEM_PROMPT, PromptBuilder, buildSystemPrompt } from './prompt-builder.js';
+export type { PromptMode } from './prompt-builder.js';
+
+// fragment
+export {
+  SkillsIndexFragment,
+  CompactionSummaryFragment,
+  ConversationHistoryFragment,
+  SkillContextFragment,
+  CurrentRequestFragment,
+  FragmentRegistry,
+  BaseFragment,
+} from './fragment.js';
+export type { ContextualFragment } from './fragment.js';
+
 // compactor
 export {
   compact,
@@ -79,19 +99,58 @@ export {
   microCompact,
   buildCompactionSummaryPrefix,
   buildSkillStateCompactionSummary,
+  summarizeInStages,
+  splitMessagesByTokenShare,
+  chunkMessagesByMaxTokens,
+  recomputeTokens,
+  computeAdaptiveChunkRatio,
+  removeOrphanToolResults,
+  repairAllToolBoundaries,
+  repairToolCallBoundaries,
+  compactionReportToEvent,
 } from './compactor.js';
 export type {
   CompactionMessage,
   CompactionReport,
+  CompactionEvent,
   CompactionModelClient,
 } from './compactor.js';
 
-// normalizer
-export { normalizeMessages } from './normalizer.js';
-export type { MessageRecord } from './normalizer.js';
+// context-engine
+export type {
+  ContextEngine,
+  AssembleResult,
+  CompactOpts,
+  CompactResult,
+  ContextSnapshot,
+} from './context-engine.js';
 
-// prompt-builder
-export { AGENT_SYSTEM_PROMPT, PromptBuilder } from './prompt-builder.js';
+// memory-search
+export {
+  createMemorySearchHandler,
+  createMemoryGetHandler,
+  buildMemoryIndex,
+  searchMemory,
+  getMemoryByName,
+  buildMemoryIndexSummary,
+  computeDecayWeight,
+  hashContent,
+  invalidateMemoryIndex,
+} from './memory-search.js';
+export type {
+  MemorySearchResult,
+  MemoryIndex,
+  IndexedMemoryEntry,
+  MemoryStoreAdapter,
+} from './memory-search.js';
+
+// memory-extractor
+export { MemoryExtractor } from './memory-extractor.js';
+export type {
+  MemoryExtractionConfig,
+  RawMemory,
+  ConsolidatedMemory,
+} from './memory-extractor.js';
 
 // summary
 export { ConversationSummarizer, ResponseComposer } from './summary.js';
