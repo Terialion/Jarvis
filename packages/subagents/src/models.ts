@@ -1,5 +1,5 @@
 // ============================================================================
-// Subagent models — configuration, status, and handle types
+// Subagent models — configuration, status, handle types, and agent identity
 // ============================================================================
 
 export type SubagentStatus = 'pending' | 'running' | 'completed' | 'failed' | 'cancelled';
@@ -33,6 +33,35 @@ export interface SubagentResult {
   error?: string;
   turnsUsed?: number;
 }
+
+// ============================================================================
+// Agent Identity (Codex AgentMetadata + Hermes _delegate_depth pattern)
+// ============================================================================
+
+export interface AgentIdentity {
+  /** Unique agent identifier within the organization */
+  agentId: string;
+  /** Human-readable role label (e.g. "developer", "qa", "architect") */
+  role: string;
+  /** Parent agent ID (null for root/supervisor) */
+  parentId: string | null;
+  /** Nesting depth (0 = supervisor) */
+  depth: number;
+  /** Agent type — determines tool capabilities */
+  agentType: 'explore' | 'plan' | 'general';
+  /** Capability tags */
+  capabilities: string[];
+  /** When the agent was registered */
+  registeredAt: number;
+}
+
+export type AgentLifecycleStatus =
+  | 'pending'
+  | 'running'
+  | 'paused'
+  | 'completed'
+  | 'failed'
+  | 'cancelled';
 
 // ============================================================================
 // Tool whitelists per agent type

@@ -77,14 +77,19 @@ export function createAgentHandler(pool: AgentPool): ToolHandler {
     const agentId = `agent_${crypto.randomUUID().slice(0, 8)}`;
 
     try {
+      const depth = typeof args.depth === 'number' ? args.depth : 1;
+
       const handle = pool.submit({
         agentId,
         agentType,
         task: `## ${description}\n\n${prompt}`,
-        depth: 0,
+        depth,
       });
 
       activeAgents.set(agentId, { cancel: handle.cancel });
+
+      // Default: async spawn — return immediately, results arrive via mailbox
+      // When runInBackground=true, also register with background task tracker
 
       if (runInBackground) {
         const bgRegistry = getBackgroundTaskRegistry();
@@ -92,21 +97,22 @@ export function createAgentHandler(pool: AgentPool): ToolHandler {
           result: JSON.stringify({ agentId: result.agentId, status: result.status, answer: result.answer ?? '', error: result.error ?? null, turnsUsed: result.turnsUsed ?? 0 }),
         }));
         const origCancel = handle.cancel.bind(handle);
-        const taskId = bgRegistry.register({ type: 'agent', status: 'running', description: `Agent: ${description}`, promise: bgCompletion, cancel: () => { activeAgents.delete(agentId); origCancel(); } });
-        handle.completion.then(() => activeAgents.delete(agentId)).catch(() => activeAgents.delete(agentId));
-        return JSON.stringify({ task_id: taskId, agentId, status: handle.status, message: `Agent "${agentId}" started in background (task: ${taskId}) for: ${description}` });
+        bgRegistry.register({
+          type: 'agent',
+          status: 'running',
+          description: `Agent: ${description}`,
+          promise: bgCompletion,
+          cancel: () => { activeAgents.delete(agentId); origCancel(); },
+        });
       }
 
-      // Foreground: wait for completion
-      const result = await handle.completion;
-      activeAgents.delete(agentId);
+      // Always async — results flow back via mailbox at next turn
+      handle.completion.then(() => activeAgents.delete(agentId)).catch(() => activeAgents.delete(agentId));
 
       return JSON.stringify({
-        agentId: result.agentId,
-        status: result.status,
-        answer: result.answer ?? '',
-        error: result.error ?? null,
-        turnsUsed: result.turnsUsed ?? 0,
+        agentId,
+        status: 'spawned',
+        message: `Agent "${agentId}" spawned asynchronously for: ${description}. Results will arrive in your mailbox when complete. Use list_agents to check status.`,
       });
     } catch (err) {
       activeAgents.delete(agentId);

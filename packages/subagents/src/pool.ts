@@ -3,6 +3,7 @@
 // ============================================================================
 
 import type { SubagentConfig, SubagentHandle, SubagentResult, SubagentStatus } from './models.js';
+import { AgentMailbox } from '@jarvis/agent';
 
 // ============================================================================
 // SubagentPool
@@ -10,9 +11,33 @@ import type { SubagentConfig, SubagentHandle, SubagentResult, SubagentStatus } f
 
 export class SubagentPool {
   private agents: Map<string, SubagentHandle> = new Map();
-  private runner: ((config: SubagentConfig) => Promise<SubagentResult>) | null = null;
+  private mailboxes: Map<string, AgentMailbox> = new Map();
+  private runner: ((config: SubagentConfig, mailbox: AgentMailbox) => Promise<SubagentResult>) | null = null;
   private notifications: Array<{ agentId: string; status: SubagentStatus; result?: SubagentResult }> = [];
-  private lock = false;
+  private activeCount = 0;
+  private pending: Array<() => void> = [];
+
+  /** Maximum concurrent subagents (default 4, matches Codex agent_max_threads). */
+  readonly maxConcurrent: number;
+
+  /** Default nesting depth for subagents. Set before submitting. */
+  defaultDepth = 0;
+
+  /** Parent mailbox — subagent results auto-delivered here on completion. */
+  private parentMailbox: AgentMailbox | null = null;
+
+  constructor(maxConcurrent = 4) {
+    this.maxConcurrent = Math.max(1, maxConcurrent);
+  }
+
+  /**
+   * Set the parent mailbox where all subagent results are auto-delivered.
+   * This enables asynchronous spawn: parent spawns → returns immediately →
+   * results arrive automatically in parent's mailbox.
+   */
+  setParentMailbox(mailbox: AgentMailbox): void {
+    this.parentMailbox = mailbox;
+  }
 
   // ========================================================================
   // Configuration
@@ -22,8 +47,13 @@ export class SubagentPool {
    * Set the runner function that executes subagent tasks.
    * Called once before any subagents are submitted.
    */
-  setRunner(fn: (config: SubagentConfig) => Promise<SubagentResult>): void {
+  setRunner(fn: (config: SubagentConfig, mailbox: AgentMailbox) => Promise<SubagentResult>): void {
     this.runner = fn;
+  }
+
+  /** Get the mailbox for a specific subagent. */
+  getMailbox(agentId: string): AgentMailbox | undefined {
+    return this.mailboxes.get(agentId);
   }
 
   // ========================================================================
@@ -33,6 +63,7 @@ export class SubagentPool {
   /**
    * Submit a subagent for execution.
    * Returns a handle immediately. The subagent runs asynchronously.
+   * Multiple subagents run concurrently up to maxConcurrent.
    */
   submit(config: SubagentConfig): SubagentHandle {
     if (!this.runner) {
@@ -71,8 +102,12 @@ export class SubagentPool {
 
     this.agents.set(config.agentId, handle);
 
-    // Start async execution
-    this._execute(config, handle, resolveCompletion!, cancelled);
+    // Create a dedicated mailbox for this subagent
+    const mailbox = new AgentMailbox();
+    this.mailboxes.set(config.agentId, mailbox);
+
+    // Start async execution (respects maxConcurrent)
+    this._execute(config, handle, mailbox, resolveCompletion!, cancelled);
 
     return handle;
   }
@@ -107,7 +142,7 @@ export class SubagentPool {
   }
 
   /** Get the number of currently active (pending/running) subagents. */
-  activeCount(): number {
+  getActiveCount(): number {
     let count = 0;
     for (const h of this.agents.values()) {
       if (h.status === 'pending' || h.status === 'running') count++;
@@ -128,44 +163,79 @@ export class SubagentPool {
 
   /** Remove all completed/failed/cancelled agents and shut down. */
   shutdown(): void {
-    for (const [id, handle] of this.agents) {
+    for (const [, handle] of this.agents) {
       if (handle.status === 'pending' || handle.status === 'running') {
         handle.cancel();
       }
     }
     this.agents.clear();
+    this.mailboxes.clear();
     this.notifications = [];
+    this.pending = [];
+    this.activeCount = 0;
   }
 
   // ========================================================================
   // Internal
   // ========================================================================
 
+  private async _acquireSlot(): Promise<void> {
+    if (this.activeCount < this.maxConcurrent) {
+      this.activeCount++;
+      return;
+    }
+
+    // Queue up — wait for a slot to open
+    return new Promise<void>((resolve) => {
+      this.pending.push(() => {
+        this.activeCount++;
+        resolve();
+      });
+    });
+  }
+
+  private _releaseSlot(): void {
+    this.activeCount--;
+    // Unblock next pending subagent
+    const next = this.pending.shift();
+    if (next) {
+      // Release on next microtick so stack doesn't grow unbounded
+      setImmediate(next);
+    }
+  }
+
   private async _execute(
     config: SubagentConfig,
     handle: SubagentHandle,
+    mailbox: AgentMailbox,
     resolve: (result: SubagentResult) => void,
     cancelled: boolean,
   ): Promise<void> {
-    // Serialize starts to avoid races
-    while (this.lock) {
-      await new Promise((r) => setTimeout(r, 5));
-    }
-    this.lock = true;
+    // Wait for concurrency slot (non-blocking)
+    await this._acquireSlot();
 
     if (cancelled) {
-      this.lock = false;
+      this._releaseSlot();
       return;
     }
 
     this._updateStatus(config.agentId, 'running');
-    this.lock = false;
 
     try {
-      const result = await this.runner!(config);
+      const result = await this.runner!(config, mailbox);
       if (!cancelled) {
         this._updateStatus(config.agentId, result.status, result);
         resolve(result);
+
+        // Auto-deliver result to parent mailbox (Codex completion watcher pattern)
+        if (this.parentMailbox) {
+          const summary = result.answer || result.error || '(no output)';
+          this.parentMailbox.deliver(
+            config.agentId,
+            `[Subagent ${result.status}]\nTask: ${config.task.slice(0, 100)}\nResult: ${summary.slice(0, 500)}`,
+            true,
+          );
+        }
       }
     } catch (err) {
       const errMsg = err instanceof Error ? err.message : String(err);
@@ -178,6 +248,9 @@ export class SubagentPool {
         this._updateStatus(config.agentId, 'failed', failedResult);
         resolve(failedResult);
       }
+    } finally {
+      this.mailboxes.delete(config.agentId);
+      this._releaseSlot();
     }
   }
 

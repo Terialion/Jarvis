@@ -893,6 +893,20 @@ export class LLMProvider {
 }
 
 // ============================================================================
+// ContextOverflowError — raised when context window is exceeded
+// ============================================================================
+
+export class ContextOverflowError extends Error {
+  readonly tokenCount: number;
+
+  constructor(message: string, tokenCount = 0) {
+    super(message);
+    this.name = 'ContextOverflowError';
+    this.tokenCount = tokenCount;
+  }
+}
+
+// ============================================================================
 // Shared helpers
 // ============================================================================
 

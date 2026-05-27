@@ -2,6 +2,10 @@
 // @jarvis/agent — Core agent loop, LLM provider, and context management
 // ============================================================================
 
+// mailbox
+export { AgentMailbox } from './mailbox.js';
+export type { MailItem } from './mailbox.js';
+
 // model
 export { FakeModelClient, LLMProvider } from './model.js';
 export type {

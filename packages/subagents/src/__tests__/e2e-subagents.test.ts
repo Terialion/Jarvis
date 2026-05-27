@@ -1,4 +1,5 @@
 import { describe, it, expect } from 'vitest';
+import { AgentMailbox } from '@jarvis/agent';
 import { SubagentPool, SubagentRunner, toolWhitelistForType } from '@jarvis/subagents';
 import type { SubagentConfig } from '@jarvis/subagents';
 
@@ -17,7 +18,7 @@ describe('E2E: Subagents', () => {
   it('SubagentPool: submits a subagent and waits for result', async () => {
     const pool = new SubagentPool();
 
-    pool.setRunner(async (config: SubagentConfig) => ({
+    pool.setRunner(async (config: SubagentConfig, _mb: AgentMailbox) => ({
       agentId: config.agentId,
       status: 'completed',
       answer: `Task "${config.task}" completed with budget ${config.budgetSteps}`,
@@ -31,8 +32,6 @@ describe('E2E: Subagents', () => {
       budgetSteps: 10,
     });
 
-    // After submit, the runner starts synchronously in the same tick,
-    // so the status may already be 'running' (not 'pending')
     expect(['pending', 'running']).toContain(handle.status);
 
     const result = await handle.completion;
@@ -59,13 +58,16 @@ describe('E2E: Subagents', () => {
       .toThrow('already exists');
   });
 
-  it('SubagentRunner: runs a task with explore tools', async () => {
-    const calls: Array<{ task: string; tools: string[] | null; maxTurns: number }> = [];
+  it('SubagentRunner: runs a task with createAgentLoop', async () => {
+    const calls: Array<{ agentId: string; task: string }> = [];
+    const mockLoop = {
+      runTurn: async () => ({ ok: true, finalAnswer: 'Found 5 results', toolCalls: [], events: [], summary: {} }),
+    };
 
     const runner = new SubagentRunner({
-      runTurn: async (task, allowedTools, maxTurns) => {
-        calls.push({ task, tools: allowedTools ? [...allowedTools] : null, maxTurns });
-        return { answer: 'Found 5 results', turnsUsed: 2 };
+      createAgentLoop: (opts) => {
+        calls.push({ agentId: opts.agentId, task: opts.task });
+        return mockLoop as any;
       },
     });
 
@@ -74,26 +76,25 @@ describe('E2E: Subagents', () => {
       agentType: 'explore',
       task: 'Search for AgentLoop usage',
       budgetSteps: 5,
-    });
+    }, new AgentMailbox());
 
     expect(result.status).toBe('completed');
     expect(result.answer).toBe('Found 5 results');
-    expect(calls.length).toBe(1);
-    expect(calls[0].tools).toContain('grep');
-    expect(calls[0].tools).not.toContain('bash');
+    expect(calls).toHaveLength(1);
+    expect(calls[0].agentId).toBe('runner-test');
   });
 
   it('SubagentRunner: rejects depth exceeding max', async () => {
     const runner = new SubagentRunner({
-      runTurn: async () => ({ answer: 'ok', turnsUsed: 1 }),
+      createAgentLoop: () => ({ runTurn: async () => ({ ok: true }) } as any),
     });
 
     const result = await runner.run({
       agentId: 'deep-agent',
       agentType: 'general',
       task: 'Too deep',
-      depth: 3, // MAX_DEPTH is 2
-    });
+      depth: 3,
+    }, new AgentMailbox());
 
     expect(result.status).toBe('failed');
     expect(result.error).toContain('Depth');
@@ -101,7 +102,7 @@ describe('E2E: Subagents', () => {
 
   it('SubagentRunner: rejects invalid budget', async () => {
     const runner = new SubagentRunner({
-      runTurn: async () => ({ answer: 'ok', turnsUsed: 1 }),
+      createAgentLoop: () => ({ runTurn: async () => ({ ok: true }) } as any),
     });
 
     const result = await runner.run({
@@ -109,7 +110,7 @@ describe('E2E: Subagents', () => {
       agentType: 'general',
       task: 'Bad budget',
       budgetSteps: 0,
-    });
+    }, new AgentMailbox());
 
     expect(result.status).toBe('failed');
     expect(result.error).toContain('Budget');

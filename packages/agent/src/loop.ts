@@ -13,6 +13,7 @@ import { ContextBuilder, type ContextConfig, type TurnContext, type ContextPack,
 import { PromptBuilder, AGENT_SYSTEM_PROMPT } from './prompt-builder.js';
 import { ResponseComposer } from './summary.js';
 import { withRetry, type RetryConfig, ErrorClassifier, RetryPolicy as ToolRetryPolicy, FailureTracker, ReplanPolicy } from './retry.js';
+import type { AgentMailbox } from './mailbox.js';
 
 // ============================================================================
 // Configuration
@@ -50,6 +51,8 @@ export interface AgentLoopConfig {
   onToolStart?: (toolCallId: string, toolName: string, args: Record<string, unknown>) => void;
   /** Called when a tool finishes executing. */
   onToolEnd?: (toolCallId: string, toolName: string, result: ToolResult) => void;
+  /** Agent mailbox for inter-agent communication. */
+  mailbox?: AgentMailbox;
 }
 
 export interface TurnResult {
@@ -132,6 +135,68 @@ export class AgentLoop {
   private toolTimeoutS: number;
   private autoApprove: boolean;
   private modelInfo: Record<string, string>;
+  readonly mailbox: AgentMailbox | undefined;
+
+  // Lifecycle control (Codex AgentStatus + Hermes interrupt pattern)
+  private _interrupted = false;
+  private _paused = false;
+  private _pausedResolve: (() => void) | null = null;
+
+  /** Signal the agent to pause at the next step boundary. */
+  get paused(): boolean { return this._paused; }
+
+  /** Signal the agent to stop at the next step boundary. */
+  get interrupted(): boolean { return this._interrupted; }
+
+  /**
+   * Interrupt this agent — it will stop at the next step boundary.
+   * Mirrors Codex's AgentControl.interrupt_agent().
+   */
+  interrupt(reason?: string): void {
+    this._interrupted = true;
+    if (this._pausedResolve) {
+      // If agent is paused, resume it so it can notice the interrupt
+      this._pausedResolve();
+      this._pausedResolve = null;
+    }
+    this.eventBus?.emit('agent:interrupted', { reason: reason ?? 'interrupted' });
+  }
+
+  /**
+   * Pause this agent — it will block at the next step boundary until resume() is called.
+   */
+  pause(): void {
+    this._paused = true;
+  }
+
+  /**
+   * Resume a paused agent.
+   */
+  resume(): void {
+    this._paused = false;
+    if (this._pausedResolve) {
+      this._pausedResolve();
+      this._pausedResolve = null;
+    }
+    this.eventBus?.emit('agent:resumed', {});
+  }
+
+  /**
+   * Redirect this agent to a new task. Interrupts current work and queues a new goal.
+   */
+  redirect(newTask: string): void {
+    this._interrupted = true;
+    if (this._pausedResolve) {
+      this._pausedResolve();
+      this._pausedResolve = null;
+    }
+    this._paused = false;
+    // Deliver new task via mailbox so it's picked up on next turn
+    if (this.mailbox) {
+      this.mailbox.deliver('supervisor', `[REDIRECT] Your task has changed. New task:\n\n${newTask}`, true);
+    }
+    this.eventBus?.emit('agent:redirected', { newTask });
+  }
 
   constructor(config: AgentLoopConfig) {
     this.config = {
@@ -168,6 +233,8 @@ export class AgentLoop {
     this.skillRegistry = config.skillRegistry;
     this.skillExecutor = config.skillExecutor;
     this.hooks = config.hooks;
+
+    this.mailbox = config.mailbox;
 
     this.modelInfo = this._getModelInfo();
 
@@ -242,6 +309,25 @@ export class AgentLoop {
 
     for (let turn = 0; turn < this.config.maxTurns; turn++) {
       turnsUsed = turn + 1;
+
+      // Drain mailbox for inter-agent messages (Codex mailbox pattern)
+      if (this.mailbox) {
+        const mails = this.mailbox.drain();
+        for (const mail of mails) {
+          allMessages.push({
+            role: 'user',
+            content: [
+            `<inter-agent-message from="${mail.senderId}">`,
+            mail.message,
+            '</inter-agent-message>',
+            '',
+            'The message above was sent to you by another agent using the talk_to tool.',
+            `You can reply by calling talk_to(targetId="${mail.senderId}", message="your response").`,
+          ].join('\n'),
+            messageId: `msg_${crypto.randomUUID()}`,
+          });
+        }
+      }
 
       const llmMessages = this.contextBuilder.buildMessages(effectiveSystemPrompt, allMessages);
 
@@ -511,6 +597,43 @@ export class AgentLoop {
         if ((Date.now() - started) > this.timeoutS * 1000) {
           stopReason = 'timeout';
           break;
+        }
+
+        // Check for interrupt/pause (Codex AgentStatus + Hermes interrupt pattern)
+        if (this._interrupted) {
+          stopReason = 'interrupted';
+          finalAnswer = 'Agent was interrupted.';
+          break;
+        }
+        if (this._paused) {
+          // Block until resumed or interrupted
+          await new Promise<void>((resolve) => {
+            this._pausedResolve = resolve;
+          });
+          this._pausedResolve = null;
+          if (this._interrupted) {
+            stopReason = 'interrupted';
+            finalAnswer = 'Agent was interrupted while paused.';
+            break;
+          }
+        }
+
+        // Drain mailbox for inter-agent messages (Codex mailbox pattern)
+        if (this.mailbox) {
+          const mails = this.mailbox.drain();
+          for (const mail of mails) {
+            messages.push({
+              role: 'user',
+              content: [
+            `<inter-agent-message from="${mail.senderId}">`,
+            mail.message,
+            '</inter-agent-message>',
+            '',
+            'The message above was sent to you by another agent using the talk_to tool.',
+            `You can reply by calling talk_to(targetId="${mail.senderId}", message="your response").`,
+          ].join('\n'),
+            });
+          }
         }
 
         // Context window usage
