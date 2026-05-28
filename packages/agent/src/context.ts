@@ -103,9 +103,9 @@ export interface RuntimeState {
 // ============================================================================
 
 export interface SessionStoreLike {
-  loadMessages(sessionId: string, limit?: number): Array<Record<string, unknown>>;
-  loadSummaries(sessionId: string, limit?: number): Array<Record<string, unknown>>;
-  loadActivePlan?(sessionId: string): Record<string, unknown> | null;
+  loadMessages(sessionId: string, limit?: number): Array<Record<string, unknown>> | Promise<Array<Record<string, unknown>>>;
+  loadSummaries(sessionId: string, limit?: number): Array<Record<string, unknown>> | Promise<Array<Record<string, unknown>>>;
+  loadActivePlan?(sessionId: string): Record<string, unknown> | null | Promise<Record<string, unknown> | null>;
 }
 
 export interface MemoryStoreLike {
@@ -214,14 +214,14 @@ export class ContextBuilder {
   // Full buildContext — assembles a complete TurnContext
   // ========================================================================
 
-  buildContext(opts: {
+  async buildContext(opts: {
     sessionId: string;
     turnId: string;
     userInput: string;
     cwd?: string;
     projectId?: string;
     runtimeState?: RuntimeState;
-  }): TurnContext {
+  }): Promise<TurnContext> {
     const state = { ...opts.runtimeState };
     const modelInfo = { ...this.modelInfo, ...pickModelInfo(state) };
 
@@ -229,12 +229,12 @@ export class ContextBuilder {
     const resolvedCwd = path.resolve(cwdPath);
     const repoRoot = this._discoverRepoRoot(resolvedCwd);
     const project = this._buildProjectContext(resolvedCwd, repoRoot, opts.userInput);
-    const conversation = this._buildConversationContext(opts.sessionId, opts.turnId);
+    const conversation = await this._buildConversationContext(opts.sessionId, opts.turnId);
     const memory = this._buildMemoryContext(opts.userInput, opts.projectId);
     const storedContext = this.contextStore
       ? this.contextStore.retrieveRecentContext(opts.sessionId)
       : {};
-    const skills = this._buildSkillContext(storedContext, opts.sessionId);
+    const skills = await this._buildSkillContext(storedContext, opts.sessionId);
 
     const tokenBudget = {
       history_messages: conversation.recentMessages.length,
@@ -582,14 +582,14 @@ export class ContextBuilder {
   // Private: conversation context
   // ========================================================================
 
-  private _buildConversationContext(
+  private async _buildConversationContext(
     sessionId: string,
     turnId: string,
-  ): ConversationContext {
+  ): Promise<ConversationContext> {
     const recentMessages: ConversationContext['recentMessages'] = [];
 
     if (this.sessionStore) {
-      const rows = this.sessionStore.loadMessages(sessionId, this.maxHistoryMessages);
+      const rows = await this.sessionStore.loadMessages(sessionId, this.maxHistoryMessages);
       for (const row of rows) {
         if (String(row['turn_id'] ?? '') === turnId) continue;
         const role = String(row['role'] ?? '').trim();
@@ -648,7 +648,7 @@ export class ContextBuilder {
 
     let compactedSummary: string | null = null;
     if (this.sessionStore) {
-      const summaries = this.sessionStore.loadSummaries(sessionId, 5);
+      const summaries = await this.sessionStore.loadSummaries(sessionId, 5);
       if (summaries.length > 0) {
         const parts: string[] = [];
         const reversed = [...summaries].reverse();
@@ -793,10 +793,10 @@ export class ContextBuilder {
   // Private: skill context
   // ========================================================================
 
-  private _buildSkillContext(
+  private async _buildSkillContext(
     storedContext: Record<string, unknown>,
     sessionId: string,
-  ): SkillContext {
+  ): Promise<SkillContext> {
     const available: Array<{ name: string; description: string }> = [];
     if (this.skillRegistry) {
       try {
@@ -814,7 +814,7 @@ export class ContextBuilder {
       (storedContext['active_task'] as Record<string, unknown>) ?? null;
     if (!activeTask && sessionId && this.sessionStore?.loadActivePlan) {
       try {
-        activeTask = this.sessionStore.loadActivePlan(sessionId);
+        activeTask = await this.sessionStore.loadActivePlan(sessionId);
       } catch { /* ignore */ }
     }
 

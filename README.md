@@ -34,7 +34,7 @@ Jarvis is a terminal-native coding agent inspired by Claude Code, OpenAI Codex, 
 - **5-stage compaction** — progressive context compression from budget reduction to LLM summarization
 - **ReAct loop** — Reasoning → Action → Observation with retry, bridge safety checks, and context state persistence
 - **Skill system** — auto-discovery, 7-dimension matching with Chinese keyword support, policy-gated execution
-- **Python reference** — 313-file Python implementation preserved as reference/spec
+- **Reference Python implementation** — preserved as a reference/spec; active development is TypeScript
 
 ---
 
@@ -55,18 +55,22 @@ pnpm install
 
 ### Configure
 
-Add your API credentials to `.env` in the project root:
+Jarvis now prefers a user config file at `~/.jarvis/config.json`.
+
+On first launch, run:
+
+```bash
+pnpm jarvis
+```
+
+Jarvis will guide you through model, base URL, API key, reasoning effort, and permission mode setup inside the TUI.
+
+You can still use environment variables as a fallback:
 
 ```bash
 JARVIS_LLM_API_KEY=sk-your-key-here
 JARVIS_LLM_MODEL=deepseek-v4-pro
-JARVIS_LLM_BASE_URL=https://api.llm.ustc.edu.cn    # custom endpoint (optional)
-```
-
-Or export as environment variables:
-```bash
-export JARVIS_LLM_API_KEY=sk-your-key-here
-export JARVIS_LLM_MODEL=deepseek-v4-pro
+JARVIS_LLM_BASE_URL=https://api.llm.ustc.edu.cn
 ```
 
 ### Run
@@ -100,7 +104,7 @@ Jarvis implements a ReAct (Reasoning → Action → Observation) loop with strea
 
 ### Built-in tools
 
-Jarvis ships with 22+ built-in tools across several categories:
+Jarvis ships with built-in tools across several categories (exact count varies by configuration — see `allBuiltinTools` in `packages/tools/src/index.ts` for the current list):
 
 **File system:** `bash`, `read_file`, `write_file`, `edit_file`, `glob`, `grep`, `notebook_edit`
 
@@ -110,9 +114,9 @@ Jarvis ships with 22+ built-in tools across several categories:
 
 **Scheduling:** `cron_create`, `cron_delete`, `cron_list`, `schedule_wakeup`
 
-**Interaction:** `ask_user_question`, `memory_search`, `memory_get`
+**Interaction:** `ask_user_question`
 
-**Extensibility:** `skill.load`, `Skill` (direct invocation), `Agent` (subagent delegation), MCP resource/tool exposure
+**Extensibility:** `skill.load`, `Skill` (direct invocation), `Agent` (subagent delegation), MCP resource/tool exposure, `memory_search`, `memory_get` (registered at runtime)
 
 ### LLM providers
 
@@ -128,6 +132,23 @@ All providers use a unified OpenAI-compatible chat completions API. Provider-spe
 ---
 
 ## Configuration
+
+### User config
+
+Primary configuration lives in `~/.jarvis/config.json`.
+
+Common fields:
+
+| Field | Description | Default |
+|-------|-------------|---------|
+| `model` | Default model name | `deepseek-chat` |
+| `api_key` | LLM API key | (required) |
+| `base_url` | Custom API base URL | `https://api.deepseek.com/v1` |
+| `reasoning_effort` | Reasoning intensity | `high` |
+| `max_turns` | Default turn budget | `30` |
+| `permission_mode` | Permission gating mode | `workspace_write` |
+| `output_style` | Response style hint | `default` |
+| `system_prompt` | Optional global instruction override | (unset) |
 
 ### Environment variables
 
@@ -163,9 +184,9 @@ Jarvis supports three permission modes, configured via `/permissions` in TUI or 
 
 Dangerous shell commands (sudo, rm -rf /, curl-to-shell, etc.) are always blocked by `ApprovalGate` regardless of permission mode.
 
-### `.env` file
+### `.env` fallback
 
-Jarvis loads `.env` from the project root automatically. Copy `.env.example` and edit.
+Jarvis still loads `.env` from the project root automatically, but it is treated as a fallback for local and legacy setups.
 
 ---
 
@@ -193,7 +214,7 @@ Jarvis loads `.env` from the project root automatically. Copy `.env.example` and
 │  OpenAI-compat │            │  PermissionManager   │
 │  SSE streaming │            │  ApprovalGate        │
 │  Normalizer    │            │  ToolRegistry        │
-│  RetryPolicy   │            │  22+ built-in tools  │
+│  RetryPolicy   │            │  Built-in tools           │
 └──────┬─────────┘            └──────────┬───────────┘
        │                                 │
 ┌──────▼─────────────────────────────────▼───────────┐
@@ -211,7 +232,7 @@ Jarvis loads `.env` from the project root automatically. Copy `.env.example` and
 - **Unified tool execution** — `ToolRuntime` is the single entry point for tool dispatch, enforcing permissions and result truncation
 - **Skill isolation** — Skills declare allowed tools and risk levels; matcher uses 7 scoring dimensions
 - **Persistent state** — SessionStore writes append-only JSONL transcripts + mutable sidecar JSON
-- **Python reference** — `src/jarvis/` (313 .py files) is preserved as reference specification; all active development is TypeScript
+- **Reference implementation** — `src/jarvis/` is preserved as a reference specification; all active development is TypeScript
 
 ---
 
@@ -228,7 +249,7 @@ packages/
 ├── skills/        # Skill loader, registry, matcher (7-dim), executor
 ├── store/         # SessionStore (JSONL + sidecar), MemoryStore
 ├── subagents/     # Sub-agent delegation and isolation
-├── tools/         # ToolRegistry, ToolRuntime, PermissionManager, ApprovalGate, 22+ built-in tools
+├── tools/         # ToolRegistry, ToolRuntime, PermissionManager, ApprovalGate, Built-in tools         
 └── tui/           # Custom ink-style React renderer for terminal UI
 
 src/jarvis/        # Python reference implementation (313 files)

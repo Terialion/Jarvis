@@ -7,7 +7,7 @@ import * as path from 'node:path';
 import * as fs from 'node:fs';
 import { parseArgs } from 'node:util';
 import { LLMProvider, AgentLoop } from '@jarvis/agent';
-import { ToolRegistry, allBuiltinTools, createSkillLoadTool, createSkillTool, createAgentTool, createListMcpResourcesTool, createReadMcpResourceTool, createMcpToolEntries, webSearchTool, webFetchTool, createWebSearchTool, createWebFetchHandler, tryCreateTavilySearch, tryCreateTavilyFetch } from '@jarvis/tools';
+import { ToolRegistry, allBuiltinTools, createToolRuntime, createSkillLoadTool, createSkillTool, createAgentTool, createListMcpResourcesTool, createReadMcpResourceTool, createMcpToolEntries, webSearchTool, webFetchTool, createWebSearchTool, createWebFetchHandler, tryCreateTavilySearch, tryCreateTavilyFetch } from '@jarvis/tools';
 import { HookRegistry } from '@jarvis/hooks';
 import { SkillRegistry, SkillExecutor } from '@jarvis/skills';
 import { SubagentPool, toolWhitelistForType, type SubagentConfig } from '@jarvis/subagents';
@@ -336,22 +336,24 @@ export function bootstrap(options: CLIOptions): CLIContext {
     subTools.register(createSkillLoadTool(skills));
     subTools.register(createSkillTool(skills));
 
+    const subRuntime = createToolRuntime(subTools, { permissionMode: 'workspace_write' });
     const subLoop = new AgentLoop({
       model: { model: options.model, reasoningEffort: options.reasoningEffort },
       maxTurns: config.budgetSteps ?? 5,
       tools: subTools,
+      toolRuntime: subRuntime,
       provider,
       skillRegistry: skills,
       skillExecutor: new SkillExecutor(skills),
       hooks,
     });
 
-    const result = await subLoop.run(config.task);
+    const result = await subLoop.runTurn(config.task);
     return {
       agentId: config.agentId,
-      status: 'completed',
-      answer: result.answer,
-      turnsUsed: result.turnsUsed,
+      status: result.ok ? 'completed' as const : 'failed' as const,
+      answer: result.finalAnswer,
+      turnsUsed: result.toolCalls.length,
     };
   });
   tools.register(createAgentTool(subagentPool));
@@ -502,39 +504,46 @@ export async function runOneShot(options: CLIOptions): Promise<string> {
     subTools.register(createSkillLoadTool(skills));
     subTools.register(createSkillTool(skills));
 
+    const subRuntime2 = createToolRuntime(subTools, { permissionMode: 'workspace_write' });
     const subLoop = new AgentLoop({
       model: { model: options.model, reasoningEffort: options.reasoningEffort },
       maxTurns: config.budgetSteps ?? 5,
       tools: subTools,
+      toolRuntime: subRuntime2,
       provider,
       skillRegistry: skills,
       skillExecutor: new SkillExecutor(skills),
       hooks: new HookRegistry(),
     });
 
-    const result = await subLoop.run(config.task);
+    const result = await subLoop.runTurn(config.task);
     return {
       agentId: config.agentId,
-      status: 'completed',
-      answer: result.answer,
-      turnsUsed: result.turnsUsed,
+      status: result.ok ? ('completed' as const) : ('failed' as const),
+      answer: result.finalAnswer,
+      turnsUsed: result.toolCalls.length,
     };
   });
   tools.register(createAgentTool(subagentPool));
+
+  const runtime = createToolRuntime(tools, {
+    permissionMode: 'workspace_write',
+  });
 
   const loop = new AgentLoop({
     model: { model: options.model, reasoningEffort: options.reasoningEffort },
     maxTurns: options.maxTurns,
     systemPrompt: options.systemPrompt,
     tools,
+    toolRuntime: runtime,
     provider,
     skillRegistry: skills,
     skillExecutor,
     hooks: new HookRegistry(),
   });
 
-  const result = await loop.run(options.oneShot ?? 'Hello');
-  return result.answer;
+  const result = await loop.runTurn(options.oneShot ?? 'Hello');
+  return result.finalAnswer;
 }
 
 // ============================================================================

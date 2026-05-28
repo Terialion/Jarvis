@@ -11,6 +11,22 @@ import { ToolRegistry, type ToolContext } from './registry.js';
 
 export type PermissionMode = 'bypass' | 'accept_edits' | 'default';
 
+/** User-facing permission modes from config (product layer). */
+export type UserPermissionMode = 'workspace_write' | 'accept_edits' | 'bypass';
+
+/**
+ * Map user-facing permission mode to internal PermissionManager mode.
+ * workspace_write → default (compat alias)
+ * accept_edits   → accept_edits
+ * bypass         → bypass
+ */
+export function mapUserPermissionMode(userMode: string): PermissionMode {
+  if (userMode === 'workspace_write') return 'default';
+  if (userMode === 'accept_edits') return 'accept_edits';
+  if (userMode === 'bypass') return 'bypass';
+  return 'default';
+}
+
 /** Risk levels for tool categorization */
 export type ToolRiskLevel = 'read_only' | 'write_approval_required' | 'command' | 'network' | 'credentialed';
 
@@ -173,6 +189,8 @@ export interface ToolRuntimeOptions {
   defaultMaxResultSize?: number;
   /** Optional permission manager for per-tool approval gating */
   permissionManager?: PermissionManager;
+  /** Optional approval gate for bash command safety checks */
+  approvalGate?: ApprovalGate;
 }
 
 /**
@@ -183,16 +201,23 @@ export class ToolRuntime {
   private registry: ToolRegistry;
   private defaultMaxResultSize: number;
   private permissionManager?: PermissionManager;
+  private approvalGate?: ApprovalGate;
 
   constructor(registry: ToolRegistry, options: ToolRuntimeOptions = {}) {
     this.registry = registry;
     this.defaultMaxResultSize = options.defaultMaxResultSize ?? 100_000;
     this.permissionManager = options.permissionManager;
+    this.approvalGate = options.approvalGate;
   }
 
   /** Get the permission manager (for external configuration). */
   getPermissionManager(): PermissionManager | undefined {
     return this.permissionManager;
+  }
+
+  /** Get the approval gate (for external configuration). */
+  getApprovalGate(): ApprovalGate | undefined {
+    return this.approvalGate;
   }
 
   /**
@@ -225,6 +250,22 @@ export class ToolRuntime {
         // Tool requires approval but no interactive bridge is available —
         // the caller (TUI/CLI) should handle this via a pre-tool hook.
         // We proceed with a flag that the caller can intercept.
+      }
+    }
+
+    // ApprovalGate check for bash commands
+    if (name === 'bash' && typeof args.command === 'string' && this.approvalGate) {
+      const approval = this.approvalGate.checkCommand(args.command as string);
+      if (!approval.safe) {
+        return {
+          callId,
+          name,
+          ok: false,
+          content: JSON.stringify({ error: approval.reason ?? 'Command blocked by safety check.' }),
+          error: approval.reason ?? 'Command blocked',
+          errorType: 'approval_blocked',
+          durationMs: Math.round(performance.now() - start),
+        };
       }
     }
 
@@ -345,6 +386,44 @@ export class ApprovalGate {
 
     return { safe: true };
   }
+}
+
+// ============================================================================
+// Factory — create a fully wired ToolRuntime from a registry + user config
+// ============================================================================
+
+export interface CreateToolRuntimeOptions {
+  /** User-facing permission mode (workspace_write | accept_edits | bypass) */
+  permissionMode?: string;
+  /** Max result size in chars before truncation */
+  defaultMaxResultSize?: number;
+  /** Skip ApprovalGate safety checks (e.g. in containers) */
+  skipApprovalChecks?: boolean;
+}
+
+/**
+ * Create a ToolRuntime wired with PermissionManager and ApprovalGate
+ * from a user-facing permission mode string.
+ *
+ * Usage in CLI/TUI bootstrap:
+ *   const runtime = createToolRuntime(tools, { permissionMode: 'workspace_write' });
+ *   const loop = new AgentLoop({ ..., toolRuntime: runtime });
+ */
+export function createToolRuntime(
+  registry: ToolRegistry,
+  options: CreateToolRuntimeOptions = {},
+): ToolRuntime {
+  const internalMode = mapUserPermissionMode(options.permissionMode ?? 'workspace_write');
+  const permManager = new PermissionManager();
+  permManager.setMode(internalMode);
+
+  const approvalGate = new ApprovalGate({ skipChecks: options.skipApprovalChecks ?? false });
+
+  return new ToolRuntime(registry, {
+    defaultMaxResultSize: options.defaultMaxResultSize,
+    permissionManager: permManager,
+    approvalGate,
+  });
 }
 
 /**

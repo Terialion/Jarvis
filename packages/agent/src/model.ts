@@ -57,6 +57,7 @@ export interface TokenUsage {
 
 export interface LLMResponse {
   content: string;
+  reasoningSummary?: string;
   toolCalls: ToolCall[];
   finishReason: 'stop' | 'tool_calls' | 'length' | 'content_filter' | 'retry_with_tool_instruction' | 'empty';
   usage?: TokenUsage;

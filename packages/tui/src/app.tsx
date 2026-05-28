@@ -13,6 +13,7 @@ import { AgentLoop, AgentEventBus, ConversationSummarizer, TokenTracker, parseMo
 import {
   ToolRegistry,
   allBuiltinTools,
+  createToolRuntime,
   setAskUserQuestionBridge,
   createSkillLoadTool,
   createSkillTool,
@@ -335,8 +336,8 @@ const SLASH_COMMANDS: SlashCommandDef[] = [
       ctx.setIsLoading(true);
       try {
         const agent = ctx.getAgent();
-        const result = await agent.run(prompt, []);
-        return result.answer || 'Review complete (no text response).';
+        const result = await agent.runTurn(prompt);
+        return result.finalAnswer || 'Review complete (no text response).';
       } catch (e) {
         return `Review failed: ${e instanceof Error ? e.message : String(e)}`;
       } finally {
@@ -635,8 +636,8 @@ const SLASH_COMMANDS: SlashCommandDef[] = [
       ctx.setIsLoading(true);
       try {
         const agent = ctx.getAgent();
-        const result = await agent.run(prompt, []);
-        return result.answer || 'Security review complete (no text response).';
+        const result = await agent.runTurn(prompt);
+        return result.finalAnswer || 'Security review complete (no text response).';
       } catch (e) {
         return `Security review failed: ${e instanceof Error ? e.message : String(e)}`;
       } finally {
@@ -1154,12 +1155,12 @@ export function App({ options }: { options: TUIOptions }): React.ReactNode {
             hooks: new HookRegistry(),
           });
 
-          const result = await subLoop.run(config.task);
+          const result = await subLoop.runTurn(config.task);
           return {
             agentId: config.agentId,
-            status: 'completed' as const,
-            answer: result.answer,
-            turnsUsed: result.turnsUsed,
+            status: result.ok ? ('completed' as const) : ('failed' as const),
+            answer: result.finalAnswer,
+            turnsUsed: result.toolCalls.length,
           };
         });
       }
@@ -1308,6 +1309,10 @@ export function App({ options }: { options: TUIOptions }): React.ReactNode {
             return m;
           }));
         },
+        sessionStore: sessionStoreRef.current ?? undefined,
+        toolRuntime: createToolRuntime(tools, {
+          permissionMode: permissionModeRef.current,
+        }),
       });
     }
     return agentRef.current;
@@ -1380,13 +1385,35 @@ export function App({ options }: { options: TUIOptions }): React.ReactNode {
       if (abort.signal.aborted) throw new DOMException('Aborted', 'AbortError');
 
       const agent = getAgent();
-      const prevLen = historyRef.current.length;
-      const result = await agent.run(prompt, historyRef.current);
+      const store = sessionStoreRef.current;
+      const sid = sessionIdRef.current!;
+
+      // Persist user message to session store (truth source for runTurn context)
+      if (store && sid) {
+        await store.appendMessage(sid, 'user', prompt, { turnId: undefined });
+      }
+      // Keep historyRef for slash-command compat (display layer only)
+      historyRef.current = [...historyRef.current, {
+        role: 'user',
+        content: prompt,
+        messageId: `msg_${crypto.randomUUID()}`,
+      }];
+
+      const result = await agent.runTurn(prompt, {
+        sessionId: sid ?? undefined,
+        cwd: process.cwd(),
+      });
+
+      // Persist final answer to session store
+      if (store && sid && result.finalAnswer) {
+        await store.saveFinalAnswer(sid, result.turnId, result.finalAnswer);
+      }
 
       // Track files modified by this turn
       for (const tr of result.toolResults) {
-        if (FILE_MODIFYING_TOOLS.has(tr.name)) {
-          const files = extractModifiedFiles(tr.name, tr.content);
+        const name = tr['name'] as string ?? '';
+        if (FILE_MODIFYING_TOOLS.has(name)) {
+          const files = extractModifiedFiles(name, tr['content'] as string ?? '');
           for (const f of files) {
             modifiedFilesRef.current.add(f);
           }
@@ -1397,13 +1424,13 @@ export function App({ options }: { options: TUIOptions }): React.ReactNode {
       // the final message (so we know if text was already committed)
       const committedStreamingText = drainAndCommit();
       const normalizedCommittedText = committedStreamingText?.trim() ?? '';
-      const finalAnswer = typeof result.answer === 'string' ? result.answer.trim() : '';
+      const finalAnswer = typeof result.finalAnswer === 'string' ? result.finalAnswer.trim() : '';
 
       const content: MessageContent[] = [];
       let taskSnapshot: CodexTaskSnapshot | null = null;
 
       // Show reasoning as a collapsible thinking block
-      if ('reasoning' in result && typeof result.reasoning === 'string' && result.reasoning) {
+      if (result.reasoning) {
         content.push({
           type: 'thinking',
           text: result.reasoning,
@@ -1413,10 +1440,12 @@ export function App({ options }: { options: TUIOptions }): React.ReactNode {
       // Collect file changes for summary display
       const fileChanges: FileChange[] = [];
       for (const tr of result.toolResults) {
-        const change = computeFileChange(tr.name, tr.content);
+        const name = tr['name'] as string ?? '';
+        const trContent = tr['content'] as string ?? '';
+        const change = computeFileChange(name, trContent);
         if (change) fileChanges.push(change);
 
-        const parsed = parseToolContent(tr.name, tr.content);
+        const parsed = parseToolContent(name, trContent);
         if (parsed) {
           if (parsed.type === 'task_result' && parsed.counts) {
             taskCountRef.current = parsed.counts;
@@ -1437,7 +1466,7 @@ export function App({ options }: { options: TUIOptions }): React.ReactNode {
       // Preserve the final answer unless the trailing streamed text already
       // rendered the same content.
       if (finalAnswer && finalAnswer !== normalizedCommittedText) {
-        content.push({ type: 'text', text: result.answer });
+        content.push({ type: 'text', text: result.finalAnswer });
       }
 
       // Append file change summary if any files were modified
@@ -1467,16 +1496,17 @@ export function App({ options }: { options: TUIOptions }): React.ReactNode {
       }
 
       const stats = runStatsRef.current;
-      const reasoningText = typeof result.reasoning === 'string' ? result.reasoning : '';
+      const reasoningText = result.reasoning ?? '';
       const liveStreamingText = streamingContentRef.current ?? '';
       const committedText = committedStreamingText ?? '';
+      const resultAnswer = result.finalAnswer ?? '';
       emitDebugEvent({
         type: 'run_completed',
         prompt,
         elapsedMs: Date.now() - turnStartedAt,
-        finalAnswerLength: result.answer.length,
-        finalAnswerPreview: result.answer.slice(0, 200),
-        finalAnswerTail: result.answer.slice(-200),
+        finalAnswerLength: resultAnswer.length,
+        finalAnswerPreview: resultAnswer.slice(0, 200),
+        finalAnswerTail: resultAnswer.slice(-200),
         reasoningLength: reasoningText.length,
         streamedContentLength: liveStreamingText.length,
         committedStreamingLength: committedText.length,
@@ -1490,32 +1520,24 @@ export function App({ options }: { options: TUIOptions }): React.ReactNode {
         hadStreamingThinking: stats?.hadStreamingThinking ?? false,
         toolResultCount: result.toolResults.length,
         stopReason: result.stopReason,
-        turnsUsed: result.turnsUsed,
-        toolResults: result.toolResults.map((toolResult) => ({
-          name: toolResult.name,
-          ok: toolResult.ok,
-          contentLength: toolResult.content.length,
-          error: toolResult.error,
+        turnsUsed: result.toolCalls.length,
+        toolResults: result.toolResults.map((tr: Record<string, unknown>) => ({
+          name: tr['name'] as string ?? '',
+          ok: tr['ok'] as boolean ?? false,
+          contentLength: typeof tr['content'] === 'string' ? (tr['content'] as string).length : 0,
+          error: tr['error'] as string | undefined,
         })),
-        newMessageCount: result.messages.length - prevLen,
+        newMessageCount: 1,
         timestamp: Date.now(),
       });
 
-      // Persist new messages from this turn to SessionStore
-      historyRef.current = result.messages;
-      const newMsgs = result.messages.slice(prevLen);
-      const store = sessionStoreRef.current;
-      const sid = sessionIdRef.current;
-      if (store && sid) {
-        for (const msg of newMsgs) {
-          const meta = { ...(msg.metadata ?? {}) };
-          if (msg.name) meta['_name'] = msg.name;
-          store.appendMessage(sid, msg.role, msg.content, {
-            turnId: result.turnId,
-            toolCallId: msg.toolCallId,
-            metadata: Object.keys(meta).length > 0 ? meta : undefined,
-          });
-        }
+      // Append assistant message to historyRef for display/slash-command compat
+      if (result.finalAnswer) {
+        historyRef.current = [...historyRef.current, {
+          role: 'assistant' as const,
+          content: result.finalAnswer,
+          messageId: `msg_${crypto.randomUUID()}`,
+        }];
       }
     } catch (err) {
       const isAbort = err instanceof DOMException && err.name === 'AbortError';

@@ -15,9 +15,13 @@ export {
   ToolRuntime,
   ApprovalGate,
   PermissionManager,
+  mapUserPermissionMode,
+  createToolRuntime,
   type ToolRuntimeOptions,
+  type CreateToolRuntimeOptions,
   type ApprovalResult,
   type PermissionMode,
+  type UserPermissionMode,
   type PermissionCheckResult,
 } from './runtime.js';
 

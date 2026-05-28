@@ -8,6 +8,7 @@
     "test": "turbo run test",
     "dev": "turbo run dev --parallel",
     "jarvis": "pnpm --filter @jarvis/cli dev --",
+    "check:docs": "tsx scripts/check-doc-consistency.ts",
     "lint": "turbo run lint",
     "typecheck": "turbo run typecheck",
     "clean": "turbo run clean"

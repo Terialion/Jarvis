@@ -10,7 +10,7 @@ import type {
   ToolCallThreadItem,
   ToolResult,
 } from '@jarvis/shared';
-import type { ToolRegistry } from '@jarvis/tools';
+import type { ToolRegistry, ToolRuntime } from '@jarvis/tools';
 import type { SkillRegistry, SkillExecutor } from '@jarvis/skills';
 import type { HookRegistry } from '@jarvis/hooks';
 import { LLMProvider, type ModelConfig, type LLMMessage, FakeModelClient } from './model.js';
@@ -30,6 +30,7 @@ export interface AgentLoopConfig {
   model: ModelConfig;
   maxTurns?: number;
   tools?: ToolRegistry;
+  toolRuntime?: ToolRuntime;
   systemPrompt?: string;
   eventBus?: AgentEventBus;
   context?: ContextConfig;
@@ -109,8 +110,9 @@ const SENSITIVE_MARKERS = [
 ];
 
 export class AgentLoop {
-  private config: Required<Omit<AgentLoopConfig, 'tools' | 'eventBus' | 'provider' | 'skillRegistry' | 'skillExecutor' | 'hooks' | 'sessionStore' | 'memoryStore' | 'contextStore' | 'tokenTracker' | 'onToken' | 'onReasoningDelta' | 'onToolStart' | 'onToolEnd' | 'onThreadEvent' | 'mailbox'>> & {
+  private config: Required<Omit<AgentLoopConfig, 'tools' | 'toolRuntime' | 'eventBus' | 'provider' | 'skillRegistry' | 'skillExecutor' | 'hooks' | 'sessionStore' | 'memoryStore' | 'contextStore' | 'tokenTracker' | 'onToken' | 'onReasoningDelta' | 'onToolStart' | 'onToolEnd' | 'onThreadEvent' | 'mailbox'>> & {
     tools?: ToolRegistry;
+    toolRuntime?: ToolRuntime;
     eventBus?: AgentEventBus;
     provider?: LLMProvider;
     tokenTracker?: TokenTracker;
@@ -129,6 +131,7 @@ export class AgentLoop {
   };
   private provider: LLMProvider | FakeModelClient;
   private tools?: ToolRegistry;
+  private toolRuntime?: ToolRuntime;
   private eventBus?: AgentEventBus;
   private contextBuilder: ContextBuilder;
   private promptBuilder: PromptBuilder;
@@ -234,6 +237,7 @@ export class AgentLoop {
       toolTimeoutS: config.toolTimeoutS ?? 60,
       autoApprove: config.autoApprove ?? false,
       tools: config.tools,
+      toolRuntime: config.toolRuntime,
       eventBus: config.eventBus,
       provider: config.provider,
       onThreadEvent: config.onThreadEvent,
@@ -252,6 +256,7 @@ export class AgentLoop {
 
     this.provider = config.provider ?? new LLMProvider(config.model);
     this.tools = config.tools;
+    this.toolRuntime = config.toolRuntime;
     this.eventBus = config.eventBus;
     this.projectRoot = this.config.projectRoot;
     this.permissionMode = this.config.permissionMode;
@@ -309,9 +314,13 @@ export class AgentLoop {
   }
 
   // ========================================================================
-  // Simple run() — backward compat with existing tests
+  // Simple run() — legacy compat path, prefer runTurn() for new code
   // ========================================================================
 
+  /** @deprecated Use runTurn() for new code. run() is kept for backward
+   *  compatibility with existing tests and callers that don't need the
+   *  richer AgentRunResult. Shared tool execution via executeToolCall()
+   *  ensures consistent behavior with runTurn(). */
   async run(
     userMessage: string,
     history: ChatMessage[] = [],
@@ -618,40 +627,15 @@ export class AgentLoop {
           });
           this.config.onToolStart?.(tc.callId, tc.name, tc.arguments);
 
+          const signal = this.beginToolDispatch();
           let toolResult: ToolResult;
-          if (this.tools) {
-            let rawResult = '';
-            const signal = this.beginToolDispatch();
-            try {
-              rawResult = await this.tools.dispatch(tc.name, tc.arguments, {
-                signal,
-              });
-            } finally {
-              this.endToolDispatch();
-            }
-            let parsed: Record<string, unknown> | null = null;
-            try { parsed = JSON.parse(rawResult); } catch { /* not JSON */ }
-
-            toolResult = {
-              callId: tc.callId,
-              name: tc.name,
-              ok: parsed === null || typeof parsed.error !== 'string',
-              content: rawResult,
-              error: parsed && typeof parsed.error === 'string' ? parsed.error : undefined,
-              durationMs: 0,
-            };
-          } else {
-            toolResult = {
-              callId: tc.callId,
-              name: tc.name,
-              ok: false,
-              content: '',
-              error: 'No tool registry configured',
-              durationMs: 0,
-            };
+          try {
+            toolResult = await this.executeToolCall(tc.name, tc.arguments, tc.callId, {
+              signal,
+            });
+          } finally {
+            this.endToolDispatch();
           }
-
-          toolResult.durationMs = Date.now() - startedAt;
 
           allToolResults.push(toolResult);
 
@@ -751,6 +735,7 @@ export class AgentLoop {
     const sessionId = opts?.sessionId ?? `session_${crypto.randomUUID()}`;
     const turnId = `turn_${crypto.randomUUID()}`;
     const cwd = opts?.cwd ?? this.projectRoot;
+    const threadId = `thread_${sessionId.replace(/^session_/, '')}`;
 
     const events: AgentEvent[] = [];
     const toolCallsLog: Array<{ name: string; arguments: Record<string, unknown>; callId: string }> = [];
@@ -767,6 +752,15 @@ export class AgentLoop {
     const skillResultsLog: Record<string, unknown>[] = [];
     const skillsUsed: string[] = [];
 
+    this.emitThreadEvent({
+      type: 'thread.started',
+      thread_id: threadId,
+    });
+    this.emitThreadEvent({
+      type: 'turn.started',
+      turn_id: turnId,
+    });
+
     // Safety check
     if (this._isSensitiveRequest(userInput)) {
       return this._completeEarly({
@@ -779,7 +773,7 @@ export class AgentLoop {
     }
 
     // Build context
-    const turnContext = this.contextBuilder.buildContext({
+    const turnContext = await this.contextBuilder.buildContext({
       sessionId,
       turnId,
       userInput,
@@ -962,6 +956,14 @@ export class AgentLoop {
 
         let anyOkThisStep = false;
         for (const call of modelResp.toolCalls) {
+          const toolItemBase: ToolCallThreadItem = {
+            id: call.callId,
+            type: 'tool_call',
+            tool_name: call.name,
+            arguments: call.arguments,
+            status: 'in_progress',
+          };
+
           // FailureTracker check
           const reject = failureTracker.shouldRejectTool(call.name);
           if (reject.reject) {
@@ -1022,89 +1024,66 @@ export class AgentLoop {
 
           toolCallsLog.push({ name: call.name, arguments: call.arguments, callId: call.callId });
           this._emit(events, turnId, 'tool_call_started', { step, tool_call: { name: call.name, arguments: call.arguments } });
+          this.emitThreadEvent({
+            type: 'item.started',
+            turn_id: turnId,
+            item: toolItemBase,
+          });
           this.config.onToolStart?.(call.callId, call.name, call.arguments);
 
-          // Execute tool
+          // Execute tool through shared helper (handles pre/post hooks + ToolRuntime)
+          const signal = this.beginToolDispatch();
           let result: ToolResult;
-
-          // Hooks: pre_tool_use gate
-          if (this.hooks) {
-            const hookResult = await this.hooks.runPreToolUse({
-              toolName: call.name,
-              toolArgs: call.arguments,
+          try {
+            result = await this.executeToolCall(call.name, call.arguments, call.callId, {
               sessionId,
               turnId,
+              signal,
             });
-            if (!hookResult.allowed) {
-              result = {
-                callId: call.callId,
-                name: call.name,
-                ok: false,
-                content: JSON.stringify({
-                  error: `Tool "${call.name}" blocked: ${hookResult.reason ?? hookResult.message ?? 'denied by hook'}`,
-                }),
-                error: hookResult.reason ?? 'denied',
-                durationMs: 0,
-              };
-              const blockedDict = { ...result, content: result.content };
-              toolResultsLog.push(blockedDict);
-              this._emit(events, turnId, 'tool_call_completed', { step, tool_result: { ...result, ok: false } });
-              messages.push({
-                role: 'tool',
-                tool_call_id: call.callId,
-                content: this._observationText(result),
-              });
-              failureTracker.recordFailure(result.name, 'blocked', result.error ?? '', step);
-              continue;
-            }
+          } finally {
+            this.endToolDispatch();
           }
 
-          if (this.tools) {
-            let rawResult = '';
-            const signal = this.beginToolDispatch();
-            try {
-              rawResult = await this.tools.dispatch(call.name, call.arguments, {
-                signal,
-              });
-            } finally {
-              this.endToolDispatch();
-            }
-            let parsed: Record<string, unknown> | null = null;
-            try { parsed = JSON.parse(rawResult); } catch { /* not JSON */ }
-            result = {
-              callId: call.callId,
-              name: call.name,
-              ok: !parsed || typeof parsed.error !== 'string',
-              content: rawResult,
-              error: parsed && typeof parsed.error === 'string' ? parsed.error : undefined,
-              durationMs: 0,
-            };
-          } else {
-            result = {
-              callId: call.callId,
-              name: call.name,
-              ok: false,
-              content: '',
-              error: 'No tool registry configured',
-              durationMs: 0,
-            };
+          // Handle blocked-by-hook result
+          if (!result.ok && result.error === 'denied') {
+            const blockedDict = { ...result, content: result.content };
+            toolResultsLog.push(blockedDict);
+            this._emit(events, turnId, 'tool_call_completed', { step, tool_result: { ...result, ok: false } });
+            this.emitThreadEvent({
+              type: 'item.completed',
+              turn_id: turnId,
+              item: {
+                ...toolItemBase,
+                status: 'failed',
+                result: result.content,
+                error: result.error,
+                duration_ms: result.durationMs,
+              },
+            });
+            messages.push({
+              role: 'tool',
+              tool_call_id: call.callId,
+              content: this._observationText(result),
+            });
+            failureTracker.recordFailure(result.name, 'blocked', result.error ?? '', step);
+            continue;
           }
 
           const resultDict = { ...result, content: result.content };
           toolResultsLog.push(resultDict);
           this._emit(events, turnId, 'tool_call_completed', { step, tool_result: resultDict });
+          this.emitThreadEvent({
+            type: 'item.completed',
+            turn_id: turnId,
+            item: {
+              ...toolItemBase,
+              status: result.ok ? 'completed' : 'failed',
+              result: result.content,
+              error: result.error,
+              duration_ms: result.durationMs,
+            },
+          });
           this.config.onToolEnd?.(call.callId, call.name, result);
-
-          // Hooks: post_tool_use (fire-and-forget, audit-only)
-          if (this.hooks) {
-            this.hooks.runPostToolUse({
-              toolName: call.name,
-              toolArgs: call.arguments,
-              toolResult: result.content,
-              sessionId,
-              turnId,
-            }).catch(() => {});
-          }
 
           // skill.load handling
           if (call.name === 'skill.load' && result.ok) {
@@ -1172,25 +1151,12 @@ export class AgentLoop {
             classification,
           ) && this.tools) {
             this._emit(events, turnId, 'retry_started', { step, tool_name: result.name, reason: classification.reason });
-            let retryRaw = '';
-            const signal = this.beginToolDispatch();
-            try {
-              retryRaw = await this.tools.dispatch(call.name, call.arguments, {
-                signal,
-              });
-            } finally {
-              this.endToolDispatch();
-            }
-            let retryParsed: Record<string, unknown> | null = null;
-            try { retryParsed = JSON.parse(retryRaw); } catch { /* not JSON */ }
-            const retryResult: ToolResult = {
-              callId: call.callId,
-              name: call.name,
-              ok: !retryParsed || typeof retryParsed.error !== 'string',
-              content: retryRaw,
-              error: retryParsed && typeof retryParsed.error === 'string' ? retryParsed.error : undefined,
-              durationMs: 0,
-            };
+            const retryResult = await this.executeToolCall(call.name, call.arguments, call.callId, {
+              sessionId,
+              turnId,
+              signal: this.beginToolDispatch(),
+            });
+            this.endToolDispatch();
             toolResultsLog.push({ ...retryResult, content: retryResult.content });
             if (retryResult.ok) {
               failureTracker.recordSuccess(retryResult.name);
@@ -1292,6 +1258,20 @@ export class AgentLoop {
       this._emit(events, turnId, status !== 'failed' ? 'turn_completed' : 'turn_failed', {
         status, stop_reason: stopReason,
       });
+      if (status === 'failed') {
+        this.emitThreadEvent({
+          type: 'turn.failed',
+          turn_id: turnId,
+          error: { message: finalAnswer || stopReason },
+        });
+      } else {
+        this.emitThreadEvent({
+          type: 'turn.completed',
+          turn_id: turnId,
+          stop_reason: stopReason,
+          usage: this.buildTurnUsage(),
+        });
+      }
 
       return {
         ok: status !== 'failed',
@@ -1319,6 +1299,11 @@ export class AgentLoop {
     } catch (exc) {
       const err = exc instanceof Error ? exc : new Error(String(exc));
       this._emit(events, turnId, 'turn_failed', { error: err.message, error_type: err.constructor.name });
+      this.emitThreadEvent({
+        type: 'turn.failed',
+        turn_id: turnId,
+        error: { message: err.message },
+      });
       const mappedReason = this._mapProviderErrorStopReason(exc);
       const friendlyMsg = this._friendlyErrorMessage(exc);
       const summary = this.summaryComposer.compose({
@@ -1354,6 +1339,99 @@ export class AgentLoop {
         modelName: this.modelInfo['model_name'] || '',
       };
     }
+  }
+
+  // ========================================================================
+  // Shared tool execution — single code path for both run() and runTurn()
+  // ========================================================================
+
+  /**
+   * Execute a tool call through ToolRuntime (if configured) or direct registry dispatch.
+   * Shared by both run() and runTurn() to ensure consistent hook ordering,
+   * permission enforcement, and result formatting.
+   */
+  private async executeToolCall(
+    name: string,
+    args: Record<string, unknown>,
+    callId: string,
+    context: { sessionId?: string; turnId?: string; signal?: AbortSignal },
+  ): Promise<ToolResult> {
+    const startedAt = Date.now();
+
+    // pre_tool_use hook
+    if (this.hooks) {
+      const hookResult = await this.hooks.runPreToolUse({
+        toolName: name,
+        toolArgs: args,
+        sessionId: context.sessionId ?? '',
+        turnId: context.turnId ?? '',
+      });
+      if (!hookResult.allowed) {
+        return {
+          callId,
+          name,
+          ok: false,
+          content: JSON.stringify({
+            error: `Tool "${name}" blocked: ${hookResult.reason ?? hookResult.message ?? 'denied by hook'}`,
+          }),
+          error: hookResult.reason ?? 'denied',
+          durationMs: Date.now() - startedAt,
+        };
+      }
+    }
+
+    // Execute through ToolRuntime (preferred) or fallback to registry dispatch
+    let toolResult: ToolResult;
+    if (this.toolRuntime) {
+      toolResult = await this.toolRuntime.execute(name, args, {
+        sessionId: context.sessionId,
+        signal: context.signal,
+      });
+    } else if (this.tools) {
+      let rawResult = '';
+      try {
+        rawResult = await this.tools.dispatch(name, args, {
+          signal: context.signal,
+        });
+      } catch {
+        // dispatch() already catches errors internally, but guard anyway
+        rawResult = JSON.stringify({ error: `Tool dispatch failed: ${name}` });
+      }
+      let parsed: Record<string, unknown> | null = null;
+      try { parsed = JSON.parse(rawResult); } catch { /* not JSON */ }
+      toolResult = {
+        callId,
+        name,
+        ok: parsed === null || typeof parsed.error !== 'string',
+        content: rawResult,
+        error: parsed && typeof parsed.error === 'string' ? parsed.error : undefined,
+        durationMs: 0,
+      };
+    } else {
+      toolResult = {
+        callId,
+        name,
+        ok: false,
+        content: '',
+        error: 'No tool registry or runtime configured',
+        durationMs: 0,
+      };
+    }
+
+    toolResult.durationMs = Date.now() - startedAt;
+
+    // post_tool_use hook (fire-and-forget, audit-only)
+    if (this.hooks) {
+      this.hooks.runPostToolUse({
+        toolName: name,
+        toolArgs: args,
+        toolResult: toolResult.content,
+        sessionId: context.sessionId ?? '',
+        turnId: context.turnId ?? '',
+      }).catch(() => {});
+    }
+
+    return toolResult;
   }
 
   // ========================================================================
@@ -1437,13 +1515,39 @@ export class AgentLoop {
     turnId: string,
     step: number,
     messages: LLMMessage[],
-    toolSpecs: Record<string, unknown>[],
+  toolSpecs: Record<string, unknown>[],
   ): Promise<{ assistantText: string; reasoningSummary?: string; toolCalls: Array<{ callId: string; name: string; arguments: Record<string, unknown> }>; finalAnswer: string; finishReason: string }> {
     let lastError: unknown;
     for (let attempt = 1; attempt <= 2; attempt++) {
       try {
         if ('complete' in this.provider && typeof this.provider.complete === 'function') {
           const resp = await (this.provider as FakeModelClient).complete(messages, toolSpecs, false, { step, attempt });
+          if (resp.reasoningSummary) {
+            const reasoningItemId = `item_reasoning_${crypto.randomUUID()}`;
+            this.emitThreadEvent({
+              type: 'item.started',
+              turn_id: turnId,
+              item: { id: reasoningItemId, type: 'reasoning', text: resp.reasoningSummary },
+            });
+            this.emitThreadEvent({
+              type: 'item.completed',
+              turn_id: turnId,
+              item: { id: reasoningItemId, type: 'reasoning', text: resp.reasoningSummary },
+            });
+          }
+          if (resp.assistantText) {
+            const messageItemId = `item_agent_message_${crypto.randomUUID()}`;
+            this.emitThreadEvent({
+              type: 'item.started',
+              turn_id: turnId,
+              item: { id: messageItemId, type: 'agent_message', text: resp.assistantText },
+            });
+            this.emitThreadEvent({
+              type: 'item.completed',
+              turn_id: turnId,
+              item: { id: messageItemId, type: 'agent_message', text: resp.assistantText },
+            });
+          }
           return {
             assistantText: resp.assistantText,
             reasoningSummary: resp.reasoningSummary,
@@ -1456,16 +1560,133 @@ export class AgentLoop {
             finishReason: resp.finishReason,
           };
         }
-        // Fallback: use LLMProvider.chat
-        const chatResp = await (this.provider as LLMProvider).chat(
-          messages,
-          toolSpecs,
-        );
+        // Preferred path: use chatStream when a streaming consumer is attached.
+        let streamingReasoningText = '';
+        let streamingReasoningItemId: string | null = null;
+        let streamingReasoningCompleted = false;
+        let streamingMessageText = '';
+        let streamingMessageItemId: string | null = null;
+
+        const useStreaming =
+          Boolean(this.config.onToken)
+          || Boolean(this.config.onReasoningDelta);
+
+        const chatResp = useStreaming
+          ? await (this.provider as LLMProvider).chatStream(
+              messages,
+              toolSpecs,
+              {
+                onToken: (token) => {
+                  if (!streamingReasoningCompleted && streamingReasoningItemId) {
+                    this.emitThreadEvent({
+                      type: 'item.completed',
+                      turn_id: turnId,
+                      item: {
+                        id: streamingReasoningItemId,
+                        type: 'reasoning',
+                        text: streamingReasoningText,
+                      },
+                    });
+                    streamingReasoningCompleted = true;
+                  }
+                  streamingMessageText += token;
+                  if (!streamingMessageItemId) {
+                    streamingMessageItemId = `item_agent_message_${crypto.randomUUID()}`;
+                    this.emitThreadEvent({
+                      type: 'item.started',
+                      turn_id: turnId,
+                      item: {
+                        id: streamingMessageItemId,
+                        type: 'agent_message',
+                        text: streamingMessageText,
+                      },
+                    });
+                  } else {
+                    this.emitThreadEvent({
+                      type: 'item.updated',
+                      turn_id: turnId,
+                      item: {
+                        id: streamingMessageItemId,
+                        type: 'agent_message',
+                        text: streamingMessageText,
+                      },
+                    });
+                  }
+                  this.config.onToken?.(token);
+                },
+                onReasoningDelta: (delta) => {
+                  streamingReasoningText += delta;
+                  if (!streamingReasoningItemId) {
+                    streamingReasoningItemId = `item_reasoning_${crypto.randomUUID()}`;
+                    this.emitThreadEvent({
+                      type: 'item.started',
+                      turn_id: turnId,
+                      item: {
+                        id: streamingReasoningItemId,
+                        type: 'reasoning',
+                        text: streamingReasoningText,
+                      },
+                    });
+                  } else {
+                    this.emitThreadEvent({
+                      type: 'item.updated',
+                      turn_id: turnId,
+                      item: {
+                        id: streamingReasoningItemId,
+                        type: 'reasoning',
+                        text: streamingReasoningText,
+                      },
+                    });
+                  }
+                  this.config.onReasoningDelta?.(delta);
+                },
+              },
+            )
+          : await (this.provider as LLMProvider).chat(
+              messages,
+              toolSpecs,
+            );
         if (chatResp.usage && this.config.tokenTracker) {
           this.config.tokenTracker.record(chatResp.usage);
         }
+        if (streamingReasoningItemId && !streamingReasoningCompleted) {
+          this.emitThreadEvent({
+            type: 'item.completed',
+            turn_id: turnId,
+            item: {
+              id: streamingReasoningItemId,
+              type: 'reasoning',
+              text: streamingReasoningText,
+            },
+          });
+          streamingReasoningCompleted = true;
+        }
+        if (chatResp.content && !streamingMessageItemId) {
+          streamingMessageItemId = `item_agent_message_${crypto.randomUUID()}`;
+          this.emitThreadEvent({
+            type: 'item.started',
+            turn_id: turnId,
+            item: {
+              id: streamingMessageItemId,
+              type: 'agent_message',
+              text: chatResp.content,
+            },
+          });
+        }
+        if (streamingMessageItemId) {
+          this.emitThreadEvent({
+            type: 'item.completed',
+            turn_id: turnId,
+            item: {
+              id: streamingMessageItemId,
+              type: 'agent_message',
+              text: chatResp.content || streamingMessageText,
+            },
+          });
+        }
         return {
           assistantText: chatResp.content,
+          reasoningSummary: chatResp.reasoningSummary,
           toolCalls: chatResp.toolCalls.map((tc) => ({
             callId: tc.callId,
             name: tc.name,
