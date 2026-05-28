@@ -34,7 +34,7 @@ Jarvis is a terminal-native coding agent inspired by Claude Code, OpenAI Codex, 
 - **5-stage compaction** — progressive context compression from budget reduction to LLM summarization
 - **ReAct loop** — Reasoning → Action → Observation with retry, bridge safety checks, and context state persistence
 - **Skill system** — auto-discovery, 7-dimension matching with Chinese keyword support, policy-gated execution
-- **Python heritage** — 313-file Python reference implementation coexists with active TypeScript rewrite
+- **Python reference** — 313-file Python implementation preserved as reference/spec
 
 ---
 
@@ -98,18 +98,21 @@ Jarvis implements a ReAct (Reasoning → Action → Observation) loop with strea
 | **Context state** | In-memory ContextStore with hydration from session sidecar |
 | **Sub-agents** | Isolated agent delegation with worktree support |
 
-### 8 built-in tools
+### Built-in tools
 
-| Tool | Description |
-|------|-------------|
-| `bash` | Execute shell commands with timeout control |
-| `read` | Read file contents with offset/limit |
-| `write` | Create or overwrite files |
-| `edit` | Exact string replacement in files |
-| `glob` | Fast file pattern matching |
-| `grep` | Regex content search with ripgrep |
-| `webSearch` | Web search with domain filtering |
-| `webFetch` | Fetch and process web page content |
+Jarvis ships with 22+ built-in tools across several categories:
+
+**File system:** `bash`, `read_file`, `write_file`, `edit_file`, `glob`, `grep`, `notebook_edit`
+
+**Task management:** `task_create`, `task_update`, `task_list`, `task_get`, `task_output`, `task_stop`
+
+**Agent control:** `enter_plan_mode`, `exit_plan_mode`, `enter_worktree`, `exit_worktree`
+
+**Scheduling:** `cron_create`, `cron_delete`, `cron_list`, `schedule_wakeup`
+
+**Interaction:** `ask_user_question`, `memory_search`, `memory_get`
+
+**Extensibility:** `skill.load`, `Skill` (direct invocation), `Agent` (subagent delegation), MCP resource/tool exposure
 
 ### LLM providers
 
@@ -148,6 +151,18 @@ DEEPSEEK_API_KEY    # DeepSeek
 OPENAI_API_KEY      # OpenAI / compatible endpoints
 ```
 
+### Permission modes
+
+Jarvis supports three permission modes, configured via `/permissions` in TUI or `permission_mode` in `~/.jarvis/config.json`:
+
+| Mode | Behavior |
+|------|----------|
+| `workspace_write` | Read-only tools auto-approved; write/bash/network require approval |
+| `accept_edits` | File edits auto-approved; bash/network still require approval |
+| `bypass` | All tools auto-approved (use with caution) |
+
+Dangerous shell commands (sudo, rm -rf /, curl-to-shell, etc.) are always blocked by `ApprovalGate` regardless of permission mode.
+
 ### `.env` file
 
 Jarvis loads `.env` from the project root automatically. Copy `.env.example` and edit.
@@ -168,16 +183,17 @@ Jarvis loads `.env` from the project root automatically. Copy `.env.example` and
 │  ReAct cycle · context building · retry logic    │
 │  5-stage compaction · message normalization      │
 │  ContextStore hydration · ContextUpdater chain   │
+│  run() [legacy] · runTurn() [primary]            │
 └──────┬──────────────────────────────┬────────────┘
        │                              │
 ┌──────▼─────────┐            ┌────────▼────────────┐
-│  LLMProvider   │            │   ToolRegistry       │
+│  LLMProvider   │            │   ToolRuntime        │
 │  (model.ts)    │            │   (packages/tools)   │
 │                │            │                      │
-│  OpenAI-compat │            │  8 built-in tools    │
-│  SSE streaming │            │  bash/read/write/    │
-│  Normalizer    │            │  edit/glob/grep/     │
-│  RetryPolicy   │            │  webSearch/webFetch  │
+│  OpenAI-compat │            │  PermissionManager   │
+│  SSE streaming │            │  ApprovalGate        │
+│  Normalizer    │            │  ToolRegistry        │
+│  RetryPolicy   │            │  22+ built-in tools  │
 └──────┬─────────┘            └──────────┬───────────┘
        │                                 │
 ┌──────▼─────────────────────────────────▼───────────┐
@@ -191,9 +207,11 @@ Jarvis loads `.env` from the project root automatically. Copy `.env.example` and
 
 - **Monorepo** — 11 packages under `packages/`, managed by pnpm workspaces and turborepo
 - **Protocol interfaces** — `LLMProvider` wraps any OpenAI-compatible endpoint with provider-specific normalization
+- **Permission gating** — `PermissionManager` enforces per-tool approval modes (`workspace_write` / `accept_edits` / `bypass`); `ApprovalGate` blocks dangerous shell commands
+- **Unified tool execution** — `ToolRuntime` is the single entry point for tool dispatch, enforcing permissions and result truncation
 - **Skill isolation** — Skills declare allowed tools and risk levels; matcher uses 7 scoring dimensions
 - **Persistent state** — SessionStore writes append-only JSONL transcripts + mutable sidecar JSON
-- **Python heritage** — `src/jarvis/` (313 .py files) serves as reference specification; all active development is TypeScript
+- **Python reference** — `src/jarvis/` (313 .py files) is preserved as reference specification; all active development is TypeScript
 
 ---
 
@@ -210,7 +228,7 @@ packages/
 ├── skills/        # Skill loader, registry, matcher (7-dim), executor
 ├── store/         # SessionStore (JSONL + sidecar), MemoryStore
 ├── subagents/     # Sub-agent delegation and isolation
-├── tools/         # ToolRegistry, 8 built-in tools, runtime
+├── tools/         # ToolRegistry, ToolRuntime, PermissionManager, ApprovalGate, 22+ built-in tools
 └── tui/           # Custom ink-style React renderer for terminal UI
 
 src/jarvis/        # Python reference implementation (313 files)
