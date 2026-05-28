@@ -143,10 +143,14 @@ export function loadProjectEnv(): void {
 // Skill discovery
 // ============================================================================
 
-function findProjectRoot(): string {
+export function findProjectRoot(): string {
   let dir = process.cwd();
   for (let i = 0; i < 10; i++) {
-    if (path.basename(dir) === 'Jarvis' || dir === path.parse(dir).root) {
+    if (
+      fs.existsSync(path.join(dir, 'pnpm-workspace.yaml')) ||
+      path.basename(dir).toLowerCase() === 'jarvis' ||
+      dir === path.parse(dir).root
+    ) {
       return dir;
     }
     const parent = path.dirname(dir);

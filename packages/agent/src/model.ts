@@ -155,7 +155,7 @@ export class FakeModelClient {
     const hasChinese = /[一-鿿]/.test(originalText);
 
     const noLlmMsg = hasChinese
-      ? '没有配置LLM提供商。请设置 JARVIS_LLM_API_KEY 环境变量，或运行 jarvis config 进行配置。'
+      ? '没有配置 LLM 提供商。请设置 JARVIS_LLM_API_KEY 环境变量，或运行 jarvis config 进行配置。'
       : 'No LLM provider configured. Set the JARVIS_LLM_API_KEY environment variable or run `jarvis config`.';
 
     return {
@@ -284,12 +284,13 @@ export class LLMProvider {
   ): Promise<LLMResponse> {
     // Extract tool names for safe→canonical mapping
     // Tools from ToolRegistry are already in OpenAI format: { type:"function", function:{ name, description, parameters } }
-    const safeToCanonical = LLMProvider._extractSafeNameMap(tools ?? []);
+    const { safeTools, safeToCanonical, canonicalToSafe } =
+      LLMProvider._buildSafeOpenAIToolDefs(tools ?? []);
 
     // For non-native-tool-calling models: inject tool schemas as text into system prompt
     let prepared = messages;
-    if (tools && tools.length > 0 && !this.supportsNativeToolCalling) {
-      prepared = LLMProvider._injectToolDescriptionsFromDefs(prepared, tools);
+    if (safeTools.length > 0 && !this.supportsNativeToolCalling) {
+      prepared = LLMProvider._injectToolDescriptionsFromDefs(prepared, safeTools);
     }
 
     // Normalize messages for the provider (Qwen, DeepSeek reasoner, etc.)
@@ -297,10 +298,11 @@ export class LLMProvider {
       prepared as MessageRecord[],
       { provider: this.config.provider ?? '', model: this.config.model },
     ) as unknown as LLMMessage[];
+    const safeMessages = LLMProvider._replaceOutboundToolCallNames(normalized, canonicalToSafe);
 
     const params: OpenAI.Chat.Completions.ChatCompletionCreateParamsNonStreaming = {
       model: this.config.model,
-      messages: normalized as OpenAI.Chat.Completions.ChatCompletionMessageParam[],
+      messages: safeMessages as OpenAI.Chat.Completions.ChatCompletionMessageParam[],
       stream: false,
     };
 
@@ -310,8 +312,8 @@ export class LLMProvider {
     if (this.config.maxTokens !== undefined) {
       params.max_tokens = this.config.maxTokens;
     }
-    if (tools && tools.length > 0) {
-      params.tools = tools as unknown as OpenAI.Chat.Completions.ChatCompletionTool[];
+    if (safeTools.length > 0) {
+      params.tools = safeTools as unknown as OpenAI.Chat.Completions.ChatCompletionTool[];
     }
 
     const response = await this.client.chat.completions.create(params);
@@ -319,21 +321,66 @@ export class LLMProvider {
   }
 
   /** Build safe_name → canonical_name map from OpenAI-format tool defs. */
-  private static _extractSafeNameMap(
+  private static _buildSafeOpenAIToolDefs(
     tools: Record<string, unknown>[],
-  ): Record<string, string> {
-    const map: Record<string, string> = {};
+  ): {
+    safeTools: Record<string, unknown>[];
+    safeToCanonical: Record<string, string>;
+    canonicalToSafe: Record<string, string>;
+  } {
+    const safeTools: Record<string, unknown>[] = [];
+    const safeToCanonical: Record<string, string> = {};
+    const canonicalToSafe: Record<string, string> = {};
+    const used = new Set<string>();
+
     for (const tool of tools) {
-      const fn = (tool as Record<string, unknown>)['function'] as Record<string, unknown> | undefined;
+      const cloned = JSON.parse(JSON.stringify(tool)) as Record<string, unknown>;
+      const fn = cloned['function'] as Record<string, unknown> | undefined;
       const name = fn?.['name'] as string | undefined;
-      if (name) {
-        const safeName = name.replace(/\./g, '_').replace(/-/g, '_');
-        if (safeName !== name) {
-          map[safeName] = name;
+      if (fn && name) {
+        let safeName = LLMProvider._safeOpenAIToolName(name);
+        const base = safeName;
+        let suffix = 2;
+        while (used.has(safeName)) {
+          safeName = `${base}_${suffix}`;
+          suffix++;
+        }
+        used.add(safeName);
+        fn['name'] = safeName;
+        safeToCanonical[safeName] = name;
+        canonicalToSafe[name] = safeName;
+      }
+      safeTools.push(cloned);
+    }
+    return { safeTools, safeToCanonical, canonicalToSafe };
+  }
+
+  private static _safeOpenAIToolName(name: string): string {
+    const safe = name.replace(/[^a-zA-Z0-9_-]/g, '_');
+    return safe && /^[a-zA-Z0-9_-]+$/.test(safe) ? safe : 'tool';
+  }
+
+  private static _replaceOutboundToolCallNames(
+    messages: LLMMessage[],
+    canonicalToSafe: Record<string, string>,
+  ): LLMMessage[] {
+    if (Object.keys(canonicalToSafe).length === 0) return messages;
+
+    return messages.map((message) => {
+      const toolCalls = (message as unknown as { tool_calls?: Array<{ function?: { name?: string } }> }).tool_calls;
+      if (!Array.isArray(toolCalls)) return message;
+
+      const cloned = JSON.parse(JSON.stringify(message)) as LLMMessage & {
+        tool_calls?: Array<{ function?: { name?: string } }>;
+      };
+      for (const toolCall of cloned.tool_calls ?? []) {
+        const name = toolCall.function?.name;
+        if (name && canonicalToSafe[name] && toolCall.function) {
+          toolCall.function.name = canonicalToSafe[name];
         }
       }
-    }
-    return map;
+      return cloned;
+    });
   }
 
   /** Inject tool descriptions as text for non-native-tool-calling models from OpenAI-format defs. */
@@ -385,11 +432,12 @@ export class LLMProvider {
     tools?: Record<string, unknown>[],
     callbacks?: StreamCallbacks,
   ): Promise<LLMResponse> {
-    const safeToCanonical = LLMProvider._extractSafeNameMap(tools ?? []);
+    const { safeTools, safeToCanonical, canonicalToSafe } =
+      LLMProvider._buildSafeOpenAIToolDefs(tools ?? []);
 
     let prepared = messages;
-    if (tools && tools.length > 0 && !this.supportsNativeToolCalling) {
-      prepared = LLMProvider._injectToolDescriptionsFromDefs(prepared, tools);
+    if (safeTools.length > 0 && !this.supportsNativeToolCalling) {
+      prepared = LLMProvider._injectToolDescriptionsFromDefs(prepared, safeTools);
     }
 
     // Normalize messages for the provider
@@ -397,10 +445,11 @@ export class LLMProvider {
       prepared as MessageRecord[],
       { provider: this.config.provider ?? '', model: this.config.model },
     ) as unknown as LLMMessage[];
+    const safeMessages = LLMProvider._replaceOutboundToolCallNames(normalizedStream, canonicalToSafe);
 
     const params: OpenAI.Chat.Completions.ChatCompletionCreateParamsStreaming = {
       model: this.config.model,
-      messages: normalizedStream as OpenAI.Chat.Completions.ChatCompletionMessageParam[],
+      messages: safeMessages as OpenAI.Chat.Completions.ChatCompletionMessageParam[],
       stream: true,
       stream_options: { include_usage: true },
     };
@@ -411,8 +460,8 @@ export class LLMProvider {
     if (this.config.maxTokens !== undefined) {
       params.max_tokens = this.config.maxTokens;
     }
-    if (tools && tools.length > 0) {
-      params.tools = tools as unknown as OpenAI.Chat.Completions.ChatCompletionTool[];
+    if (safeTools.length > 0) {
+      params.tools = safeTools as unknown as OpenAI.Chat.Completions.ChatCompletionTool[];
     }
 
     const stream = await this.client.chat.completions.create(params);
