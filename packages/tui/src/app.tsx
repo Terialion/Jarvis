@@ -28,8 +28,16 @@ import { SubagentPool, toolWhitelistForType, type SubagentConfig } from '@jarvis
 import { MCPClient } from '@jarvis/mcp';
 import { HookRegistry } from '@jarvis/hooks';
 import { LLMProvider } from '@jarvis/agent';
+import type { ModelReasoningEffort } from '@jarvis/agent';
 import type { TUIOptions, TUIDebugEvent } from './types.js';
 import type { ChatMessage } from '@jarvis/shared';
+import {
+  getJarvisConfigPath,
+  JARVIS_REASONING_EFFORTS,
+  loadJarvisConfig,
+  normalizeJarvisReasoningEffort,
+  saveJarvisConfig,
+} from '@jarvis/shared';
 import { formatToolLine } from './vendor/ui/tool-display.js';
 import { buildStatusSegments } from './status-segments.js';
 import type { CodexTaskSnapshot } from './presentation/codex-timeline-state.js';
@@ -48,8 +56,13 @@ interface SlashCommandCtx {
   setIsLoading: (v: boolean) => void;
   cwd: string;
   modelRef: React.MutableRefObject<string>;
+  apiKeyRef: React.MutableRefObject<string | undefined>;
+  baseURLRef: React.MutableRefObject<string | undefined>;
+  reasoningEffortRef: React.MutableRefObject<string>;
+  systemPromptRef: React.MutableRefObject<string | undefined>;
   modifiedFilesRef: React.MutableRefObject<Set<string>>;
   getAgent: () => AgentLoop;
+  invalidateAgent: () => void;
   maxTurns: number;
   outputStyleRef: React.MutableRefObject<string>;
   permissionModeRef: React.MutableRefObject<string>;
@@ -297,6 +310,7 @@ const SLASH_COMMANDS: SlashCommandDef[] = [
       if (args.length > 0) {
         ctx.modelRef.current = args[0];
         saveSettings({ model: args[0] });
+        ctx.invalidateAgent();
         return `Model set to: ${args[0]} (effective on next turn)`;
       }
       return `Current model: ${parseModelName(ctx.modelRef.current).cleanName}`;
@@ -457,22 +471,41 @@ const SLASH_COMMANDS: SlashCommandDef[] = [
     description: 'Show or set configuration',
     usage: '/config [key] [value]',
     handler: (args, ctx) => {
+      const userConfig = loadJarvisConfig();
+      const configPath = getJarvisConfigPath();
+      const maskSecret = (value?: string) => (value ? `${value.slice(0, 4)}...${value.slice(-4)}` : '(not set)');
       if (args.length === 0) {
         const modelName = ctx.modelRef.current;
         const outputStyle = ctx.outputStyleRef.current;
         const sid = (ctx.sid ?? 'none').slice(-16);
         return [
           'Current configuration:\n',
+          `  config-path  = ${configPath}`,
           `  model       = ${modelName}`,
+          `  base-url    = ${ctx.baseURLRef.current ?? '(not set)'}`,
+          `  api-key     = ${maskSecret(ctx.apiKeyRef.current)}`,
+          `  effort      = ${ctx.reasoningEffortRef.current}`,
           `  max-turns   = ${ctx.maxTurns}`,
           `  output-style = ${outputStyle}`,
+          `  permissions = ${ctx.permissionModeRef.current}`,
+          `  system-prompt = ${ctx.systemPromptRef.current ? '(configured)' : '(not set)'}`,
           `  session     = ${sid}`,
           `  cwd         = ${ctx.cwd}`,
+          '',
+          'Stored user config:',
+          `  model       = ${userConfig.model ?? '(not set)'}`,
+          `  base-url    = ${userConfig.base_url ?? '(not set)'}`,
+          `  api-key     = ${maskSecret(userConfig.api_key)}`,
+          `  effort      = ${userConfig.reasoning_effort ?? '(not set)'}`,
+          `  max-turns   = ${userConfig.max_turns ?? '(not set)'}`,
+          `  output-style = ${userConfig.output_style ?? '(not set)'}`,
+          `  permissions = ${userConfig.permission_mode ?? '(not set)'}`,
+          `  system-prompt = ${userConfig.system_prompt ? '(configured)' : '(not set)'}`,
         ].join('\n');
       }
 
       const key = args[0].toLowerCase();
-      const value = args[1];
+      const value = args.slice(1).join(' ').trim();
 
       if (key === 'model') {
         if (!value) return `model = ${ctx.modelRef.current}`;
@@ -481,21 +514,88 @@ const SLASH_COMMANDS: SlashCommandDef[] = [
         return `model = ${value} (effective next turn)`;
       }
 
+      if (key === 'base-url') {
+        if (!value) return `base-url = ${ctx.baseURLRef.current ?? '(not set)'}`;
+        ctx.baseURLRef.current = value;
+        saveJarvisConfig({ base_url: value });
+        return `base-url = ${value} (effective next launch)`;
+      }
+
+      if (key === 'api-key') {
+        if (!value) return `api-key = ${maskSecret(ctx.apiKeyRef.current)}`;
+        ctx.apiKeyRef.current = value;
+        saveJarvisConfig({ api_key: value });
+        return 'api-key saved (effective next launch)';
+      }
+
+      if (key === 'effort' || key === 'reasoning-effort') {
+        if (!value) return `effort = ${ctx.reasoningEffortRef.current}`;
+        const normalized = normalizeJarvisReasoningEffort(value);
+        if (!normalized) {
+          return `Invalid effort. Options: ${JARVIS_REASONING_EFFORTS.join(', ')}`;
+        }
+        ctx.reasoningEffortRef.current = normalized;
+        saveSettings({ reasoning_effort: normalized });
+        ctx.invalidateAgent();
+        return `effort = ${normalized} (effective next turn)`;
+      }
+
       if (key === 'output-style') {
         if (!value) return `output-style = ${ctx.outputStyleRef.current}`;
         if (!['default', 'concise', 'verbose'].includes(value)) {
           return `Invalid style. Options: default, concise, verbose`;
         }
         ctx.outputStyleRef.current = value;
+        saveSettings({ output_style: value as UserSettings['output_style'] });
         return `output-style = ${value}`;
+      }
+
+      if (key === 'permissions') {
+        if (!value) return `permissions = ${ctx.permissionModeRef.current}`;
+        if (!['workspace_write', 'accept_edits', 'bypass'].includes(value)) {
+          return 'Invalid permission mode. Options: workspace_write, accept_edits, bypass';
+        }
+        ctx.permissionModeRef.current = value;
+        saveSettings({ permission_mode: value as UserSettings['permission_mode'] });
+        return `permissions = ${value}`;
       }
 
       if (key === 'max-turns') {
         if (!value) return `max-turns = ${ctx.maxTurns}`;
-        return 'max-turns is read-only during a session.';
+        const parsed = Number.parseInt(value, 10);
+        if (!Number.isFinite(parsed) || parsed <= 0) {
+          return 'max-turns must be a positive integer.';
+        }
+        saveSettings({ max_turns: parsed });
+        return `max-turns = ${parsed} (effective next launch)`;
       }
 
-      return `Unknown config key: ${key}. Available: model, output-style, max-turns`;
+      if (key === 'system-prompt') {
+        if (!value) return `system-prompt = ${ctx.systemPromptRef.current ? '(configured)' : '(not set)'}`;
+        ctx.systemPromptRef.current = value;
+        saveJarvisConfig({ system_prompt: value });
+        return 'system-prompt saved (effective next launch)';
+      }
+
+      return 'Unknown config key. Available: model, base-url, api-key, effort, output-style, permissions, max-turns, system-prompt';
+    },
+  },
+  {
+    name: 'effort',
+    description: 'Show or set reasoning effort',
+    usage: '/effort [auto|minimal|low|medium|high|xhigh|max]',
+    handler: (args, ctx) => {
+      if (args.length === 0) {
+        return `Reasoning effort: ${ctx.reasoningEffortRef.current} (available: ${JARVIS_REASONING_EFFORTS.join(', ')})`;
+      }
+      const normalized = normalizeJarvisReasoningEffort(args[0]);
+      if (!normalized) {
+        return `Invalid effort "${args[0]}". Options: ${JARVIS_REASONING_EFFORTS.join(', ')}`;
+      }
+      ctx.reasoningEffortRef.current = normalized;
+      saveSettings({ reasoning_effort: normalized });
+      ctx.invalidateAgent();
+      return `Reasoning effort set to: ${normalized} (effective next turn)`;
     },
   },
   {
@@ -775,6 +875,10 @@ export function App({ options }: { options: TUIOptions }): React.ReactNode {
   const sessionReadyRef = useRef(false);
   const savedSettings = loadSettings();
   const modelRef = useRef<string>(savedSettings.model || options.model);
+  const apiKeyRef = useRef<string | undefined>(options.apiKey);
+  const baseURLRef = useRef<string | undefined>(options.baseURL);
+  const reasoningEffortRef = useRef<string>(savedSettings.reasoning_effort || options.reasoningEffort || 'high');
+  const systemPromptRef = useRef<string | undefined>(options.systemPrompt);
   const modifiedFilesRef = useRef<Set<string>>(new Set());
   const outputStyleRef = useRef<string>(savedSettings.output_style || 'default');
   const permissionModeRef = useRef<string>(savedSettings.permission_mode || 'workspace_write');
@@ -835,6 +939,10 @@ export function App({ options }: { options: TUIOptions }): React.ReactNode {
   const emitDebugEvent = useCallback((event: TUIDebugEvent) => {
     options.debugHooks?.onEvent?.(event);
   }, [options.debugHooks]);
+  const invalidateAgent = useCallback(() => {
+    agentRef.current = null;
+    tokenTrackerRef.current = null;
+  }, []);
   const pushSpinnerDetail = useCallback((line: string | null) => {
     if (!line) return;
     setSpinnerDetails((prev) => {
@@ -1016,8 +1124,9 @@ export function App({ options }: { options: TUIOptions }): React.ReactNode {
         };
         const provider = new LLMProvider({
           model: modelRef.current,
-          apiKey: options.apiKey,
-          baseURL: options.baseURL,
+          apiKey: apiKeyRef.current,
+          baseURL: baseURLRef.current,
+          reasoningEffort: reasoningEffortRef.current as ModelReasoningEffort,
         });
         poolRef.current.setRunner(async (config: SubagentConfig) => {
           const subTools = new ToolRegistry();
@@ -1033,8 +1142,9 @@ export function App({ options }: { options: TUIOptions }): React.ReactNode {
           const subLoop = new AgentLoop({
             model: {
               model: modelRef.current,
-              apiKey: options.apiKey,
-              baseURL: options.baseURL,
+              apiKey: apiKeyRef.current,
+              baseURL: baseURLRef.current,
+              reasoningEffort: reasoningEffortRef.current as ModelReasoningEffort,
             },
             maxTurns: config.budgetSteps ?? 5,
             tools: subTools,
@@ -1058,16 +1168,18 @@ export function App({ options }: { options: TUIOptions }): React.ReactNode {
       if (!tokenTrackerRef.current) {
         const mainProvider = new LLMProvider({
           model: modelRef.current,
-          apiKey: options.apiKey,
-          baseURL: options.baseURL,
+          apiKey: apiKeyRef.current,
+          baseURL: baseURLRef.current,
+          reasoningEffort: reasoningEffortRef.current as ModelReasoningEffort,
         });
         tokenTrackerRef.current = new TokenTracker(mainProvider.contextWindow);
       }
       agentRef.current = new AgentLoop({
         model: {
           model: modelRef.current,
-          apiKey: options.apiKey,
-          baseURL: options.baseURL,
+          apiKey: apiKeyRef.current,
+          baseURL: baseURLRef.current,
+          reasoningEffort: reasoningEffortRef.current as ModelReasoningEffort,
         },
         maxTurns: options.maxTurns,
         systemPrompt: options.systemPrompt,
@@ -1467,8 +1579,13 @@ export function App({ options }: { options: TUIOptions }): React.ReactNode {
           setIsLoading,
           cwd: process.cwd(),
           modelRef,
+          apiKeyRef,
+          baseURLRef,
+          reasoningEffortRef,
+          systemPromptRef,
           modifiedFilesRef,
           getAgent,
+          invalidateAgent,
           maxTurns: options.maxTurns,
           outputStyleRef,
           permissionModeRef,
@@ -1478,7 +1595,7 @@ export function App({ options }: { options: TUIOptions }): React.ReactNode {
       ),
     // Rebuild only when getAgent changes (lazy init via useCallback)
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [getAgent, options.maxTurns, messages],
+    [getAgent, invalidateAgent, options.maxTurns, messages],
   );
 
   const statusSegments: StatusLineSegment[] = useMemo(() => {

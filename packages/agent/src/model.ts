@@ -19,6 +19,7 @@ export interface ModelConfig {
   apiKey?: string;
   model: string;
   provider?: string;
+  reasoningEffort?: ModelReasoningEffort;
   temperature?: number;
   maxTokens?: number;
   maxRetries?: number;
@@ -26,6 +27,18 @@ export interface ModelConfig {
   /** Set to false for models that don't support native function calling. Default: true. */
   supportsNativeToolCalling?: boolean;
 }
+
+export const MODEL_REASONING_EFFORTS = [
+  'auto',
+  'minimal',
+  'low',
+  'medium',
+  'high',
+  'xhigh',
+  'max',
+] as const;
+
+export type ModelReasoningEffort = (typeof MODEL_REASONING_EFFORTS)[number];
 
 // ============================================================================
 // Token Usage
@@ -315,6 +328,7 @@ export class LLMProvider {
     if (safeTools.length > 0) {
       params.tools = safeTools as unknown as OpenAI.Chat.Completions.ChatCompletionTool[];
     }
+    this.applyReasoningEffort(params);
 
     const response = await this.client.chat.completions.create(params);
     return this._normalizeResponse(response, safeToCanonical);
@@ -463,6 +477,7 @@ export class LLMProvider {
     if (safeTools.length > 0) {
       params.tools = safeTools as unknown as OpenAI.Chat.Completions.ChatCompletionTool[];
     }
+    this.applyReasoningEffort(params);
 
     const stream = await this.client.chat.completions.create(params);
 
@@ -987,6 +1002,35 @@ export class LLMProvider {
         ] as Record<string, unknown>)?.['cached_tokens'] as number ?? 0,
     };
   }
+
+  private applyReasoningEffort(
+    params:
+      | OpenAI.Chat.Completions.ChatCompletionCreateParamsNonStreaming
+      | OpenAI.Chat.Completions.ChatCompletionCreateParamsStreaming,
+  ): void {
+    const effort = normalizeReasoningEffort(this.config.reasoningEffort);
+    if (!effort || effort === 'auto') {
+      return;
+    }
+
+    const target = params as unknown as Record<string, unknown>;
+    const transport = resolveReasoningTransport(this.config);
+    switch (transport) {
+      case 'anthropic':
+        target['thinking'] = { type: 'adaptive', display: 'summarized' };
+        target['output_config'] = { effort: mapAnthropicReasoningEffort(effort, this.config.model) };
+        break;
+      case 'openrouter':
+        target['reasoning'] = { effort: mapProxyReasoningEffort(effort) };
+        break;
+      case 'openai':
+        target['reasoning_effort'] = mapNativeReasoningEffort(effort);
+        break;
+      case 'none':
+      default:
+        break;
+    }
+  }
 }
 
 // ============================================================================
@@ -1053,4 +1097,79 @@ function parseFirstJsonObject(text: string): Record<string, unknown> | null {
     }
   }
   return null;
+}
+
+function normalizeReasoningEffort(
+  value: string | undefined,
+): ModelReasoningEffort | undefined {
+  if (!value) return undefined;
+  const normalized = value.trim().toLowerCase();
+  return MODEL_REASONING_EFFORTS.includes(normalized as ModelReasoningEffort)
+    ? (normalized as ModelReasoningEffort)
+    : undefined;
+}
+
+type ReasoningTransport = 'anthropic' | 'openrouter' | 'openai' | 'none';
+
+function resolveReasoningTransport(config: ModelConfig): ReasoningTransport {
+  const provider = (config.provider ?? '').trim().toLowerCase();
+  const baseURL = (config.baseURL ?? '').trim().toLowerCase();
+  const model = config.model.trim().toLowerCase();
+
+  if (
+    provider.includes('anthropic')
+    || baseURL.includes('anthropic.com')
+    || baseURL.includes('/anthropic')
+    || model.startsWith('claude')
+  ) {
+    return 'anthropic';
+  }
+  if (provider.includes('openrouter') || baseURL.includes('openrouter')) {
+    return 'openrouter';
+  }
+  if (
+    provider.includes('openai')
+    || provider.includes('deepseek')
+    || provider.includes('qwen')
+    || baseURL.includes('openai')
+    || baseURL.includes('deepseek')
+    || baseURL.includes('dashscope')
+    || baseURL.includes('siliconflow')
+    || baseURL.includes('volces')
+    || baseURL.includes('v3')
+    || baseURL.includes('/chat/completions')
+    || baseURL.includes('/v1')
+  ) {
+    return 'openai';
+  }
+  return 'none';
+}
+
+function mapAnthropicReasoningEffort(
+  effort: Exclude<ModelReasoningEffort, 'auto'>,
+  model: string,
+): 'low' | 'medium' | 'high' | 'xhigh' | 'max' {
+  if (effort === 'minimal') return 'low';
+  if (effort === 'max') return 'max';
+  if (effort === 'xhigh') {
+    return /4[-.]6/.test(model) ? 'max' : 'xhigh';
+  }
+  return effort;
+}
+
+function mapProxyReasoningEffort(
+  effort: Exclude<ModelReasoningEffort, 'auto'>,
+): 'low' | 'medium' | 'high' | 'xhigh' {
+  if (effort === 'minimal') return 'low';
+  if (effort === 'max') return 'xhigh';
+  if (effort === 'xhigh') return 'xhigh';
+  return effort;
+}
+
+function mapNativeReasoningEffort(
+  effort: Exclude<ModelReasoningEffort, 'auto'>,
+): 'low' | 'medium' | 'high' {
+  if (effort === 'minimal' || effort === 'low') return 'low';
+  if (effort === 'medium') return 'medium';
+  return 'high';
 }

@@ -1,6 +1,7 @@
 import { Box, Text } from '../vendor/ink-renderer/index.js';
 import type React from 'react';
 import { Markdown } from '../vendor/ui/Markdown.js';
+import { decodeHtmlEntities } from '../vendor/ui/utils/markdown.js';
 import type {
   CodexTimelineItemView,
   CodexTimelineSearchState,
@@ -45,7 +46,7 @@ function SearchHit({
   if (!excerpt) return null;
   return (
     <Box marginLeft={marginLeft}>
-      <Text color="#7AA2F7" dimColor>{`match | ${excerpt}`}</Text>
+      <Text color="#7AA2F7" dimColor>{`match | ${decodeHtmlEntities(excerpt)}`}</Text>
     </Box>
   );
 }
@@ -76,13 +77,13 @@ function DetailLine({
   return (
     <Box marginLeft={4}>
       <Text color="#4B5563">{'| '}</Text>
-      <Text color={color} dimColor={dim}>{` ${text}`}</Text>
+      <Text color={color} dimColor={dim}>{` ${decodeHtmlEntities(text)}`}</Text>
     </Box>
   );
 }
 
 function summarizeText(text: string, limit = 120): string {
-  const compact = text.replace(/\s+/g, ' ').trim();
+  const compact = decodeHtmlEntities(text).replace(/\s+/g, ' ').trim();
   if (compact.length <= limit) return compact;
   return `${compact.slice(0, limit)}...`;
 }

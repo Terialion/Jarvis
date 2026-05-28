@@ -1,13 +1,15 @@
 import { join, resolve } from "node:path";
 import process from "node:process";
 import { loadProjectEnv, runReplay, type ReplayAction, type ReplayOptions } from "./replay.js";
+import { loadJarvisConfig } from "@jarvis/shared";
 
 function baseReplayOptions(): Omit<ReplayOptions, "prompt" | "snapshotDir"> {
+  const userConfig = loadJarvisConfig();
   return {
-    model: process.env["JARVIS_LLM_MODEL"] ?? process.env["JARVIS_MODEL"] ?? "deepseek-v4-pro",
-    apiKey: process.env["JARVIS_LLM_API_KEY"] ?? process.env["OPENAI_API_KEY"],
-    baseURL: process.env["JARVIS_LLM_BASE_URL"] ?? process.env["JARVIS_BASE_URL"] ?? "https://api.deepseek.com/v1",
-    maxTurns: 30,
+    model: userConfig.model ?? process.env["JARVIS_LLM_MODEL"] ?? process.env["JARVIS_MODEL"] ?? "deepseek-v4-pro",
+    apiKey: userConfig.api_key ?? process.env["JARVIS_LLM_API_KEY"] ?? process.env["OPENAI_API_KEY"],
+    baseURL: userConfig.base_url ?? process.env["JARVIS_LLM_BASE_URL"] ?? process.env["JARVIS_BASE_URL"] ?? "https://api.deepseek.com/v1",
+    maxTurns: userConfig.max_turns ?? 30,
     presentationMode: "codex",
     waitMs: 15000,
     inputDelayMs: 300,

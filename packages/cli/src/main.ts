@@ -16,6 +16,13 @@ import { MarkdownMemoryStore } from '@jarvis/store';
 import { createMemorySearchHandler, createMemoryGetHandler } from '@jarvis/agent';
 import { SlashCommandRegistry, registerBuiltinCommands } from './commands.js';
 import type { CommandContext } from './commands.js';
+import {
+  getJarvisConfigPath,
+  loadJarvisConfig,
+  normalizeJarvisReasoningEffort,
+  resolveJarvisConfigDefaults,
+  type JarvisReasoningEffort,
+} from '@jarvis/shared';
 
 // ============================================================================
 // Types
@@ -25,9 +32,11 @@ export interface CLIOptions {
   model: string;
   apiKey?: string;
   baseURL?: string;
+  reasoningEffort: JarvisReasoningEffort;
   maxTurns: number;
   systemPrompt?: string;
   oneShot?: string;
+  configure?: boolean;
 }
 
 export interface CLIContext {
@@ -45,28 +54,35 @@ export interface CLIContext {
 // ============================================================================
 
 export function parseCLIArgs(argv: string[] = process.argv): CLIOptions {
+  const userConfig = loadJarvisConfig();
+  const resolvedDefaults = resolveJarvisConfigDefaults(userConfig);
   const { values } = parseArgs({
     args: argv,
     options: {
       model: {
         type: 'string',
         short: 'm',
-        default: process.env['JARVIS_LLM_MODEL'] ?? process.env['JARVIS_MODEL'] ?? 'deepseek-chat',
+        default: userConfig.model ?? process.env['JARVIS_LLM_MODEL'] ?? process.env['JARVIS_MODEL'] ?? 'deepseek-chat',
       },
       'api-key': {
         type: 'string',
-        default: process.env['JARVIS_LLM_API_KEY'] ?? process.env['OPENAI_API_KEY'],
+        default: userConfig.api_key ?? process.env['JARVIS_LLM_API_KEY'] ?? process.env['OPENAI_API_KEY'],
       },
       'base-url': {
         type: 'string',
-        default: process.env['JARVIS_LLM_BASE_URL'] ?? process.env['JARVIS_BASE_URL'] ?? 'https://api.deepseek.com/v1',
+        default: userConfig.base_url ?? process.env['JARVIS_LLM_BASE_URL'] ?? process.env['JARVIS_BASE_URL'] ?? 'https://api.deepseek.com/v1',
+      },
+      effort: {
+        type: 'string',
+        default: resolvedDefaults.reasoning_effort,
       },
       'max-turns': {
         type: 'string',
-        default: '30',
+        default: String(userConfig.max_turns ?? 30),
       },
       'system-prompt': {
         type: 'string',
+        default: userConfig.system_prompt,
       },
       prompt: {
         type: 'string',
@@ -77,6 +93,10 @@ export function parseCLIArgs(argv: string[] = process.argv): CLIOptions {
         short: 'h',
         default: false,
       },
+      configure: {
+        type: 'boolean',
+        default: false,
+      },
     },
     allowPositionals: true,
   });
@@ -85,9 +105,12 @@ export function parseCLIArgs(argv: string[] = process.argv): CLIOptions {
     model: values['model'] as string,
     apiKey: values['api-key'] as string | undefined,
     baseURL: values['base-url'] as string,
+    reasoningEffort:
+      normalizeJarvisReasoningEffort(values['effort'] as string | undefined) ?? resolvedDefaults.reasoning_effort,
     maxTurns: parseInt(values['max-turns'] as string, 10) || 30,
     systemPrompt: values['system-prompt'] as string | undefined,
     oneShot: values['prompt'] as string | undefined,
+    configure: Boolean(values['configure']),
   };
 }
 
@@ -223,6 +246,7 @@ export function bootstrap(options: CLIOptions): CLIContext {
     model: options.model,
     apiKey: options.apiKey,
     baseURL: options.baseURL,
+    reasoningEffort: options.reasoningEffort,
     maxRetries: 3,
     timeout: 120_000,
   });
@@ -313,7 +337,7 @@ export function bootstrap(options: CLIOptions): CLIContext {
     subTools.register(createSkillTool(skills));
 
     const subLoop = new AgentLoop({
-      model: { model: options.model },
+      model: { model: options.model, reasoningEffort: options.reasoningEffort },
       maxTurns: config.budgetSteps ?? 5,
       tools: subTools,
       provider,
@@ -362,6 +386,7 @@ export function bootstrap(options: CLIOptions): CLIContext {
 // ============================================================================
 
 export function printHelp(): string {
+  const configPath = getJarvisConfigPath();
   return [
     'Jarvis — AI coding assistant (TypeScript)',
     '',
@@ -369,12 +394,17 @@ export function printHelp(): string {
     '',
     'Options:',
     '  -m, --model <name>       Model to use (default: deepseek-chat)',
-    '  --api-key <key>           API key (env: JARVIS_LLM_API_KEY)',
-    '  --base-url <url>          API base URL (env: JARVIS_BASE_URL)',
+    '  --api-key <key>           API key (config or env fallback)',
+    '  --base-url <url>          API base URL (config or env fallback)',
+    '  --effort <level>          Reasoning effort: auto|minimal|low|medium|high|xhigh|max',
     '  --max-turns <n>           Max conversation turns (default: 30)',
     '  --system-prompt <text>    System prompt override',
     '  -p, --prompt <text>       One-shot: run a single prompt and exit',
+    '  --configure               Run the first-run setup flow',
     '  -h, --help                Show this help',
+    '',
+    `User config: ${configPath}`,
+    '.env is still supported as a fallback, but ~/.jarvis/config.json is preferred.',
     '',
     'If --prompt is provided, Jarvis runs in one-shot mode and exits.',
     'Otherwise, it starts an interactive session (TUI).',
@@ -390,6 +420,7 @@ export async function runOneShot(options: CLIOptions): Promise<string> {
     model: options.model,
     apiKey: options.apiKey,
     baseURL: options.baseURL,
+    reasoningEffort: options.reasoningEffort,
   });
 
   const tools = new ToolRegistry();
@@ -472,7 +503,7 @@ export async function runOneShot(options: CLIOptions): Promise<string> {
     subTools.register(createSkillTool(skills));
 
     const subLoop = new AgentLoop({
-      model: { model: options.model },
+      model: { model: options.model, reasoningEffort: options.reasoningEffort },
       maxTurns: config.budgetSteps ?? 5,
       tools: subTools,
       provider,
@@ -492,7 +523,7 @@ export async function runOneShot(options: CLIOptions): Promise<string> {
   tools.register(createAgentTool(subagentPool));
 
   const loop = new AgentLoop({
-    model: { model: options.model },
+    model: { model: options.model, reasoningEffort: options.reasoningEffort },
     maxTurns: options.maxTurns,
     systemPrompt: options.systemPrompt,
     tools,
@@ -513,6 +544,10 @@ export async function runOneShot(options: CLIOptions): Promise<string> {
 export async function main(argv: string[] = process.argv): Promise<void> {
   // Load .env from project root before anything else
   loadProjectEnv();
+
+  const wantsHelp = argv.includes('--help') || argv.includes('-h');
+  const wantsOneShot = argv.includes('--prompt') || argv.includes('-p');
+  const wantsConfigure = argv.includes('--configure');
 
   const options = parseCLIArgs(argv);
 
@@ -539,8 +574,10 @@ export async function main(argv: string[] = process.argv): Promise<void> {
       model: options.model,
       apiKey: options.apiKey,
       baseURL: options.baseURL,
+      reasoningEffort: options.reasoningEffort,
       maxTurns: options.maxTurns,
       systemPrompt: options.systemPrompt,
+      forceOnboarding: wantsConfigure,
     });
   } catch (err) {
     if ((err as NodeJS.ErrnoException).code === 'ERR_MODULE_NOT_FOUND') {

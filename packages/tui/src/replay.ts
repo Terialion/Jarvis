@@ -8,6 +8,7 @@ import stripAnsi from "strip-ansi";
 import { App } from "./app.js";
 import type { TUIDebugEvent, TUIOptions } from "./types.js";
 import { createRoot, type RenderOptions } from "./vendor/ink-renderer/root.js";
+import { loadJarvisConfig } from "@jarvis/shared";
 
 export type ReplayAction =
   | { type: "text"; value: string; delayMs?: number }
@@ -145,6 +146,7 @@ class RecordingOutput extends Writable {
 }
 
 function parseReplayArgs(argv: string[] = process.argv): ReplayOptions {
+  const userConfig = loadJarvisConfig();
   const { values } = parseArgs({
     args: argv.slice(2),
     options: {
@@ -154,18 +156,18 @@ function parseReplayArgs(argv: string[] = process.argv): ReplayOptions {
       "action-script-b64": { type: "string" },
       model: {
         type: "string",
-        default: process.env["JARVIS_LLM_MODEL"] ?? process.env["JARVIS_MODEL"] ?? "deepseek-v4-flash-ascend",
+        default: userConfig.model ?? process.env["JARVIS_LLM_MODEL"] ?? process.env["JARVIS_MODEL"] ?? "deepseek-v4-flash-ascend",
       },
       "api-key": {
         type: "string",
-        default: process.env["JARVIS_LLM_API_KEY"] ?? process.env["OPENAI_API_KEY"],
+        default: userConfig.api_key ?? process.env["JARVIS_LLM_API_KEY"] ?? process.env["OPENAI_API_KEY"],
       },
       "base-url": {
         type: "string",
-        default: process.env["JARVIS_LLM_BASE_URL"] ?? process.env["JARVIS_BASE_URL"] ?? "https://api.deepseek.com/v1",
+        default: userConfig.base_url ?? process.env["JARVIS_LLM_BASE_URL"] ?? process.env["JARVIS_BASE_URL"] ?? "https://api.deepseek.com/v1",
       },
-      "max-turns": { type: "string", default: "30" },
-      "system-prompt": { type: "string" },
+      "max-turns": { type: "string", default: String(userConfig.max_turns ?? 30) },
+      "system-prompt": { type: "string", default: userConfig.system_prompt },
       "wait-ms": { type: "string", default: "12000" },
       "input-delay-ms": { type: "string", default: "300" },
       "submit-count": { type: "string" },

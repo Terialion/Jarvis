@@ -1,48 +1,45 @@
 // ============================================================================
-// Settings store — persistent settings.json at ~/.jarvis/settings.json
+// Settings store - compatibility wrapper over ~/.jarvis/config.json
 // ============================================================================
 
-import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'node:fs';
-import { join } from 'node:path';
-import { homedir } from 'node:os';
+import {
+  getJarvisConfig,
+  loadJarvisConfig,
+  saveJarvisConfig,
+  setJarvisConfig,
+  type JarvisConfig,
+} from '@jarvis/shared';
 
 export interface UserSettings {
   model?: string;
+  reasoning_effort?: JarvisConfig['reasoning_effort'];
   output_style?: 'default' | 'concise' | 'verbose';
   permission_mode?: 'workspace_write' | 'accept_edits' | 'bypass';
   max_turns?: number;
 }
 
-const JARVIS_DIR = join(homedir(), '.jarvis');
-const SETTINGS_PATH = join(JARVIS_DIR, 'settings.json');
-
-function ensureDir(): void {
-  if (!existsSync(JARVIS_DIR)) {
-    mkdirSync(JARVIS_DIR, { recursive: true });
-  }
+function toUserSettings(config: JarvisConfig): UserSettings {
+  return {
+    model: config.model,
+    reasoning_effort: config.reasoning_effort,
+    output_style: config.output_style,
+    permission_mode: config.permission_mode,
+    max_turns: config.max_turns,
+  };
 }
 
 export function loadSettings(): UserSettings {
-  try {
-    if (!existsSync(SETTINGS_PATH)) return {};
-    const raw = readFileSync(SETTINGS_PATH, 'utf-8');
-    return JSON.parse(raw) as UserSettings;
-  } catch {
-    return {};
-  }
+  return toUserSettings(loadJarvisConfig());
 }
 
 export function saveSettings(settings: UserSettings): void {
-  ensureDir();
-  const current = loadSettings();
-  const merged = { ...current, ...settings };
-  writeFileSync(SETTINGS_PATH, JSON.stringify(merged, null, 2) + '\n', 'utf-8');
+  saveJarvisConfig(settings);
 }
 
 export function getSetting<K extends keyof UserSettings>(key: K): UserSettings[K] | undefined {
-  return loadSettings()[key];
+  return getJarvisConfig(key as keyof JarvisConfig) as UserSettings[K] | undefined;
 }
 
 export function setSetting<K extends keyof UserSettings>(key: K, value: UserSettings[K]): void {
-  saveSettings({ [key]: value });
+  setJarvisConfig(key as keyof JarvisConfig, value as JarvisConfig[keyof JarvisConfig]);
 }

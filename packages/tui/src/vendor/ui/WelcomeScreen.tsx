@@ -17,14 +17,15 @@ export type WelcomeScreenProps = {
 export function ArcReactorLogo({ color = DEFAULT_COLOR }: { color?: string }): React.ReactNode {
   return (
     <Box flexDirection="column">
-      <Text color={color}>{"   ▄████████▄   "}</Text>
-      <Text color={color}>{" ▄███▀    ▀███▄ "}</Text>
-      <Text color={color}>{"▐███  ▄▀▀▄  ███▌"}</Text>
-      <Text color={color}>{"████ ▐█  █▌ ████"}</Text>
-      <Text color={color}>{"████  ▀▄▄▀  ████"}</Text>
-      <Text color={color}>{" ███▄      ▄███"}</Text>
-      <Text color={color}>{"  ▀██████████▀  "}</Text>
-      <Text color={color}>{"    ▀██████▀   "}</Text>
+      <Text color={color}>{"   ▄████████████▄   "}</Text>
+      <Text color={color}>{" ▄███▀        ▀███▄ "}</Text>
+      <Text color={color}>{"▐███  ▄▀▀▀▀▀▀▄  ███▌"}</Text>
+      <Text color={color}>{"████ ▐█      █▌ ████"}</Text>
+      <Text color={color}>{"████ ▐█      █▌ ████"}</Text>
+      <Text color={color}>{"▐███  ▀▄▄▄▄▄▄▀  ███▌"}</Text>
+      <Text color={color}>{" ▀███▄         ▄██▀"}</Text>
+      <Text color={color}>{"  ▀██████████████▀  "}</Text>
+      <Text color={color}>{"    ▀██████████▀   "}</Text>
     </Box>
   );
 }

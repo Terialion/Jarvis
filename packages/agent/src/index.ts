@@ -10,6 +10,7 @@ export type { MailItem } from './mailbox.js';
 export { FakeModelClient, LLMProvider } from './model.js';
 export type {
   ModelConfig,
+  ModelReasoningEffort,
   TokenUsage,
   LLMResponse,
   LLMMessage,
@@ -17,6 +18,7 @@ export type {
   ModelResponse,
   ModelChunk,
 } from './model.js';
+export { MODEL_REASONING_EFFORTS } from './model.js';
 
 // model catalog
 export {

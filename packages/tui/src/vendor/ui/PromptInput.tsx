@@ -16,6 +16,7 @@ type PromptInputProps = {
   value: string;
   onChange: (value: string) => void;
   onSubmit: (value: string) => void;
+  allowEmptySubmit?: boolean;
   placeholder?: string;
   prefix?: string;
   prefixColor?: string;
@@ -33,6 +34,7 @@ export function PromptInput({
   value,
   onChange,
   onSubmit,
+  allowEmptySubmit = false,
   placeholder = "",
   prefix = "❯",
   prefixColor = "cyan",
@@ -217,7 +219,7 @@ export function PromptInput({
           insertNewline();
           return;
         }
-        if (value.length > 0) onSubmit(value);
+        if (value.length > 0 || allowEmptySubmit) onSubmit(value);
         return;
       }
       if (key.escape) {

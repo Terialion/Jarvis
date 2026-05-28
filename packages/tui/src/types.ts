@@ -1,11 +1,14 @@
 import type { TuiPresentationMode } from './presentation/contracts.js';
+import type { JarvisReasoningEffort } from '@jarvis/shared';
 
 export interface TUIOptions {
   model: string;
   apiKey?: string;
   baseURL?: string;
+  reasoningEffort?: JarvisReasoningEffort;
   maxTurns: number;
   systemPrompt?: string;
+  forceOnboarding?: boolean;
   presentationMode?: TuiPresentationMode;
   debugHooks?: TUIDebugHooks;
 }

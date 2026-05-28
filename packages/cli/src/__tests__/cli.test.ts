@@ -82,6 +82,7 @@ describe('bootstrap', () => {
     const ctx = bootstrap({
       model: 'test-model',
       apiKey: 'sk-test',
+      reasoningEffort: 'high',
       maxTurns: 10,
     });
 
@@ -97,6 +98,7 @@ describe('bootstrap', () => {
     const ctx = bootstrap({
       model: 'test-model',
       apiKey: 'sk-test',
+      reasoningEffort: 'high',
       maxTurns: 10,
     });
 
