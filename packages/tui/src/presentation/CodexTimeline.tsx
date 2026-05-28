@@ -36,13 +36,7 @@ function ItemHeader({
   );
 }
 
-function SearchHit({
-  excerpt,
-  marginLeft = 4,
-}: {
-  excerpt?: string | null;
-  marginLeft?: number;
-}): React.ReactNode {
+function SearchHit({ excerpt, marginLeft = 4 }: { excerpt?: string | null; marginLeft?: number }): React.ReactNode {
   if (!excerpt) return null;
   return (
     <Box marginLeft={marginLeft}>
@@ -51,13 +45,7 @@ function SearchHit({
   );
 }
 
-function ExpandHint({
-  expanded,
-  marginLeft = 4,
-}: {
-  expanded: boolean;
-  marginLeft?: number;
-}): React.ReactNode {
+function ExpandHint({ expanded, marginLeft = 4 }: { expanded: boolean; marginLeft?: number }): React.ReactNode {
   return (
     <Box marginLeft={marginLeft}>
       <Text dimColor>{expanded ? 'Ctrl+O to collapse details' : 'Ctrl+O to inspect details'}</Text>
@@ -68,18 +56,56 @@ function ExpandHint({
 function DetailLine({
   text,
   color,
+  backgroundColor,
+  bold = false,
   dim = false,
 }: {
   text: string;
   color?: string;
+  backgroundColor?: string;
+  bold?: boolean;
   dim?: boolean;
 }): React.ReactNode {
+  const decoded = decodeHtmlEntities(text);
   return (
     <Box marginLeft={4}>
       <Text color="#4B5563">{'| '}</Text>
-      <Text color={color} dimColor={dim}>{` ${decodeHtmlEntities(text)}`}</Text>
+      <Text bold={bold} color={color} backgroundColor={backgroundColor} dimColor={dim}>{` ${decoded} `}</Text>
     </Box>
   );
+}
+
+function getPreviewLineStyle(line: string): {
+  color?: string;
+  backgroundColor?: string;
+  bold?: boolean;
+  dim?: boolean;
+} {
+  if (line.startsWith('- ')) {
+    return { color: '#FFD7DB', backgroundColor: '#5A1F24', bold: true, dim: false };
+  }
+  if (line.startsWith('+ ')) {
+    return { color: '#D9FFE0', backgroundColor: '#1F4D2C', bold: true, dim: false };
+  }
+  return { color: '#D7E3F4', backgroundColor: '#1E2532', dim: false };
+}
+
+function getCollapsedDetailStyle(item: Extract<CodexTimelineItemView, { kind: 'tool_call' }>): {
+  color?: string;
+  backgroundColor?: string;
+  bold?: boolean;
+  dim?: boolean;
+} {
+  if (item.status === 'failed') {
+    return { color: 'red', bold: true, dim: false };
+  }
+  if (item.label.startsWith('Update(')) {
+    return { color: '#F5F7FB', backgroundColor: '#2B3342', bold: true, dim: false };
+  }
+  if (item.label.startsWith('Write(')) {
+    return { color: '#D7E3F4', backgroundColor: '#1E2532', bold: true, dim: false };
+  }
+  return { dim: true };
 }
 
 function summarizeText(text: string, limit = 120): string {
@@ -92,13 +118,7 @@ function summarizeLines(lines: string[], limit = 2): string[] {
   return lines.slice(0, limit).map((line) => summarizeText(line, 120));
 }
 
-function TurnHeader({
-  turn,
-  active,
-}: {
-  turn: CodexTimelineTurnView;
-  active?: boolean;
-}): React.ReactNode {
+function TurnHeader({ turn, active }: { turn: CodexTimelineTurnView; active?: boolean }): React.ReactNode {
   const markerColor =
     turn.status === 'failed' ? 'red' : turn.status === 'completed' ? '#5FA8D3' : '#C59A6D';
   const itemCount = turn.items.length;
@@ -109,6 +129,7 @@ function TurnHeader({
       <Text bold color={active ? '#C6D9FF' : '#5FA8D3'}>{` Turn ${turn.turnNumber}`}</Text>
       <Text dimColor>{` | ${turn.statusText}`}</Text>
       <Text dimColor>{` | ${itemMeta}`}</Text>
+      {turn.statsText ? <Text dimColor>{` | ${turn.statsText}`}</Text> : null}
     </Box>
   );
 }
@@ -146,34 +167,66 @@ function TimelineItemView({
         </Box>
       );
     case 'tool_call':
-      {
-        const collapsedDetail = item.collapsedDetail;
-        return (
-          <Box flexDirection="column" marginLeft={2} marginTop={1}>
-            <ItemHeader
-              marker="*"
-              markerColor={item.status === 'failed' ? 'red' : item.status === 'completed' ? 'green' : 'yellow'}
-              label={item.label}
-              meta={item.statusLabel}
-              active={active}
+      return (
+        <Box flexDirection="column" marginLeft={2} marginTop={1}>
+          <ItemHeader
+            marker="*"
+            markerColor={item.status === 'failed' ? 'red' : item.status === 'completed' ? 'green' : 'yellow'}
+            label={item.label}
+            meta={item.statusLabel}
+            active={active}
+          />
+          <SearchHit excerpt={excerpt} marginLeft={4} />
+          <ExpandHint expanded={detailsExpanded} />
+          {item.collapsedDetail ? (() => {
+            const style = getCollapsedDetailStyle(item);
+            return (
+              <DetailLine
+                text={item.collapsedDetail}
+                color={style.color}
+                backgroundColor={style.backgroundColor}
+                bold={style.bold}
+                dim={style.dim}
+              />
+            );
+          })() : null}
+          {(item.alwaysShowPreview || detailsExpanded) &&
+            item.previewLines?.map((line, index) => {
+              const style = getPreviewLineStyle(line);
+              return (
+                <DetailLine
+                  key={`${item.id}-preview-${index}`}
+                  text={line}
+                  color={style.color}
+                  backgroundColor={style.backgroundColor}
+                  bold={style.bold}
+                  dim={style.dim}
+                />
+              );
+            })}
+          {(item.alwaysShowPreview || detailsExpanded) && (item.previewOverflowCount ?? 0) > 0 ? (
+            <DetailLine
+              text={
+                detailsExpanded
+                  ? `... +${item.previewOverflowCount} more lines`
+                  : `... +${item.previewOverflowCount} lines (Ctrl+O to expand)`
+              }
+              dim
             />
-            <SearchHit excerpt={excerpt} marginLeft={4} />
-            <ExpandHint expanded={detailsExpanded} />
-            {collapsedDetail ? (
-              <DetailLine text={collapsedDetail} color={item.status === 'failed' ? 'red' : undefined} dim={item.status !== 'failed'} />
-            ) : null}
-            {detailsExpanded && item.argumentsText ? (
-              <DetailLine text={`args | ${item.argumentsText}`} dim />
-            ) : null}
-            {detailsExpanded && item.resultText && item.resultText !== item.collapsedDetail?.replace(/^done \| /, '') ? (
-              <DetailLine text={`result | ${item.resultText}`} dim />
-            ) : null}
-            {detailsExpanded && item.errorText && item.errorText !== item.collapsedDetail?.replace(/^failed \| /, '') ? (
-              <DetailLine text={`error | ${item.errorText}`} color="red" />
-            ) : null}
-          </Box>
-        );
-      }
+          ) : null}
+          {detailsExpanded && item.argumentsText ? <DetailLine text={`args | ${item.argumentsText}`} dim /> : null}
+          {detailsExpanded &&
+          item.resultText &&
+          item.resultText !== item.collapsedDetail?.replace(/^done \| /, '') ? (
+            <DetailLine text={`result | ${item.resultText}`} dim />
+          ) : null}
+          {detailsExpanded &&
+          item.errorText &&
+          item.errorText !== item.collapsedDetail?.replace(/^failed \| /, '') ? (
+            <DetailLine text={`error | ${item.errorText}`} color="red" />
+          ) : null}
+        </Box>
+      );
     case 'todo_list':
       return (
         <Box flexDirection="column" marginLeft={2} marginTop={1}>
@@ -183,9 +236,7 @@ function TimelineItemView({
           {(detailsExpanded ? item.lines : (item.collapsedLines ?? summarizeLines(item.lines))).map((line, index) => (
             <DetailLine key={`${item.id}-${index}`} text={line} dim />
           ))}
-          {!detailsExpanded && (item.overflowCount ?? 0) > 0 ? (
-            <DetailLine text={`+${item.overflowCount} more`} dim />
-          ) : null}
+          {!detailsExpanded && (item.overflowCount ?? 0) > 0 ? <DetailLine text={`+${item.overflowCount} more`} dim /> : null}
         </Box>
       );
     case 'error':
@@ -233,7 +284,7 @@ export function CodexTimeline({
                 <Text color={active ? '#7AA2F7' : '#5FA8D3'}>{'>'}</Text>
                 <Text color={active ? '#7AA2F7' : '#5FA8D3'} bold>{' You'}</Text>
               </Box>
-              <SearchHit excerpt={active ? search?.activeExcerpt : null} />
+              <SearchHit excerpt={active ? search.activeExcerpt : null} />
               <Box marginLeft={2}>
                 <Markdown>{block.message.text}</Markdown>
               </Box>
@@ -247,9 +298,11 @@ export function CodexTimeline({
             <Box key={block.id} flexDirection="column" marginBottom={1}>
               <Box>
                 <Text color={active ? '#7AA2F7' : '#DA7756'}>{active ? '>' : 'o'}</Text>
-                <Text color={active ? '#7AA2F7' : '#DA7756'} bold>{block.message.role === 'system' ? ' System' : ' Jarvis'}</Text>
+                <Text color={active ? '#7AA2F7' : '#DA7756'} bold>
+                  {block.message.role === 'system' ? ' System' : ' Jarvis'}
+                </Text>
               </Box>
-              <SearchHit excerpt={active ? search?.activeExcerpt : null} />
+              <SearchHit excerpt={active ? search.activeExcerpt : null} />
               <Box marginLeft={2}>
                 <Markdown>{block.message.text}</Markdown>
               </Box>
@@ -258,11 +311,13 @@ export function CodexTimeline({
         }
 
         const turn = block.turn;
-        const turnActive = turn.items.some(
-          (item) => search?.activeDocumentId === `item:${turn.turnId}:${item.id}`,
-        );
+        const turnActive = turn.items.some((item) => search?.activeDocumentId === `item:${turn.turnId}:${item.id}`);
         return (
-          <Box key={block.id} flexDirection="column" marginBottom={blockIndex === state.blocks.length - 1 ? 0 : 1}>
+          <Box
+            key={block.id}
+            flexDirection="column"
+            marginBottom={blockIndex === state.blocks.length - 1 ? 0 : 1}
+          >
             <TurnHeader turn={turn} active={turnActive} />
             {turn.items.map((item) => {
               const active = search?.activeDocumentId === `item:${turn.turnId}:${item.id}`;

@@ -2,7 +2,7 @@
 // Write file tool — create or overwrite a file
 // ============================================================================
 
-import { writeFile, mkdir } from 'node:fs/promises';
+import { stat, writeFile, mkdir } from 'node:fs/promises';
 import { dirname } from 'node:path';
 import { toOpenAITool } from '@jarvis/shared';
 import type { ToolEntry, ToolHandler } from '../registry.js';
@@ -42,12 +42,21 @@ const writeFileHandler: ToolHandler = async (args, _context) => {
   }
 
   try {
+    let existedBefore = false;
+    try {
+      await stat(resolved.path);
+      existedBefore = true;
+    } catch {
+      existedBefore = false;
+    }
+
     await mkdir(dirname(resolved.path), { recursive: true });
     await writeFile(resolved.path, content, 'utf-8');
 
     return JSON.stringify({
       ok: true,
       path: resolved.path,
+      existedBefore,
       bytesWritten: Buffer.byteLength(content, 'utf-8'),
     });
   } catch (err) {
