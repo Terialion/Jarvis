@@ -10,6 +10,7 @@ import {
   buildCodexTimelineState,
   buildSearchExcerpt,
   type CodexTaskSnapshot,
+  type CodexTurnSnapshot,
 } from "../../presentation/codex-timeline-state.js";
 import { Divider } from "./Divider";
 import { type Message, MessageList } from "./MessageList";
@@ -54,6 +55,7 @@ export type REPLProps = {
   streamingElapsedMs?: number;
   threadEvents?: ThreadEvent[];
   codexTaskSnapshots?: CodexTaskSnapshot[];
+  codexTurnSnapshots?: CodexTurnSnapshot[];
   presentationMode?: TuiPresentationMode;
 
   welcome?: React.ReactNode;
@@ -93,6 +95,7 @@ export function REPL({
   streamingElapsedMs,
   threadEvents = [],
   codexTaskSnapshots = [],
+  codexTurnSnapshots = [],
   presentationMode = "claude",
   welcome,
   permissionRequest,
@@ -260,9 +263,11 @@ export function REPL({
                     .join("\n"),
           })),
         taskSnapshots: codexTaskSnapshots,
+        turnSnapshots: codexTurnSnapshots,
       }),
     [
       codexTaskSnapshots,
+      codexTurnSnapshots,
       isLoading,
       messages,
       spinnerCompleted,

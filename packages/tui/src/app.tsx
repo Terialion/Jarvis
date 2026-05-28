@@ -41,7 +41,7 @@ import {
 } from '@jarvis/shared';
 import { formatToolLine } from './vendor/ui/tool-display.js';
 import { buildStatusSegments } from './status-segments.js';
-import type { CodexTaskSnapshot } from './presentation/codex-timeline-state.js';
+import type { CodexTaskSnapshot, CodexTurnSnapshot } from './presentation/codex-timeline-state.js';
 
 // ============================================================================
 // Slash command definitions
@@ -857,6 +857,19 @@ function formatFileChangeSummary(changes: FileChange[]): string {
   }).join('\n');
 }
 
+function estimateTurnTokenCount(stats: {
+  trackerStartBlended: number;
+  tokenChars: number;
+  reasoningChars: number;
+} | null, tracker: TokenTracker | null): number | undefined {
+  if (!stats) return undefined;
+  const blendedDelta = Math.max(0, (tracker?.totalBlended ?? 0) - stats.trackerStartBlended);
+  if (blendedDelta > 0) return blendedDelta;
+
+  const approxFromChars = Math.round((stats.tokenChars + stats.reasoningChars) / 4);
+  return approxFromChars > 0 ? approxFromChars : undefined;
+}
+
 // ============================================================================
 // App
 // ============================================================================
@@ -865,6 +878,7 @@ export function App({ options }: { options: TUIOptions }): React.ReactNode {
   const [messages, setMessages] = useState<Message[]>([]);
   const [threadEvents, setThreadEvents] = useState<ThreadEvent[]>([]);
   const [codexTaskSnapshots, setCodexTaskSnapshots] = useState<CodexTaskSnapshot[]>([]);
+  const [codexTurnSnapshots, setCodexTurnSnapshots] = useState<CodexTurnSnapshot[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const agentRef = useRef<AgentLoop | null>(null);
   const historyRef = useRef<ChatMessage[]>([]);
@@ -928,6 +942,7 @@ export function App({ options }: { options: TUIOptions }): React.ReactNode {
   const runStatsRef = useRef<{
     prompt: string;
     startedAt: number;
+    trackerStartBlended: number;
     tokenEvents: number;
     tokenChars: number;
     reasoningEvents: number;
@@ -1330,6 +1345,7 @@ export function App({ options }: { options: TUIOptions }): React.ReactNode {
     runStatsRef.current = {
       prompt,
       startedAt: turnStartedAt,
+      trackerStartBlended: tokenTrackerRef.current?.totalBlended ?? 0,
       tokenEvents: 0,
       tokenChars: 0,
       reasoningEvents: 0,
@@ -1356,7 +1372,7 @@ export function App({ options }: { options: TUIOptions }): React.ReactNode {
     setStreamingContent(null);
     setStreamingThinking(null);
     streamingContentRef.current = null;
-    setSpinnerVerb(undefined);
+    setSpinnerVerb('Concocting');
     setSpinnerStatus(undefined);
     setSpinnerDetails([]);
     setSpinnerCompleted([]);
@@ -1494,6 +1510,16 @@ export function App({ options }: { options: TUIOptions }): React.ReactNode {
           taskSnapshot!,
         ]);
       }
+
+      const turnTokenCount = estimateTurnTokenCount(runStatsRef.current, tokenTrackerRef.current);
+      setCodexTurnSnapshots((prev) => [
+        ...prev.filter((snapshot) => snapshot.turnId !== result.turnId),
+        {
+          turnId: result.turnId,
+          elapsedMs: Date.now() - turnStartedAt,
+          tokenCount: turnTokenCount,
+        },
+      ]);
 
       const stats = runStatsRef.current;
       const reasoningText = result.reasoning ?? '';
@@ -1636,6 +1662,11 @@ export function App({ options }: { options: TUIOptions }): React.ReactNode {
     });
   }, [askQuestions, cwd, elapsedMs, gitBranch, isLoading, messages.length, modelRef.current]);
 
+  const spinnerTokenCount = useMemo(() => {
+    if (!isLoading) return undefined;
+    return estimateTurnTokenCount(runStatsRef.current, tokenTrackerRef.current);
+  }, [elapsedMs, isLoading, messages.length, streamingContent, streamingThinking]);
+
   // Interrupt handler — cancels current agent run
   const handleInterrupt = useCallback(() => {
     agentRef.current?.interrupt('user_interrupt');
@@ -1677,6 +1708,7 @@ export function App({ options }: { options: TUIOptions }): React.ReactNode {
       threadEventsRef.current = [];
       setThreadEvents([]);
       setCodexTaskSnapshots([]);
+      setCodexTurnSnapshots([]);
     }
   }, [messages.length]);
 
@@ -1689,6 +1721,7 @@ export function App({ options }: { options: TUIOptions }): React.ReactNode {
       messages={messages}
       threadEvents={threadEvents}
       codexTaskSnapshots={codexTaskSnapshots}
+      codexTurnSnapshots={codexTurnSnapshots}
       presentationMode={options.presentationMode ?? 'codex'}
       isLoading={isLoading}
       streamingContent={streamingContent}
@@ -1701,7 +1734,7 @@ export function App({ options }: { options: TUIOptions }): React.ReactNode {
       statusSegments={statusSegments}
       commands={replCommands}
       askUserQuestion={askUserQuestion}
-      spinnerTokenCount={tokenTrackerRef.current?.totalBlended}
+      spinnerTokenCount={spinnerTokenCount}
       spinnerVerb={spinnerVerb}
       spinnerStatus={spinnerStatus}
       spinnerDetails={spinnerDetails}

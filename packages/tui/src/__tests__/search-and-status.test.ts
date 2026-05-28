@@ -138,7 +138,7 @@ describe("buildCodexTimelineState", () => {
     expect(state.blocks[0]?.id).toBe("user:user_1");
     expect(state.turns).toHaveLength(1);
     expect(state.turns[0]?.turnNumber).toBe(1);
-    expect(state.turns[0]?.statusText).toBe("completed: stop");
+    expect(state.turns[0]?.statusText).toBe("completed");
     expect(state.turns[0]?.items.map((item) => item.kind)).toEqual(["reasoning", "agent_message"]);
     expect(state.searchDocuments.map((doc) => doc.id)).toContain("user:user_1");
   });
@@ -161,14 +161,70 @@ describe("buildCodexTimelineState", () => {
 
     const progress = state.turns[0]?.items.at(-1);
     expect(progress?.kind).toBe("progress");
+    expect(state.turns[0]?.statsText).toBe("12s · ↓14 tokens");
     if (progress?.kind === "progress") {
-      expect(progress.label).toBe("Thinking");
-      expect(progress.elapsedText).toBe("12s");
+      expect(progress.label).toBe("Using Bash");
+      expect(progress.elapsedText).toBe("12s · ↓14 tokens");
       expect(progress.lines).toContain("waiting for the model response");
       expect(progress.lines).toContain("Requested the next turn");
       expect(progress.lines).toContain("Done: read_file");
       expect(progress.lines).toContain("Running: bash");
     }
+  });
+
+  it("uses a product phase label instead of freeform reasoning text", () => {
+    const state = buildCodexTimelineState({
+      events: [{ type: "turn.started", turn_id: "turn_live" }],
+      liveStatus: {
+        isLoading: true,
+        elapsedMs: 9_000,
+        verb: "Inspecting workspace carefully",
+        tokenCount: 32,
+      },
+      messages: [],
+    });
+
+    const progress = state.turns[0]?.items.at(-1);
+    expect(progress?.kind).toBe("progress");
+    if (progress?.kind === "progress") {
+      expect(progress.label).toBe("Concocting…");
+    }
+  });
+
+  it("preserves turn-level elapsed and token stats after completion", () => {
+    const state = buildCodexTimelineState({
+      events: [
+        { type: "turn.started", turn_id: "turn_1" },
+        {
+          type: "item.completed",
+          turn_id: "turn_1",
+          item: { id: "msg_1", type: "agent_message", text: "Done." },
+        },
+        { type: "turn.completed", turn_id: "turn_1", stop_reason: "stop" },
+      ],
+      liveStatus: { isLoading: false },
+      messages: [],
+      turnSnapshots: [{ turnId: "turn_1", elapsedMs: 8_000, tokenCount: 168 }],
+    });
+
+    expect(state.turns[0]?.statsText).toBe("8s · ↓168 tokens");
+  });
+
+  it("normalizes completed stop reasons into a cleaner completed label", () => {
+    const completed = buildCodexTimelineState({
+      events: [{ type: "turn.completed", turn_id: "turn_done", stop_reason: "completed" }],
+      liveStatus: { isLoading: false },
+      messages: [],
+    });
+
+    const stopped = buildCodexTimelineState({
+      events: [{ type: "turn.completed", turn_id: "turn_stop", stop_reason: "stop" }],
+      liveStatus: { isLoading: false },
+      messages: [],
+    });
+
+    expect(completed.turns[0]?.statusText).toBe("completed");
+    expect(stopped.turns[0]?.statusText).toBe("completed");
   });
 
   it("adds a visible error card when a turn fails", () => {
