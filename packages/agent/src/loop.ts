@@ -2,7 +2,14 @@
 // AgentLoop — the core agent loop orchestrating LLM calls and tool dispatch
 // ============================================================================
 
-import type { AgentEvent, ChatMessage, ToolResult } from '@jarvis/shared';
+import type {
+  AgentEvent,
+  ChatMessage,
+  ThreadEvent,
+  ThreadUsage,
+  ToolCallThreadItem,
+  ToolResult,
+} from '@jarvis/shared';
 import type { ToolRegistry } from '@jarvis/tools';
 import type { SkillRegistry, SkillExecutor } from '@jarvis/skills';
 import type { HookRegistry } from '@jarvis/hooks';
@@ -51,6 +58,8 @@ export interface AgentLoopConfig {
   onToolStart?: (toolCallId: string, toolName: string, args: Record<string, unknown>) => void;
   /** Called when a tool finishes executing. */
   onToolEnd?: (toolCallId: string, toolName: string, result: ToolResult) => void;
+  /** Codex-style thread event callback for timeline-driven UIs. */
+  onThreadEvent?: (event: ThreadEvent) => void;
   /** Agent mailbox for inter-agent communication. */
   mailbox?: AgentMailbox;
 }
@@ -100,7 +109,7 @@ const SENSITIVE_MARKERS = [
 ];
 
 export class AgentLoop {
-  private config: Required<Omit<AgentLoopConfig, 'tools' | 'eventBus' | 'provider' | 'skillRegistry' | 'skillExecutor' | 'hooks' | 'sessionStore' | 'memoryStore' | 'contextStore' | 'tokenTracker' | 'onToken' | 'onReasoningDelta' | 'onToolStart' | 'onToolEnd'>> & {
+  private config: Required<Omit<AgentLoopConfig, 'tools' | 'eventBus' | 'provider' | 'skillRegistry' | 'skillExecutor' | 'hooks' | 'sessionStore' | 'memoryStore' | 'contextStore' | 'tokenTracker' | 'onToken' | 'onReasoningDelta' | 'onToolStart' | 'onToolEnd' | 'onThreadEvent' | 'mailbox'>> & {
     tools?: ToolRegistry;
     eventBus?: AgentEventBus;
     provider?: LLMProvider;
@@ -109,12 +118,14 @@ export class AgentLoop {
     onReasoningDelta?: (delta: string) => void;
     onToolStart?: (callId: string, toolName: string, args: Record<string, unknown>) => void;
     onToolEnd?: (callId: string, toolName: string, result: ToolResult) => void;
+    onThreadEvent?: (event: ThreadEvent) => void;
     skillRegistry?: SkillRegistry;
     skillExecutor?: SkillExecutor;
     hooks?: HookRegistry;
     sessionStore?: SessionStoreLike;
     memoryStore?: MemoryStoreLike;
     contextStore?: { retrieveRecentContext(sessionId: string): Record<string, unknown> };
+    mailbox?: AgentMailbox;
   };
   private provider: LLMProvider | FakeModelClient;
   private tools?: ToolRegistry;
@@ -141,6 +152,7 @@ export class AgentLoop {
   private _interrupted = false;
   private _paused = false;
   private _pausedResolve: (() => void) | null = null;
+  private _activeToolAbortController: AbortController | null = null;
 
   /** Signal the agent to pause at the next step boundary. */
   get paused(): boolean { return this._paused; }
@@ -148,12 +160,22 @@ export class AgentLoop {
   /** Signal the agent to stop at the next step boundary. */
   get interrupted(): boolean { return this._interrupted; }
 
+  /** Reset lifecycle control flags before starting a fresh run. */
+  private resetLifecycleControl(): void {
+    this._activeToolAbortController?.abort();
+    this._activeToolAbortController = null;
+    this._interrupted = false;
+    this._paused = false;
+    this._pausedResolve = null;
+  }
+
   /**
    * Interrupt this agent — it will stop at the next step boundary.
    * Mirrors Codex's AgentControl.interrupt_agent().
    */
   interrupt(reason?: string): void {
     this._interrupted = true;
+    this._activeToolAbortController?.abort();
     if (this._pausedResolve) {
       // If agent is paused, resume it so it can notice the interrupt
       this._pausedResolve();
@@ -214,11 +236,18 @@ export class AgentLoop {
       tools: config.tools,
       eventBus: config.eventBus,
       provider: config.provider,
+      onThreadEvent: config.onThreadEvent,
+      onToken: config.onToken,
+      onReasoningDelta: config.onReasoningDelta,
+      onToolStart: config.onToolStart,
+      onToolEnd: config.onToolEnd,
       skillRegistry: config.skillRegistry,
       skillExecutor: config.skillExecutor,
+      hooks: config.hooks,
       sessionStore: config.sessionStore,
       memoryStore: config.memoryStore,
       contextStore: config.contextStore,
+      mailbox: config.mailbox,
     };
 
     this.provider = config.provider ?? new LLMProvider(config.model);
@@ -254,6 +283,31 @@ export class AgentLoop {
     this.replanPolicy = new ReplanPolicy(2);
   }
 
+  private emitThreadEvent(event: ThreadEvent): void {
+    this.config.onThreadEvent?.(event);
+    this.eventBus?.emitThreadEvent(event);
+  }
+
+  private beginToolDispatch(): AbortSignal {
+    this._activeToolAbortController?.abort();
+    this._activeToolAbortController = new AbortController();
+    return this._activeToolAbortController.signal;
+  }
+
+  private endToolDispatch(): void {
+    this._activeToolAbortController = null;
+  }
+
+  private buildTurnUsage(): ThreadUsage | null {
+    const snapshot = this.config.tokenTracker?.snapshot();
+    if (!snapshot) return null;
+    return {
+      input_tokens: snapshot.inputTokens,
+      cached_input_tokens: snapshot.cachedTokens,
+      output_tokens: snapshot.outputTokens,
+    };
+  }
+
   // ========================================================================
   // Simple run() — backward compat with existing tests
   // ========================================================================
@@ -262,9 +316,16 @@ export class AgentLoop {
     userMessage: string,
     history: ChatMessage[] = [],
   ): Promise<TurnResult> {
+    this.resetLifecycleControl();
     const turnId = `turn_${crypto.randomUUID()}`;
+    const inferredThreadId = `thread_${history[0]?.messageId?.slice(4) ?? turnId.slice(5)}`;
     let allMessages: ChatMessage[] = [...history];
     const allToolResults: ToolResult[] = [];
+    let streamingReasoningText = '';
+    let streamingReasoningItemId: string | null = null;
+    let streamingReasoningCompleted = false;
+    let streamingMessageText = '';
+    let streamingMessageItemId: string | null = null;
 
     const userMsg: ChatMessage = {
       role: 'user',
@@ -273,6 +334,16 @@ export class AgentLoop {
     };
     allMessages.push(userMsg);
 
+    if (history.length === 0) {
+      this.emitThreadEvent({
+        type: 'thread.started',
+        thread_id: inferredThreadId,
+      });
+    }
+    this.emitThreadEvent({
+      type: 'turn.started',
+      turn_id: turnId,
+    });
     this.eventBus?.emit('turn:start', { turnId, userMessage });
 
     // Match skills
@@ -305,6 +376,7 @@ export class AgentLoop {
     let turnsUsed = 0;
     let finalContent = '';
     let stopReason = 'unknown';
+    let turnFailedMessage: string | null = null;
     let retryWithToolInstructionCount = 0;
 
     for (let turn = 0; turn < this.config.maxTurns; turn++) {
@@ -354,8 +426,70 @@ export class AgentLoop {
             llmMessages,
             toolDefs,
             {
-              onToken: this.config.onToken,
-              onReasoningDelta: this.config.onReasoningDelta,
+              onToken: (token) => {
+                if (!streamingReasoningCompleted && streamingReasoningItemId) {
+                  this.emitThreadEvent({
+                    type: 'item.completed',
+                    turn_id: turnId,
+                    item: {
+                      id: streamingReasoningItemId,
+                      type: 'reasoning',
+                      text: streamingReasoningText,
+                    },
+                  });
+                  streamingReasoningCompleted = true;
+                }
+                streamingMessageText += token;
+                if (!streamingMessageItemId) {
+                  streamingMessageItemId = `item_agent_message_${crypto.randomUUID()}`;
+                  this.emitThreadEvent({
+                    type: 'item.started',
+                    turn_id: turnId,
+                    item: {
+                      id: streamingMessageItemId,
+                      type: 'agent_message',
+                      text: streamingMessageText,
+                    },
+                  });
+                } else {
+                  this.emitThreadEvent({
+                    type: 'item.updated',
+                    turn_id: turnId,
+                    item: {
+                      id: streamingMessageItemId,
+                      type: 'agent_message',
+                      text: streamingMessageText,
+                    },
+                  });
+                }
+                this.config.onToken?.(token);
+              },
+              onReasoningDelta: (delta) => {
+                streamingReasoningText += delta;
+                if (!streamingReasoningItemId) {
+                  streamingReasoningItemId = `item_reasoning_${crypto.randomUUID()}`;
+                  this.emitThreadEvent({
+                    type: 'item.started',
+                    turn_id: turnId,
+                    item: {
+                      id: streamingReasoningItemId,
+                      type: 'reasoning',
+                      text: streamingReasoningText,
+                    },
+                  });
+                } else {
+                  this.emitThreadEvent({
+                    type: 'item.updated',
+                    turn_id: turnId,
+                    item: {
+                      id: streamingReasoningItemId,
+                      type: 'reasoning',
+                      text: streamingReasoningText,
+                    },
+                  });
+                }
+                this.config.onReasoningDelta?.(delta);
+              },
             },
           );
         } else {
@@ -373,10 +507,52 @@ export class AgentLoop {
         this.eventBus?.emit('llm:error', { turnId, turn, error: errMsg });
         stopReason = 'llm_error';
         finalContent = `Error calling LLM after retries: ${errMsg}`;
+        turnFailedMessage = errMsg;
         break;
       }
 
       const { content, toolCalls, finishReason } = response;
+
+      if (streamingReasoningItemId && !streamingReasoningCompleted) {
+        this.emitThreadEvent({
+          type: 'item.completed',
+          turn_id: turnId,
+          item: {
+            id: streamingReasoningItemId,
+            type: 'reasoning',
+            text: streamingReasoningText,
+          },
+        });
+        streamingReasoningCompleted = true;
+      }
+      if (content && !streamingMessageItemId) {
+        streamingMessageItemId = `item_agent_message_${crypto.randomUUID()}`;
+        this.emitThreadEvent({
+          type: 'item.started',
+          turn_id: turnId,
+          item: {
+            id: streamingMessageItemId,
+            type: 'agent_message',
+            text: content,
+          },
+        });
+      }
+      if (streamingMessageItemId) {
+        this.emitThreadEvent({
+          type: 'item.completed',
+          turn_id: turnId,
+          item: {
+            id: streamingMessageItemId,
+            type: 'agent_message',
+            text: content || streamingMessageText,
+          },
+        });
+        streamingMessageItemId = null;
+        streamingMessageText = '';
+      }
+      streamingReasoningItemId = null;
+      streamingReasoningText = '';
+      streamingReasoningCompleted = false;
 
       this.eventBus?.emit('llm:response', {
         turnId,
@@ -424,6 +600,19 @@ export class AgentLoop {
 
       if (finishReason === 'tool_calls' && toolCalls.length > 0) {
         for (const tc of toolCalls) {
+          const startedAt = Date.now();
+          const toolItemBase: ToolCallThreadItem = {
+            id: tc.callId,
+            type: 'tool_call',
+            tool_name: tc.name,
+            arguments: tc.arguments,
+            status: 'in_progress',
+          };
+          this.emitThreadEvent({
+            type: 'item.started',
+            turn_id: turnId,
+            item: toolItemBase,
+          });
           this.eventBus?.emit('tool:executing', {
             turnId, turn, toolName: tc.name, args: tc.arguments,
           });
@@ -431,7 +620,15 @@ export class AgentLoop {
 
           let toolResult: ToolResult;
           if (this.tools) {
-            const rawResult = await this.tools.dispatch(tc.name, tc.arguments);
+            let rawResult = '';
+            const signal = this.beginToolDispatch();
+            try {
+              rawResult = await this.tools.dispatch(tc.name, tc.arguments, {
+                signal,
+              });
+            } finally {
+              this.endToolDispatch();
+            }
             let parsed: Record<string, unknown> | null = null;
             try { parsed = JSON.parse(rawResult); } catch { /* not JSON */ }
 
@@ -454,6 +651,8 @@ export class AgentLoop {
             };
           }
 
+          toolResult.durationMs = Date.now() - startedAt;
+
           allToolResults.push(toolResult);
 
           const toolMsg: ChatMessage = {
@@ -470,6 +669,17 @@ export class AgentLoop {
             ok: toolResult.ok,
             contentLength: toolResult.content.length,
             durationMs: toolResult.durationMs,
+          });
+          this.emitThreadEvent({
+            type: 'item.completed',
+            turn_id: turnId,
+            item: {
+              ...toolItemBase,
+              status: toolResult.ok ? 'completed' : 'failed',
+              result: toolResult.content,
+              error: toolResult.error,
+              duration_ms: toolResult.durationMs,
+            },
           });
           this.config.onToolEnd?.(tc.callId, tc.name, toolResult);
         }
@@ -502,6 +712,20 @@ export class AgentLoop {
     this.eventBus?.emit('turn:complete', {
       turnId, turnsUsed, stopReason, answerLength: finalContent.length,
     });
+    if (turnFailedMessage) {
+      this.emitThreadEvent({
+        type: 'turn.failed',
+        turn_id: turnId,
+        error: { message: turnFailedMessage },
+      });
+    } else {
+      this.emitThreadEvent({
+        type: 'turn.completed',
+        turn_id: turnId,
+        stop_reason: stopReason,
+        usage: this.buildTurnUsage(),
+      });
+    }
 
     return {
       turnId,
@@ -522,6 +746,7 @@ export class AgentLoop {
     projectId?: string;
     cwd?: string;
   }): Promise<AgentRunResult> {
+    this.resetLifecycleControl();
     const started = Date.now();
     const sessionId = opts?.sessionId ?? `session_${crypto.randomUUID()}`;
     const turnId = `turn_${crypto.randomUUID()}`;
@@ -835,7 +1060,15 @@ export class AgentLoop {
           }
 
           if (this.tools) {
-            const rawResult = await this.tools.dispatch(call.name, call.arguments);
+            let rawResult = '';
+            const signal = this.beginToolDispatch();
+            try {
+              rawResult = await this.tools.dispatch(call.name, call.arguments, {
+                signal,
+              });
+            } finally {
+              this.endToolDispatch();
+            }
             let parsed: Record<string, unknown> | null = null;
             try { parsed = JSON.parse(rawResult); } catch { /* not JSON */ }
             result = {
@@ -939,7 +1172,15 @@ export class AgentLoop {
             classification,
           ) && this.tools) {
             this._emit(events, turnId, 'retry_started', { step, tool_name: result.name, reason: classification.reason });
-            const retryRaw = await this.tools.dispatch(call.name, call.arguments);
+            let retryRaw = '';
+            const signal = this.beginToolDispatch();
+            try {
+              retryRaw = await this.tools.dispatch(call.name, call.arguments, {
+                signal,
+              });
+            } finally {
+              this.endToolDispatch();
+            }
             let retryParsed: Record<string, unknown> | null = null;
             try { retryParsed = JSON.parse(retryRaw); } catch { /* not JSON */ }
             const retryResult: ToolResult = {

@@ -13,6 +13,8 @@ export type SearchOverlayProps = {
   onClose: () => void;
   onSearch: (query: string) => SearchMatch[];
   onNavigate: (match: SearchMatch) => void;
+  onActiveMatchChange?: (match: SearchMatch | null) => void;
+  onQueryChange?: (query: string) => void;
   matchCount?: number;
   currentMatch?: number;
 };
@@ -90,6 +92,8 @@ export function SearchOverlay({
   onClose,
   onSearch,
   onNavigate,
+  onActiveMatchChange,
+  onQueryChange,
 }: SearchOverlayProps): React.ReactNode {
   const [query, setQueryState] = useState("");
   const [cursor, setCursor] = useState(0);
@@ -111,17 +115,25 @@ export function SearchOverlay({
       setCursor(0);
       setMatches([]);
       setMatchIndex(0);
+      onQueryChange?.("");
+      onActiveMatchChange?.(null);
     }
-  }, [isOpen, setMatchIndex]);
+  }, [isOpen, onActiveMatchChange, onQueryChange, setMatchIndex]);
 
   const runSearch = useCallback(
     (q: string) => {
+      onQueryChange?.(q);
       const found = onSearch(q);
       setMatches(found);
       setMatchIndex(0);
-      if (found.length > 0) onNavigate(found[0]!);
+      if (found.length > 0) {
+        onNavigate(found[0]!);
+        onActiveMatchChange?.(found[0]!);
+      } else {
+        onActiveMatchChange?.(null);
+      }
     },
-    [onSearch, onNavigate, setMatchIndex],
+    [onActiveMatchChange, onQueryChange, onSearch, onNavigate, setMatchIndex],
   );
 
   const navigate = useCallback(
@@ -132,10 +144,11 @@ export function SearchOverlay({
           (matchIndexRef.current + delta + currentMatches.length) % currentMatches.length;
         setMatchIndex(next);
         onNavigate(currentMatches[next]!);
+        onActiveMatchChange?.(currentMatches[next]!);
         return currentMatches;
       });
     },
-    [onNavigate, setMatchIndex],
+    [onActiveMatchChange, onNavigate, setMatchIndex],
   );
 
   useInput(

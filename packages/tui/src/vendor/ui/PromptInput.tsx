@@ -1,6 +1,6 @@
 import { Box, type Key, Text, useInput } from "../ink-renderer/index.js";
 import type React from "react";
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import {
   lineOffset as computeLineOffset,
   cursorLineIndex,
@@ -60,6 +60,15 @@ export function PromptInput({
   const cursorLine = multiline ? cursorLineIndex(lines, cursor) : 0;
 
   const lineOffset = (line: number): number => computeLineOffset(lines, line);
+
+  useEffect(() => {
+    setCursor((prev) => Math.min(prev, value.length));
+    setShowSuggestions(value.startsWith("/"));
+    setSuggestionIndex((prev) => {
+      if (!value.startsWith("/")) return 0;
+      return suggestions.length === 0 ? 0 : Math.min(prev, suggestions.length - 1);
+    });
+  }, [suggestions.length, value]);
 
   const updateValue = useCallback(
     (nv: string, nc?: number) => {
@@ -279,7 +288,7 @@ export function PromptInput({
         updateValue(value.slice(cursor), 0);
         return;
       }
-      if (key.backspace) {
+      if (key.backspace || input === "\b" || input === "\u007f") {
         if (cursor > 0) updateValue(value.slice(0, cursor - 1) + value.slice(cursor), cursor - 1);
         return;
       }

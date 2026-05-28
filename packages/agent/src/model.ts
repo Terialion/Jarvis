@@ -113,7 +113,11 @@ const TOOL_INTENT_MARKERS = [
 
 function looksLikeToolIntentText(text: string): boolean {
   const lowered = text.toLowerCase();
-  return TOOL_INTENT_MARKERS.some((m) => lowered.includes(m));
+  if (TOOL_INTENT_MARKERS.some((m) => lowered.includes(m))) {
+    return true;
+  }
+
+  return /\b(let me|i(?:'ll| will)|first[, ]+let me)\s+(explore|inspect|look(?:\s+at)?|check|review|search|read|open|list|examine|compare)\b/.test(lowered);
 }
 
 // ============================================================================
@@ -381,9 +385,16 @@ export class LLMProvider {
     tools?: Record<string, unknown>[],
     callbacks?: StreamCallbacks,
   ): Promise<LLMResponse> {
+    const safeToCanonical = LLMProvider._extractSafeNameMap(tools ?? []);
+
+    let prepared = messages;
+    if (tools && tools.length > 0 && !this.supportsNativeToolCalling) {
+      prepared = LLMProvider._injectToolDescriptionsFromDefs(prepared, tools);
+    }
+
     // Normalize messages for the provider
     const normalizedStream = normalizeMessages(
-      messages as MessageRecord[],
+      prepared as MessageRecord[],
       { provider: this.config.provider ?? '', model: this.config.model },
     ) as unknown as LLMMessage[];
 
@@ -495,7 +506,7 @@ export class LLMProvider {
 
       toolCalls.push({
         callId,
-        name: acc.name,
+        name: safeToCanonical[acc.name] || acc.name,
         arguments: parsedArgs,
         source: 'model',
       });
@@ -511,6 +522,43 @@ export class LLMProvider {
         const chunkSize = 20;
         for (let i = 0; i < content.length; i += chunkSize) {
           callbacks.onToken(content.slice(i, i + chunkSize));
+        }
+      }
+    }
+
+    if (toolCalls.length > 0) {
+      return { content, toolCalls, finishReason, usage };
+    }
+
+    for (const sourceText of [content, reasoningContent]) {
+      if (!sourceText || !sourceText.trim()) continue;
+
+      if (
+        LLMProvider._looksLikeToolIntentText(sourceText) ||
+        sourceText.includes('tool_plan_json')
+      ) {
+        const salvaged = LLMProvider._parseToolPlanFromContent(sourceText, safeToCanonical);
+        if (salvaged && salvaged.toolCalls.length > 0) {
+          for (const call of salvaged.toolCalls) {
+            callbacks?.onToolCall?.(call);
+          }
+          return {
+            content: salvaged.finalAnswer || salvaged.assistantText,
+            toolCalls: salvaged.toolCalls,
+            finishReason: 'tool_calls',
+            raw: salvaged.raw as Record<string, unknown> | undefined,
+            usage,
+          };
+        }
+
+        if (sourceText === content) {
+          return {
+            content: '',
+            toolCalls: [],
+            finishReason: 'retry_with_tool_instruction',
+            raw: { retry_reason: 'natural_language_tool_intent' },
+            usage,
+          };
         }
       }
     }

@@ -47,7 +47,29 @@ export type { ErrorClassification, FailureRecord, RetryConfig } from './retry.js
 
 // events
 export { AgentEventBus } from './events.js';
-export type { EventHandler } from './events.js';
+export type { EventHandler, ThreadEventHandler } from './events.js';
+
+// thread events
+export type {
+  ThreadUsage,
+  ToolCallThreadItemStatus,
+  AgentMessageThreadItem,
+  ReasoningThreadItem,
+  ToolCallThreadItem,
+  TodoThreadItem,
+  TodoListThreadItem,
+  ErrorThreadItem,
+  ThreadItem,
+  ThreadStartedEvent,
+  TurnStartedEvent,
+  TurnCompletedEvent,
+  TurnFailedEvent,
+  ItemStartedEvent,
+  ItemUpdatedEvent,
+  ItemCompletedEvent,
+  ThreadErrorEvent,
+  ThreadEvent,
+} from '@jarvis/shared';
 
 // context
 export { ContextBuilder, ContextUpdater, UserFactExtractor } from './context.js';
@@ -83,6 +105,9 @@ export type { MessageRecord } from './normalizer.js';
 // prompt-builder
 export { AGENT_SYSTEM_PROMPT, PromptBuilder, buildSystemPrompt } from './prompt-builder.js';
 export type { PromptMode } from './prompt-builder.js';
+
+// cache-strategy
+export { supportsPromptCaching, markCacheable, injectCacheBreakpoints } from './cache-strategy.js';
 
 // fragment
 export {

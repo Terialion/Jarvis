@@ -98,13 +98,17 @@ interface WalkOptions {
   cwd: string;
   segments: GlobSegment[];
   maxResults?: number;
+  signal?: AbortSignal;
 }
 
 async function walkGlob(options: WalkOptions): Promise<string[]> {
-  const { cwd, segments, maxResults = 10_000 } = options;
+  const { cwd, segments, maxResults = 10_000, signal } = options;
   const results: string[] = [];
 
   async function walk(dir: string, segIdx: number): Promise<void> {
+    if (signal?.aborted) {
+      throw new Error('Tool interrupted');
+    }
     if (results.length >= maxResults) return;
 
     // If we've matched all segments, the current file/dir matches
@@ -183,7 +187,7 @@ const globHandler: ToolHandler = async (args, _context) => {
       return JSON.stringify({ matches: [] });
     }
 
-    const matches = await walkGlob({ cwd: basePath, segments });
+    const matches = await walkGlob({ cwd: basePath, segments, signal: _context.signal });
     return JSON.stringify({ matches });
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);

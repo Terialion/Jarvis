@@ -1,8 +1,16 @@
-import { Box, type Key, useApp, useInput } from "../ink-renderer/index.js";
+import { Box, Text, type Key, useApp, useInput } from "../ink-renderer/index.js";
+import { AgentsPanel, type AgentStatusEntry } from "./AgentsPanel";
 import type React from "react";
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useMemo, useRef, useState } from "react";
 import { AskUserQuestion } from "./AskUserQuestion";
 import type { AskQuestionDef } from "@jarvis/tools";
+import type { ThreadEvent } from "@jarvis/agent";
+import { CodexTimeline } from "../../presentation/CodexTimeline.js";
+import {
+  buildCodexTimelineState,
+  buildSearchExcerpt,
+  type CodexTaskSnapshot,
+} from "../../presentation/codex-timeline-state.js";
 import { Divider } from "./Divider";
 import { type Message, MessageList } from "./MessageList";
 import { type PermissionAction, PermissionRequest } from "./PermissionRequest";
@@ -10,6 +18,8 @@ import { PromptInput } from "./PromptInput";
 import { computeMatches, SearchOverlay } from "./SearchOverlay";
 import { Spinner } from "./Spinner";
 import { StatusLine, type StatusLineSegment } from "./StatusLine";
+import type { SearchMatch } from "./SearchOverlay";
+import type { TuiPresentationMode } from "../../presentation/contracts.js";
 
 type REPLCommand = {
   name: string;
@@ -41,6 +51,10 @@ export type REPLProps = {
   isLoading?: boolean;
   streamingContent?: string | null;
   streamingThinking?: string | null;
+  streamingElapsedMs?: number;
+  threadEvents?: ThreadEvent[];
+  codexTaskSnapshots?: CodexTaskSnapshot[];
+  presentationMode?: TuiPresentationMode;
 
   welcome?: React.ReactNode;
 
@@ -60,8 +74,12 @@ export type REPLProps = {
   spinnerTokenCount?: number;
   spinnerVerb?: string;
   spinnerStatus?: string;
+  spinnerDetails?: string[];
   spinnerRunning?: string;
   spinnerCompleted?: string[];
+
+  // Agent panel (Ctrl+A)
+  agents?: AgentStatusEntry[];
 };
 
 export function REPL({
@@ -72,6 +90,10 @@ export function REPL({
   isLoading = false,
   streamingContent,
   streamingThinking,
+  streamingElapsedMs,
+  threadEvents = [],
+  codexTaskSnapshots = [],
+  presentationMode = "claude",
   welcome,
   permissionRequest,
   askUserQuestion,
@@ -86,13 +108,18 @@ export function REPL({
   spinnerTokenCount,
   spinnerVerb,
   spinnerStatus,
+  spinnerDetails,
   spinnerRunning,
   spinnerCompleted,
+  agents,
 }: REPLProps): React.ReactNode {
   const { exit } = useApp();
   const [inputValue, setInputValue] = useState("");
+  const [showAgents, setShowAgents] = useState(false);
   const [internalHistory, setInternalHistory] = useState<string[]>([]);
   const [searchOpen, setSearchOpen] = useState(false);
+  const [searchQuery, setSearchQuery] = useState("");
+  const [activeSearchMatch, setActiveSearchMatch] = useState<SearchMatch | null>(null);
   const [thinkingExpanded, setThinkingExpanded] = useState(false);
   const [toolResultsExpanded, setToolResultsExpanded] = useState(false);
   const submittingRef = useRef(false);
@@ -185,7 +212,14 @@ export function REPL({
         setSearchOpen(true);
       }
       if (key.ctrl && _input === "t") {
-        setThinkingExpanded((prev) => !prev);
+        if (presentationMode === "codex") {
+          setToolResultsExpanded((prev) => !prev);
+        } else {
+          setThinkingExpanded((prev) => !prev);
+        }
+      }
+      if (key.ctrl && _input === "g") {
+        setShowAgents((prev) => !prev);
       }
       if (key.ctrl && _input === "o") {
         setToolResultsExpanded((prev) => !prev);
@@ -196,30 +230,103 @@ export function REPL({
   );
 
   const resolvedSegments = statusSegments ?? buildDefaultSegments(model);
-  const showWelcome = welcome && messages.length === 0 && !isLoading;
+  const showWelcome = welcome && messages.length === 0 && threadEvents.length === 0 && !isLoading;
   const showPermission = !!permissionRequest;
+  const messageAreaFlexGrow = showWelcome ? 0 : 1;
+  const codexState = useMemo(
+    () =>
+      buildCodexTimelineState({
+        events: threadEvents,
+        liveStatus: {
+          isLoading,
+          elapsedMs: streamingElapsedMs,
+          tokenCount: spinnerTokenCount,
+          verb: spinnerVerb,
+          status: spinnerStatus,
+          details: spinnerDetails,
+          running: spinnerRunning,
+          completed: spinnerCompleted,
+        },
+        messages: messages
+          .filter((message) => message.role === "user" || message.role === "assistant" || message.role === "system")
+          .map((message) => ({
+            id: message.id,
+            role: message.role,
+            text:
+              typeof message.content === "string"
+                ? message.content
+                : message.content
+                    .map((block) => ("text" in block ? block.text : ""))
+                    .join("\n"),
+          })),
+        taskSnapshots: codexTaskSnapshots,
+      }),
+    [
+      codexTaskSnapshots,
+      isLoading,
+      messages,
+      spinnerCompleted,
+      spinnerDetails,
+      spinnerRunning,
+      spinnerStatus,
+      spinnerTokenCount,
+      spinnerVerb,
+      streamingElapsedMs,
+      threadEvents,
+    ],
+  );
+  const searchContents =
+    presentationMode === "codex"
+      ? codexState.searchDocuments.map((document) => document.text)
+      : messageContents;
+  const codexSearchState = useMemo(() => {
+    if (presentationMode !== "codex" || !searchQuery || !activeSearchMatch) {
+      return undefined;
+    }
+    const doc = codexState.searchDocuments[activeSearchMatch.index];
+    if (!doc) return undefined;
+    return {
+      query: searchQuery,
+      activeDocumentId: doc.id,
+      activeExcerpt: buildSearchExcerpt(doc.text, searchQuery),
+    };
+  }, [activeSearchMatch, codexState.searchDocuments, presentationMode, searchQuery]);
 
   return (
     <Box flexDirection="column" flexGrow={1}>
-      <Box flexDirection="column" flexGrow={1}>
-        {showWelcome && <Box marginBottom={1}>{welcome}</Box>}
+      <Box flexDirection="column" flexGrow={messageAreaFlexGrow}>
+        {showWelcome && <Box marginBottom={0}>{welcome}</Box>}
 
-        <MessageList
-          messages={messages}
-          streamingContent={streamingContent}
-          streamingThinking={streamingThinking}
-          renderMessage={renderMessage}
-          allThinkingExpanded={thinkingExpanded}
-          allToolResultsExpanded={toolResultsExpanded}
+        <AgentsPanel
+          agents={agents ?? []}
+          visible={showAgents}
+          onClose={() => setShowAgents(false)}
         />
 
-        {isLoading && !streamingContent && !streamingThinking && (
+        {presentationMode === "codex" ? (
+          <CodexTimeline state={codexState} search={codexSearchState} detailsExpanded={toolResultsExpanded} />
+        ) : (
+          <MessageList
+            messages={messages}
+            streamingContent={streamingContent}
+            streamingThinking={streamingThinking}
+            streamingElapsedMs={streamingElapsedMs}
+            renderMessage={renderMessage}
+            allThinkingExpanded={thinkingExpanded}
+            allToolResultsExpanded={toolResultsExpanded}
+            searchQuery={searchQuery}
+            activeSearchMatch={activeSearchMatch}
+          />
+        )}
+
+        {presentationMode !== "codex" && isLoading && !streamingContent && !streamingThinking && (
           <Box marginTop={messages.length > 0 ? 1 : 0}>
             {spinner ?? (
               <Spinner
                 tokenCount={spinnerTokenCount}
                 verb={spinnerVerb}
                 status={spinnerStatus}
+                details={spinnerDetails}
                 running={spinnerRunning}
                 completed={spinnerCompleted}
               />
@@ -232,8 +339,10 @@ export function REPL({
         <SearchOverlay
           isOpen={searchOpen}
           onClose={() => setSearchOpen(false)}
-          onSearch={(q) => computeMatches(messageContents, q)}
-          onNavigate={() => {}}
+          onSearch={(q) => computeMatches(searchContents, q)}
+          onNavigate={setActiveSearchMatch}
+          onActiveMatchChange={setActiveSearchMatch}
+          onQueryChange={setSearchQuery}
         />
       )}
 

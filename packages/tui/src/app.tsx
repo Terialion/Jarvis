@@ -7,9 +7,9 @@ import { platform, arch, totalmem, freemem, uptime } from 'node:os';
 import { REPL } from './vendor/ui/REPL.js';
 import type { Message, MessageContent } from './vendor/ui/MessageList.js';
 import type { StatusLineSegment } from './vendor/ui/StatusLine.js';
-import { WelcomeScreen, ClawdLogo } from './vendor/ui/WelcomeScreen.js';
+import { WelcomeScreen } from './vendor/ui/WelcomeScreen.js';
 import { loadSettings, saveSettings, type UserSettings } from './settings-store.js';
-import { AgentLoop, ConversationSummarizer, TokenTracker, formatTokensCompact, parseModelName } from '@jarvis/agent';
+import { AgentLoop, AgentEventBus, ConversationSummarizer, TokenTracker, parseModelName, type ThreadEvent } from '@jarvis/agent';
 import {
   ToolRegistry,
   allBuiltinTools,
@@ -28,9 +28,11 @@ import { SubagentPool, toolWhitelistForType, type SubagentConfig } from '@jarvis
 import { MCPClient } from '@jarvis/mcp';
 import { HookRegistry } from '@jarvis/hooks';
 import { LLMProvider } from '@jarvis/agent';
-import type { TUIOptions } from './types.js';
+import type { TUIOptions, TUIDebugEvent } from './types.js';
 import type { ChatMessage } from '@jarvis/shared';
 import { formatToolLine } from './vendor/ui/tool-display.js';
+import { buildStatusSegments } from './status-segments.js';
+import type { CodexTaskSnapshot } from './presentation/codex-timeline-state.js';
 
 // ============================================================================
 // Slash command definitions
@@ -62,7 +64,7 @@ interface SlashCommandDef {
 
 function makeSysMsg(msg: string): Message {
   return {
-    id: `cmd_${Date.now()}`,
+    id: `cmd_${Date.now()}_${crypto.randomUUID().slice(0, 6)}`,
     role: 'assistant',
     content: [{ type: 'text', text: msg } as MessageContent],
     timestamp: Date.now(),
@@ -70,6 +72,18 @@ function makeSysMsg(msg: string): Message {
 }
 
 const TASK_TOOLS = new Set(['task_create', 'task_update', 'task_list']);
+
+function getGitBranch(cwd: string): string | null {
+  try {
+    return execSync('git rev-parse --abbrev-ref HEAD', {
+      cwd,
+      stdio: ['ignore', 'pipe', 'ignore'],
+      encoding: 'utf8',
+    }).trim() || null;
+  } catch {
+    return null;
+  }
+}
 
 function parseToolContent(name: string, raw: string): MessageContent | null {
   if (!TASK_TOOLS.has(name)) return null;
@@ -748,6 +762,8 @@ function formatFileChangeSummary(changes: FileChange[]): string {
 
 export function App({ options }: { options: TUIOptions }): React.ReactNode {
   const [messages, setMessages] = useState<Message[]>([]);
+  const [threadEvents, setThreadEvents] = useState<ThreadEvent[]>([]);
+  const [codexTaskSnapshots, setCodexTaskSnapshots] = useState<CodexTaskSnapshot[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const agentRef = useRef<AgentLoop | null>(null);
   const historyRef = useRef<ChatMessage[]>([]);
@@ -776,20 +792,61 @@ export function App({ options }: { options: TUIOptions }): React.ReactNode {
   const askRejectRef = useRef<((err: Error) => void) | null>(null);
   const [streamingContent, setStreamingContent] = useState<string | null>(null);
   const [streamingThinking, setStreamingThinking] = useState<string | null>(null);
+  const [elapsedMs, setElapsedMs] = useState(0);
   const [spinnerVerb, setSpinnerVerb] = useState<string | undefined>(undefined);
   const [spinnerStatus, setSpinnerStatus] = useState<string | undefined>(undefined);
+  const [spinnerDetails, setSpinnerDetails] = useState<string[]>([]);
   const [spinnerCompleted, setSpinnerCompleted] = useState<string[]>([]);
   const [spinnerRunning, setSpinnerRunning] = useState<string | undefined>(undefined);
+  const [agentEntries, setAgentEntries] = useState<import('./vendor/ui/AgentsPanel.js').AgentStatusEntry[]>([]);
+  const cwd = process.cwd();
+  const gitBranch = useMemo(() => getGitBranch(cwd), [cwd, messages.length]);
+
+  // Subscribe to agent store
+  useEffect(() => {
+    let unsub: (() => void) | undefined;
+    import('./agent-store.js').then(({ agentStore }) => {
+      unsub = agentStore.subscribe(() => {
+        setAgentEntries(agentStore.getSnapshot());
+      });
+    });
+    return () => { unsub?.(); };
+  }, []);
   const streamFlushRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const streamAccumRef = useRef<string>(''); // full accumulated content (OpenClaw replacement mode)
   const reasoningBufferRef = useRef<string>('');
   const reasoningFlushedRef = useRef(false);
   const reasoningDisplayThrottle = useRef<number>(0);
   const streamingContentRef = useRef<string | null>(null);
+  const threadEventsRef = useRef<ThreadEvent[]>([]);
+  const eventBusRef = useRef<AgentEventBus | null>(null);
+  const runStatsRef = useRef<{
+    prompt: string;
+    startedAt: number;
+    tokenEvents: number;
+    tokenChars: number;
+    reasoningEvents: number;
+    reasoningChars: number;
+    toolStarts: number;
+    toolEnds: number;
+    hadStreamingContent: boolean;
+    hadStreamingThinking: boolean;
+  } | null>(null);
+  const emitDebugEvent = useCallback((event: TUIDebugEvent) => {
+    options.debugHooks?.onEvent?.(event);
+  }, [options.debugHooks]);
+  const pushSpinnerDetail = useCallback((line: string | null) => {
+    if (!line) return;
+    setSpinnerDetails((prev) => {
+      if (prev[prev.length - 1] === line) return prev;
+      const next = [...prev, line];
+      return next.length > 6 ? next.slice(-6) : next;
+    });
+  }, []);
 
   // Commit current streaming content as an assistant message (CC/OpenClaw pattern:
   // model text between tool calls should appear as separate messages)
-  const commitStreaming = useCallback((): boolean => {
+  const commitStreaming = useCallback((): string | null => {
     const text = streamingContentRef.current;
     if (text && text.trim()) {
       const msg: Message = {
@@ -801,12 +858,12 @@ export function App({ options }: { options: TUIOptions }): React.ReactNode {
       setMessages((prev) => [...prev, msg]);
       streamingContentRef.current = null;
       setStreamingContent(null);
-      return true;
+      return text;
     }
-    return false;
+    return null;
   }, []);
 
-  const drainAndCommit = useCallback((): boolean => {
+  const drainAndCommit = useCallback((): string | null => {
     if (streamFlushRef.current) {
       clearTimeout(streamFlushRef.current);
       const chunk = streamAccumRef.current;
@@ -885,6 +942,31 @@ export function App({ options }: { options: TUIOptions }): React.ReactNode {
 
   const getAgent = useCallback((): AgentLoop => {
     if (!agentRef.current) {
+      if (!eventBusRef.current) {
+        eventBusRef.current = new AgentEventBus();
+      }
+      const eventBus = eventBusRef.current;
+      const bindProgressEvent = (eventName: string) => {
+        eventBus.on(eventName, (payload) => {
+          pushSpinnerDetail(summarizeEventProgress(eventName, payload));
+          if (eventName === 'llm:request') {
+            setSpinnerStatus('preparing the next step');
+          }
+          if (eventName === 'tool:executing') {
+            setSpinnerStatus(`using ${humanizeToolName(payload.toolName)}`);
+          }
+          if (eventName === 'turn:warning' && typeof payload.warning === 'string') {
+            setSpinnerStatus(payload.warning);
+          }
+          if (eventName === 'turn:complete' && typeof payload.stopReason === 'string') {
+            setSpinnerStatus('finalizing the response');
+          }
+        });
+      };
+      for (const eventName of ['turn:start', 'skills:matched', 'context:compressing', 'llm:request', 'llm:response', 'tool:executing', 'tool:result', 'turn:warning', 'turn:complete']) {
+        bindProgressEvent(eventName);
+      }
+
       const tools = new ToolRegistry();
       for (const tool of allBuiltinTools) {
         tools.register(tool);
@@ -914,9 +996,24 @@ export function App({ options }: { options: TUIOptions }): React.ReactNode {
         tools.register(mcpTool);
       }
 
-      // Subagent pool — wire Agent tool
+      // Subagent pool — wire Agent tool with agent store updates
       if (!poolRef.current) {
         poolRef.current = new SubagentPool();
+
+        // Wire pool status updates to agent store for TUI panel
+        poolRef.current.onStatusUpdate = (entry) => {
+          import('./agent-store.js').then(({ agentStore }) => {
+            agentStore.upsert({
+              agentId: entry.agentId,
+              status: entry.status,
+              role: entry.role ?? 'unknown',
+              depth: entry.depth ?? 0,
+              parentId: null,
+              task: entry.task,
+              startedAt: Date.now(),
+            });
+          });
+        };
         const provider = new LLMProvider({
           model: modelRef.current,
           apiKey: options.apiKey,
@@ -974,11 +1071,21 @@ export function App({ options }: { options: TUIOptions }): React.ReactNode {
         },
         maxTurns: options.maxTurns,
         systemPrompt: options.systemPrompt,
+        eventBus,
+        onThreadEvent: (event) => {
+          threadEventsRef.current.push(event);
+          setThreadEvents((prev) => [...prev, event]);
+        },
         tools,
         skillRegistry: skillsRef.current,
         skillExecutor: executorRef.current,
         tokenTracker: tokenTrackerRef.current,
         onToken: (token: string) => {
+          if (runStatsRef.current) {
+            runStatsRef.current.tokenEvents += 1;
+            runStatsRef.current.tokenChars += token.length;
+            runStatsRef.current.hadStreamingContent = true;
+          }
           // First content token: flush live reasoning as thinking block
           if (!reasoningFlushedRef.current && reasoningBufferRef.current) {
             const thinkingText = reasoningBufferRef.current;
@@ -992,7 +1099,7 @@ export function App({ options }: { options: TUIOptions }): React.ReactNode {
                 timestamp: Date.now(),
               }]);
             }
-            setSpinnerStatus(`thought for ${Math.floor(elapsedRef.current / 100) / 10}s`);
+            setSpinnerStatus('drafting the response');
           }
           // Skip DSML tool call tags leaked into visible text
           if (token.includes('｜')) return;
@@ -1012,6 +1119,11 @@ export function App({ options }: { options: TUIOptions }): React.ReactNode {
           }
         },
         onReasoningDelta: (delta: string) => {
+          if (runStatsRef.current) {
+            runStatsRef.current.reasoningEvents += 1;
+            runStatsRef.current.reasoningChars += delta.length;
+            runStatsRef.current.hadStreamingThinking = true;
+          }
           const buf = reasoningBufferRef.current + delta;
           reasoningBufferRef.current = buf.length > 262144 ? buf.slice(-262144) : buf;
           // Live thinking display: throttle React state updates (CC/OpenClaw pattern)
@@ -1029,6 +1141,15 @@ export function App({ options }: { options: TUIOptions }): React.ReactNode {
           }
         },
         onToolStart: (callId, toolName, args) => {
+          if (runStatsRef.current) {
+            runStatsRef.current.toolStarts += 1;
+          }
+          emitDebugEvent({
+            type: 'tool_started',
+            toolName,
+            callId,
+            timestamp: Date.now(),
+          });
           setSpinnerRunning(toolName);
           drainAndCommit(); // Drain flush buffer then commit text before tool
           const argRecord = typeof args === 'object' && args !== null
@@ -1048,6 +1169,17 @@ export function App({ options }: { options: TUIOptions }): React.ReactNode {
           }]);
         },
         onToolEnd: (callId, toolName, result) => {
+          if (runStatsRef.current) {
+            runStatsRef.current.toolEnds += 1;
+          }
+          emitDebugEvent({
+            type: 'tool_finished',
+            toolName,
+            callId,
+            ok: result.ok,
+            resultLength: result.content.length,
+            timestamp: Date.now(),
+          });
           setSpinnerRunning(undefined);
           setSpinnerCompleted((prev) => [...prev, toolName]);
           setMessages((prev) => prev.map((m) => {
@@ -1072,9 +1204,29 @@ export function App({ options }: { options: TUIOptions }): React.ReactNode {
 
   const onSubmit = useCallback(async (prompt: string) => {
     // Interrupt any in-progress run (supports type-ahead)
+    agentRef.current?.interrupt('superseded_by_new_prompt');
     if (abortRef.current) {
       abortRef.current.abort();
     }
+
+    const turnStartedAt = Date.now();
+    runStatsRef.current = {
+      prompt,
+      startedAt: turnStartedAt,
+      tokenEvents: 0,
+      tokenChars: 0,
+      reasoningEvents: 0,
+      reasoningChars: 0,
+      toolStarts: 0,
+      toolEnds: 0,
+      hadStreamingContent: false,
+      hadStreamingThinking: false,
+    };
+    emitDebugEvent({
+      type: 'run_started',
+      prompt,
+      timestamp: turnStartedAt,
+    });
 
     const userMsg: Message = {
       id: `msg_${Date.now()}`,
@@ -1089,6 +1241,7 @@ export function App({ options }: { options: TUIOptions }): React.ReactNode {
     streamingContentRef.current = null;
     setSpinnerVerb(undefined);
     setSpinnerStatus(undefined);
+    setSpinnerDetails([]);
     setSpinnerCompleted([]);
     setSpinnerRunning(undefined);
     streamAccumRef.current = ''; // Clear accumulated content
@@ -1105,8 +1258,10 @@ export function App({ options }: { options: TUIOptions }): React.ReactNode {
     const startTime = Date.now();
     if (elapsedTimerRef.current) clearInterval(elapsedTimerRef.current);
     elapsedRef.current = 0;
+    setElapsedMs(0);
     elapsedTimerRef.current = setInterval(() => {
       elapsedRef.current = Date.now() - startTime;
+      setElapsedMs(elapsedRef.current);
     }, 1000);
 
     try {
@@ -1128,9 +1283,12 @@ export function App({ options }: { options: TUIOptions }): React.ReactNode {
 
       // Drain and commit any remaining streaming text BEFORE building
       // the final message (so we know if text was already committed)
-      const textWasCommitted = drainAndCommit();
+      const committedStreamingText = drainAndCommit();
+      const normalizedCommittedText = committedStreamingText?.trim() ?? '';
+      const finalAnswer = typeof result.answer === 'string' ? result.answer.trim() : '';
 
       const content: MessageContent[] = [];
+      let taskSnapshot: CodexTaskSnapshot | null = null;
 
       // Show reasoning as a collapsible thinking block
       if ('reasoning' in result && typeof result.reasoning === 'string' && result.reasoning) {
@@ -1150,16 +1308,23 @@ export function App({ options }: { options: TUIOptions }): React.ReactNode {
         if (parsed) {
           if (parsed.type === 'task_result' && parsed.counts) {
             taskCountRef.current = parsed.counts;
+            taskSnapshot = {
+              turnId: result.turnId,
+              sourceId: `task_snapshot_${result.turnId}`,
+              counts: parsed.counts,
+              tasks: parsed.tasks,
+            };
+          } else {
+            content.push(parsed);
           }
-          content.push(parsed);
         }
         // Note: tool_use blocks already pushed via onToolStart/onToolEnd
         // during agent execution — skip here to avoid duplicates.
       }
 
-      // result.answer was already committed via drainAndCommit() above
-      // Only add it if streaming didn't already handle it
-      if (result.answer && !textWasCommitted) {
+      // Preserve the final answer unless the trailing streamed text already
+      // rendered the same content.
+      if (finalAnswer && finalAnswer !== normalizedCommittedText) {
         content.push({ type: 'text', text: result.answer });
       }
 
@@ -1172,29 +1337,57 @@ export function App({ options }: { options: TUIOptions }): React.ReactNode {
         });
       }
 
-      // Add elapsed time at end (CC/Codex "Churned for" pattern)
-      if (elapsedRef.current > 0) {
-        const secs = Math.floor(elapsedRef.current / 1000);
-        let elapsed: string;
-        if (secs < 60) {
-          elapsed = `${secs}s`;
-        } else if (secs < 3600) {
-          elapsed = `${Math.floor(secs / 60)}m ${(secs % 60).toString().padStart(2, '0')}s`;
-        } else {
-          elapsed = `${Math.floor(secs / 3600)}h ${Math.floor((secs % 3600) / 60)}m`;
-        }
-        content.push({ type: 'text', text: `\n\n---\n*Churned for ${elapsed}*` } as MessageContent);
-      }
-
-      if (content.length > 0 || (!textWasCommitted && result.answer)) {
+      if (content.length > 0) {
         const assistantMsg: Message = {
           id: `msg_${Date.now()}`,
           role: 'assistant',
-          content: content.length > 0 ? content : [{ type: 'text' as const, text: result.answer }],
+          content,
           timestamp: Date.now(),
         };
         setMessages((prev) => [...prev, assistantMsg]);
       }
+
+      if (taskSnapshot) {
+        setCodexTaskSnapshots((prev) => [
+          ...prev.filter((snapshot) => snapshot.turnId !== taskSnapshot!.turnId),
+          taskSnapshot!,
+        ]);
+      }
+
+      const stats = runStatsRef.current;
+      const reasoningText = typeof result.reasoning === 'string' ? result.reasoning : '';
+      const liveStreamingText = streamingContentRef.current ?? '';
+      const committedText = committedStreamingText ?? '';
+      emitDebugEvent({
+        type: 'run_completed',
+        prompt,
+        elapsedMs: Date.now() - turnStartedAt,
+        finalAnswerLength: result.answer.length,
+        finalAnswerPreview: result.answer.slice(0, 200),
+        finalAnswerTail: result.answer.slice(-200),
+        reasoningLength: reasoningText.length,
+        streamedContentLength: liveStreamingText.length,
+        committedStreamingLength: committedText.length,
+        tokenEvents: stats?.tokenEvents ?? 0,
+        tokenChars: stats?.tokenChars ?? 0,
+        reasoningEvents: stats?.reasoningEvents ?? 0,
+        reasoningChars: stats?.reasoningChars ?? 0,
+        toolStarts: stats?.toolStarts ?? 0,
+        toolEnds: stats?.toolEnds ?? 0,
+        hadStreamingContent: stats?.hadStreamingContent ?? false,
+        hadStreamingThinking: stats?.hadStreamingThinking ?? false,
+        toolResultCount: result.toolResults.length,
+        stopReason: result.stopReason,
+        turnsUsed: result.turnsUsed,
+        toolResults: result.toolResults.map((toolResult) => ({
+          name: toolResult.name,
+          ok: toolResult.ok,
+          contentLength: toolResult.content.length,
+          error: toolResult.error,
+        })),
+        newMessageCount: result.messages.length - prevLen,
+        timestamp: Date.now(),
+      });
 
       // Persist new messages from this turn to SessionStore
       historyRef.current = result.messages;
@@ -1214,17 +1407,30 @@ export function App({ options }: { options: TUIOptions }): React.ReactNode {
       }
     } catch (err) {
       const isAbort = err instanceof DOMException && err.name === 'AbortError';
+      const stats = runStatsRef.current;
+      emitDebugEvent({
+        type: 'run_failed',
+        prompt,
+        elapsedMs: Date.now() - turnStartedAt,
+        tokenEvents: stats?.tokenEvents ?? 0,
+        tokenChars: stats?.tokenChars ?? 0,
+        reasoningEvents: stats?.reasoningEvents ?? 0,
+        reasoningChars: stats?.reasoningChars ?? 0,
+        toolStarts: stats?.toolStarts ?? 0,
+        toolEnds: stats?.toolEnds ?? 0,
+        hadStreamingContent: stats?.hadStreamingContent ?? false,
+        hadStreamingThinking: stats?.hadStreamingThinking ?? false,
+        error: err instanceof Error ? err.message : String(err),
+        isAbort,
+        timestamp: Date.now(),
+      });
+      const errorContent: MessageContent = isAbort
+        ? { type: 'text', text: 'Conversation interrupted.' }
+        : { type: 'error', message: err instanceof Error ? err.message : String(err) };
       const errMsg: Message = {
         id: `msg_${Date.now()}`,
         role: 'assistant',
-        content: [
-          {
-            type: isAbort ? 'text' : 'error',
-            ...(isAbort
-              ? { text: 'Conversation interrupted.' }
-              : { message: err instanceof Error ? err.message : String(err) }),
-          },
-        ],
+        content: [errorContent],
         timestamp: Date.now(),
       };
       setMessages((prev) => [...prev, errMsg]);
@@ -1242,6 +1448,8 @@ export function App({ options }: { options: TUIOptions }): React.ReactNode {
         clearInterval(elapsedTimerRef.current);
         elapsedTimerRef.current = null;
       }
+      setElapsedMs(elapsedRef.current);
+      runStatsRef.current = null;
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [getAgent, options.model]);
@@ -1274,65 +1482,36 @@ export function App({ options }: { options: TUIOptions }): React.ReactNode {
   );
 
   const statusSegments: StatusLineSegment[] = useMemo(() => {
-    const segs: StatusLineSegment[] = [];
-    // Model name (strip [size] annotation for display)
-    const displayModel = parseModelName(modelRef.current).cleanName;
-    segs.push({ content: `model: ${displayModel}` });
-
-    // Token + context info (updated after each turn)
     const tracker = tokenTrackerRef.current;
-    if (tracker && tracker.turnCount > 0) {
-      const blended = tracker.totalBlended;
-      const pct = tracker.contextPercentRemaining;
-      segs.push({
-        content: `${formatTokensCompact(blended)} tokens (${pct}% left)`,
-      });
-    }
-
-    // Task count
-    const tc = taskCountRef.current;
-    const activeCount = tc.pending + tc.in_progress;
-    if (activeCount > 0 || tc.completed > 0) {
-      const parts: string[] = [];
-      if (tc.in_progress > 0) parts.push(`▶${tc.in_progress}`);
-      if (tc.pending > 0) parts.push(`○${tc.pending}`);
-      if (tc.completed > 0) parts.push(`✓${tc.completed}`);
-      segs.push({ content: `tasks: ${parts.join(' ')}` });
-    }
-
-    // Elapsed time
-    if (elapsedRef.current > 0) {
-      const secs = Math.floor(elapsedRef.current / 1000);
-      if (secs < 60) {
-        segs.push({ content: `${secs}s` });
-      } else if (secs < 3600) {
-        const m = Math.floor(secs / 60);
-        const s = secs % 60;
-        segs.push({ content: `${m}m ${s.toString().padStart(2, '0')}s` });
-      } else {
-        const h = Math.floor(secs / 3600);
-        const m = Math.floor((secs % 3600) / 60);
-        segs.push({ content: `${h}h ${m}m` });
-      }
-    }
-
-    return segs;
-  }, [messages.length, modelRef.current]);
+    return buildStatusSegments({
+      cwd,
+      model: parseModelName(modelRef.current).cleanName,
+      gitBranch,
+      isLoading,
+      hasQuestion: askQuestions !== null,
+      totalTokens: tracker?.turnCount ? tracker.totalBlended : undefined,
+      contextPercentRemaining: tracker?.turnCount ? tracker.contextPercentRemaining : undefined,
+      taskCounts: taskCountRef.current,
+      elapsedMs,
+      sessionId: sessionIdRef.current,
+    });
+  }, [askQuestions, cwd, elapsedMs, gitBranch, isLoading, messages.length, modelRef.current]);
 
   // Interrupt handler — cancels current agent run
   const handleInterrupt = useCallback(() => {
+    agentRef.current?.interrupt('user_interrupt');
     if (abortRef.current) {
       abortRef.current.abort();
     }
-  }, []);
+    setSpinnerStatus('stopping this turn');
+    pushSpinnerDetail('Interrupt requested');
+  }, [pushSpinnerDetail]);
 
   // Exit handler — clean shutdown (Ctrl+C double-tap or Ctrl+D)
   const handleExit = useCallback(() => {
+    agentRef.current?.interrupt('process_exit');
     if (abortRef.current) abortRef.current.abort();
     if (elapsedTimerRef.current) clearInterval(elapsedTimerRef.current);
-    if (sessionStoreRef.current) {
-      try { sessionStoreRef.current.close(); } catch { /* ignore */ }
-    }
     process.exit(0);
   }, []);
 
@@ -1354,6 +1533,14 @@ export function App({ options }: { options: TUIOptions }): React.ReactNode {
     setAskQuestions(null);
   }, []);
 
+  useEffect(() => {
+    if (messages.length === 0) {
+      threadEventsRef.current = [];
+      setThreadEvents([]);
+      setCodexTaskSnapshots([]);
+    }
+  }, [messages.length]);
+
   const askUserQuestion = askQuestions
     ? { questions: askQuestions, onSubmit: handleAskSubmit, onCancel: handleAskCancel }
     : undefined;
@@ -1361,9 +1548,13 @@ export function App({ options }: { options: TUIOptions }): React.ReactNode {
   return (
     <REPL
       messages={messages}
+      threadEvents={threadEvents}
+      codexTaskSnapshots={codexTaskSnapshots}
+      presentationMode={options.presentationMode ?? 'codex'}
       isLoading={isLoading}
       streamingContent={streamingContent}
       streamingThinking={streamingThinking}
+      streamingElapsedMs={elapsedMs}
       onSubmit={onSubmit}
       onInterrupt={handleInterrupt}
       onExit={handleExit}
@@ -1374,9 +1565,57 @@ export function App({ options }: { options: TUIOptions }): React.ReactNode {
       spinnerTokenCount={tokenTrackerRef.current?.totalBlended}
       spinnerVerb={spinnerVerb}
       spinnerStatus={spinnerStatus}
+      spinnerDetails={spinnerDetails}
       spinnerRunning={spinnerRunning}
       spinnerCompleted={spinnerCompleted}
-      welcome={<WelcomeScreen appName="Jarvis" subtitle="AI Coding Assistant" model={parseModelName(modelRef.current).cleanName} color="#00BFFF" tips={['Type a message to start', 'Use /help to see commands', 'Ctrl+C twice to exit']} />}
+      agents={agentEntries}
+      welcome={<WelcomeScreen appName="Jarvis" subtitle="AI Coding Assistant" model={parseModelName(modelRef.current).cleanName} color="#00BFFF" tips={['Send a prompt to begin', '/help for commands', 'Ctrl+C twice exits']} />}
     />
   );
+}
+
+function summarizeEventProgress(event: string, payload: Record<string, unknown>): string | null {
+  switch (event) {
+    case 'turn:start':
+      return 'Opening a new turn';
+    case 'skills:matched': {
+      const skills = Array.isArray(payload.skills) ? payload.skills : [];
+      if (skills.length === 0) return null;
+      const names = skills
+        .map((item) => (item && typeof item === 'object' ? String((item as Record<string, unknown>).name ?? '') : ''))
+        .filter(Boolean)
+        .slice(0, 3);
+      return names.length > 0 ? `Loaded context from ${names.join(', ')}` : null;
+    }
+    case 'context:compressing':
+      return 'Condensing earlier context';
+    case 'llm:request':
+      return 'Preparing the next model step';
+    case 'llm:response': {
+      const toolCallCount = typeof payload.toolCallCount === 'number' ? payload.toolCallCount : 0;
+      const contentLength = typeof payload.contentLength === 'number' ? payload.contentLength : 0;
+      if (toolCallCount > 0) return `Prepared ${toolCallCount} tool call${toolCallCount > 1 ? 's' : ''}`;
+      if (contentLength > 0) return 'Started drafting the response';
+      return 'Prepared an empty step';
+    }
+    case 'tool:executing':
+      return `Using ${humanizeToolName(payload.toolName)}`;
+    case 'tool:result': {
+      const ok = payload.ok === true;
+      const toolName = humanizeToolName(payload.toolName);
+      return ok ? `Finished ${toolName}` : `Could not use ${toolName}`;
+    }
+    case 'turn:warning':
+      return typeof payload.warning === 'string' ? payload.warning : 'Turn finished with a warning';
+    case 'turn:complete':
+      return 'Completed this turn';
+    default:
+      return null;
+  }
+}
+
+function humanizeToolName(value: unknown): string {
+  const raw = String(value ?? 'tool').trim();
+  if (!raw) return 'tool';
+  return raw.replace(/[_-]+/g, ' ');
 }

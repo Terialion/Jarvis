@@ -254,6 +254,9 @@ export class SubagentPool {
     }
   }
 
+  /** External callback for TUI agent store updates. */
+  onStatusUpdate?: (entry: { agentId: string; status: string; role?: string; depth?: number; task?: string }) => void;
+
   private _updateStatus(
     agentId: string,
     status: SubagentStatus,
@@ -264,5 +267,6 @@ export class SubagentPool {
       (handle as { status: SubagentStatus }).status = status;
     }
     this.notifications.push({ agentId, status, result });
+    this.onStatusUpdate?.({ agentId, status });
   }
 }

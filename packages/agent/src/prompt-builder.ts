@@ -6,6 +6,7 @@
 // ============================================================================
 
 import type { TurnContext } from './context.js';
+import { injectCacheBreakpoints } from './cache-strategy.js';
 
 // ============================================================================
 // System prompt sections for different verbosity levels (OpenClaw pattern)
@@ -69,19 +70,10 @@ export class PromptBuilder {
 
     const modelName = (turnContext.modelName ?? '').trim() || 'unknown';
     const systemPrompt = buildSystemPrompt(modelName);
-    const isAnthropic = (turnContext.modelProvider ?? '').toLowerCase().includes('anthropic');
 
     const messages: Array<{ role: string; content: string; tool_call_id?: string }> = [
       { role: 'system', content: systemPrompt },
     ];
-
-    // Prompt caching boundary: for Anthropic, mark everything up to this point
-    // as cacheable (system prompt + skills index won't change between turns).
-    // Inject a cache_control breakpoint on the skills index message.
-    // NOTE: only meaningful when Anthropic prompt caching is available.
-    if (isAnthropic) {
-      (messages[0] as Record<string, unknown>)['cache_control'] = { type: 'ephemeral' };
-    }
 
     // Context diff: on steady-state (non-first) turns, inject only changed settings
     // instead of re-sending full project context (Codex-style context diffing).
@@ -181,7 +173,15 @@ export class PromptBuilder {
       content: `─── current request ───\n${turnContext.userInput}`,
     });
 
-    return messages;
+    // Inject cache_control breakpoints at stable-content boundaries.
+    // System prompt, project context, skills, memory — all stable within a session.
+    // Conversation history and current request come after the last breakpoint.
+    const cachedMessages = injectCacheBreakpoints(
+      messages as Record<string, unknown>[],
+      { provider: turnContext.modelProvider, model: turnContext.modelName },
+    ) as Array<{ role: string; content: string; tool_call_id?: string }>;
+
+    return cachedMessages;
   }
 
   private _renderMemoryIndexSummary(

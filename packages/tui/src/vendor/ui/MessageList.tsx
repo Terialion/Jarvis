@@ -1,21 +1,24 @@
-import { Box, Text, Ansi } from "../ink-renderer/index.js";
+import { Ansi, Box, Text } from "../ink-renderer/index.js";
 import type React from "react";
-import { useState, useEffect } from "react";
-import { Spinner } from "./Spinner";
+import { useEffect, useState } from "react";
 import { Markdown } from "./Markdown";
+import type { SearchMatch } from "./SearchOverlay";
+import { Spinner } from "./Spinner";
+import { StreamCursor } from "./StreamCursor";
+import { formatDuration, formatToolLine } from "./tool-display";
 import { getStableKeys, getStableLineEntries } from "./utils/stableKeys";
-import { formatDuration } from "./tool-display";
 
-let _highlightFn: ((code: string, opts: { language?: string }) => string) | null | undefined;
+let highlightFn: ((code: string, opts: { language?: string }) => string) | null | undefined;
+
 async function getHighlighter(): Promise<((code: string, opts: { language?: string }) => string) | null> {
-  if (_highlightFn !== undefined) return _highlightFn;
+  if (highlightFn !== undefined) return highlightFn;
   try {
-    const mod = await import('cli-highlight');
-    _highlightFn = (mod as { highlight: (code: string, opts: { language?: string }) => string }).highlight;
+    const mod = await import("cli-highlight");
+    highlightFn = (mod as { highlight: (code: string, opts: { language?: string }) => string }).highlight;
   } catch {
-    _highlightFn = null;
+    highlightFn = null;
   }
-  return _highlightFn;
+  return highlightFn;
 }
 
 export type TaskResultItem = {
@@ -51,15 +54,6 @@ export type MessageContent =
     }
   | { type: "plan"; summary: string; steps?: PlanStep[] };
 
-/**
- * Display-oriented message type for rendering in the terminal UI.
- *
- * This type adds `id` and `timestamp` fields for UI purposes and supports
- * rich `MessageContent[]` for rendering tool calls, diffs, code blocks, etc.
- * It is distinct from the protocol-level `Message` type in
- * `@claude-code-kit/agent`, which represents raw LLM conversation messages.
- * The `useAgent` hook handles conversion between the two formats automatically.
- */
 export type Message = {
   id: string;
   role: "user" | "assistant" | "system";
@@ -71,29 +65,184 @@ export type MessageListProps = {
   messages: Message[];
   streamingContent?: string | null;
   streamingThinking?: string | null;
+  streamingElapsedMs?: number;
   renderMessage?: (message: Message) => React.ReactNode;
   allThinkingExpanded?: boolean;
   allToolResultsExpanded?: boolean;
+  searchQuery?: string;
+  activeSearchMatch?: SearchMatch | null;
 };
 
 const ROLE_CONFIG = {
-  user: { icon: "\u276F", label: "You", color: "cyan" as const },
-  assistant: { icon: "\u25CF", label: "Jarvis", color: "#DA7756" as const },
-  system: { icon: "\u273B", label: "System", color: undefined },
+  user: { icon: ">", label: "You", color: "cyan" as const, railColor: "#1D6F8C" },
+  assistant: { icon: "o", label: "Jarvis", color: "#DA7756" as const, railColor: "#7C4A39" },
+  system: { icon: "-", label: "System", color: undefined, railColor: "#5C6470" },
 } as const;
 
-const GUTTER = "\u23BF"; // ⎿
+const RAIL_MARK = "|";
+const GUTTER = ">";
+const CARD_BG = "#1F2530";
+const CARD_BG_SOFT = "#232A35";
+const CARD_BG_SUCCESS = "#1D2D25";
+const CARD_BG_ERROR = "#342224";
+const SEARCH_BG = "#1A2533";
+
+function parseToolArgs(input: string): Record<string, unknown> | undefined {
+  const trimmed = input.trim();
+  if (!trimmed.startsWith("{") && !trimmed.startsWith("[")) return undefined;
+  try {
+    const parsed = JSON.parse(trimmed) as Record<string, unknown>;
+    return parsed && typeof parsed === "object" ? parsed : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function formatElapsed(elapsedMs?: number): string | null {
+  if (!elapsedMs || elapsedMs <= 0) return null;
+  const seconds = Math.floor(elapsedMs / 1000);
+  if (seconds < 60) return `${seconds}s`;
+  if (seconds < 3600) {
+    const minutes = Math.floor(seconds / 60);
+    const remainingSeconds = seconds % 60;
+    return `${minutes}m ${remainingSeconds.toString().padStart(2, "0")}s`;
+  }
+  const hours = Math.floor(seconds / 3600);
+  const minutes = Math.floor((seconds % 3600) / 60);
+  return `${hours}h ${minutes}m`;
+}
+
+function cleanProgressLine(line: string): string {
+  return line
+    .replace(/```/g, "")
+    .replace(/^[-*+\d.)\s>]+/, "")
+    .replace(/[*_`#]/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+export function extractProgressLines(text: string, limit = 4): string[] {
+  const fragments = text
+    .replace(/\r/g, "")
+    .split("\n")
+    .flatMap((line) =>
+      line
+        .split(/(?<=[.!?。！？])\s+/)
+        .map((part) => cleanProgressLine(part))
+        .filter(Boolean),
+    );
+
+  const deduped: string[] = [];
+  for (const fragment of fragments) {
+    if (fragment.length < 8) continue;
+    if (deduped[deduped.length - 1] !== fragment) {
+      deduped.push(fragment);
+    }
+  }
+
+  return deduped.slice(-limit);
+}
+
+export function summarizeToolUse(toolName: string, input: string): string {
+  return formatToolLine(toolName, parseToolArgs(input)) || input || toolName;
+}
+
+function getMessagePlainText(message: Message): string {
+  if (typeof message.content === "string") {
+    return message.content;
+  }
+  return message.content
+    .map((block) => {
+      if ("text" in block) return block.text;
+      if (block.type === "code") return block.code;
+      if (block.type === "error") return `${block.message} ${block.details ?? ""}`.trim();
+      if (block.type === "task_result") return block.tasks.map((task) => task.subject).join(" ");
+      if (block.type === "plan") return `${block.summary} ${(block.steps ?? []).map((step) => step.step).join(" ")}`.trim();
+      if ("input" in block) return `${block.input} ${block.result ?? ""}`.trim();
+      return "";
+    })
+    .join(" ");
+}
+
+export function buildSearchExcerpt(message: Message, query: string): string | null {
+  if (!query) return null;
+  const text = getMessagePlainText(message).replace(/\s+/g, " ").trim();
+  if (!text) return null;
+  const lowerText = text.toLowerCase();
+  const lowerQuery = query.toLowerCase();
+  const matchIndex = lowerText.indexOf(lowerQuery);
+  if (matchIndex === -1) return null;
+  const start = Math.max(0, matchIndex - 24);
+  const end = Math.min(text.length, matchIndex + query.length + 24);
+  const prefix = start > 0 ? "..." : "";
+  const suffix = end < text.length ? "..." : "";
+  return `${prefix}${text.slice(start, end)}${suffix}`;
+}
+
+function MessageRail({
+  color,
+  label,
+  body,
+  isActiveSearchHit = false,
+  searchExcerpt,
+}: {
+  color?: string;
+  label: React.ReactNode;
+  body: React.ReactNode;
+  isActiveSearchHit?: boolean;
+  searchExcerpt?: string | null;
+}): React.ReactNode {
+  return (
+    <Box flexDirection="row" marginTop={1} backgroundColor={isActiveSearchHit ? SEARCH_BG : undefined}>
+      <Box marginRight={1}>
+        <Text color={color}>{RAIL_MARK}</Text>
+      </Box>
+      <Box flexDirection="column" flexGrow={1}>
+        <Box marginBottom={1}>{label}</Box>
+        {searchExcerpt && (
+          <Box marginBottom={1}>
+            <Text dimColor color="cyan">Search hit | {searchExcerpt}</Text>
+          </Box>
+        )}
+        {body}
+      </Box>
+    </Box>
+  );
+}
+
+function BlockShell({
+  title,
+  titleColor,
+  backgroundColor = CARD_BG,
+  children,
+}: {
+  title: React.ReactNode;
+  titleColor?: string;
+  backgroundColor?: string;
+  children?: React.ReactNode;
+}): React.ReactNode {
+  return (
+    <Box flexDirection="column" marginLeft={2}>
+      <Box flexDirection="column" backgroundColor={backgroundColor} paddingLeft={1} paddingRight={1}>
+        <Box marginBottom={children ? 1 : 0}>
+          <Text dimColor>{GUTTER} </Text>
+          <Text color={titleColor} bold>{title}</Text>
+        </Box>
+        {children}
+      </Box>
+    </Box>
+  );
+}
 
 function TextBlock({ text, dim }: { text: string; dim?: boolean }): React.ReactNode {
-  const lines = getStableLineEntries(text, "text");
   return (
-    <>
-      {lines.map(({ key, line }) => (
-        <Box key={key} marginLeft={2}>
-          <Text dimColor={dim}>{line}</Text>
-        </Box>
-      ))}
-    </>
+    <Box marginLeft={2}>
+      {dim ? (
+        <Text dimColor>{text}</Text>
+      ) : (
+        <Markdown>{text}</Markdown>
+      )}
+    </Box>
   );
 }
 
@@ -106,87 +255,57 @@ function ToolUseBlock({
 }): React.ReactNode {
   const [localExpanded, setLocalExpanded] = useState(false);
   const expanded = allExpanded ?? localExpanded;
-
+  const label = summarizeToolUse(content.toolName, content.input);
   const inputLines = getStableLineEntries(content.input, `${content.toolName}:input`);
-  const resultLines =
-    content.result != null
-      ? getStableLineEntries(content.result, `${content.toolName}:result`)
-      : [];
-  const statusColor =
-    content.status === "error" ? "red" : content.status === "success" ? "green" : undefined;
+  const resultLines = content.result ? getStableLineEntries(content.result, `${content.toolName}:result`) : [];
+  const backgroundColor =
+    content.status === "success" ? CARD_BG_SUCCESS : content.status === "error" ? CARD_BG_ERROR : CARD_BG_SOFT;
 
-  const bgColor = content.status === 'running' ? '#1A2A33'
-    : content.status === 'success' ? '#1A2D1F'
-    : content.status === 'error' ? '#2F1A1A'
-    : undefined;
-
-  const isRunning = content.status === "running";
-  const hasResult = content.result != null;
-
-  // Collapsed: show summary line only (like openclaw's chat-tool-msg-summary)
-  if (!expanded && !isRunning) {
-    const displayLabel = content.input || content.toolName;
+  if (!expanded && content.status !== "running") {
     return (
-      <Box marginLeft={2}>
-        <Box
-          backgroundColor={bgColor}
-          paddingLeft={1}
-          paddingRight={1}
-          onClick={() => setLocalExpanded(true)}
-        >
-          <Text dimColor>{GUTTER} </Text>
-          {content.status === 'success' && <Text color="green">{'[OK] '}</Text>}
-          {content.status === 'error' && <Text color="red">{'[FAIL] '}</Text>}
-          <Text>{displayLabel}</Text>
-          {content.durationMs != null && (
-            <Text dimColor> ({formatDuration(content.durationMs)})</Text>
-          )}
-          <Text dimColor> (Ctrl+O to expand)</Text>
+      <BlockShell
+        title={label}
+        titleColor={content.status === "error" ? "#F07C82" : "#E4E7EC"}
+        backgroundColor={backgroundColor}
+      >
+        <Box onClick={() => setLocalExpanded(true)}>
+          {content.durationMs != null && <Text dimColor>{formatDuration(content.durationMs)}</Text>}
+          <Text dimColor>{content.durationMs != null ? " | " : ""}</Text>
+          <Text dimColor>{content.status === "error" ? "Ctrl+O to inspect failure" : "Ctrl+O to inspect"}</Text>
         </Box>
-      </Box>
+      </BlockShell>
     );
   }
 
   return (
-    <Box flexDirection="column" marginLeft={2}>
-      <Box
-        backgroundColor={bgColor}
-        paddingLeft={1}
-        paddingRight={1}
-        flexDirection="column"
-      >
-        <Box onClick={() => setLocalExpanded((c) => !c)}>
-          <Text dimColor>{GUTTER} </Text>
-          <Text bold>{content.input || content.toolName}</Text>
-          <Text dimColor> {expanded ? "(click to collapse)" : ""}</Text>
-        </Box>
-        {inputLines.map(({ key, line }) => (
-          <Box key={key} marginLeft={4}>
-            <Text dimColor>{line}</Text>
-          </Box>
-        ))}
-        {isRunning && (
-          <Box marginLeft={4}>
-            <Spinner label={content.toolName} showElapsed />
-          </Box>
-        )}
-        {hasResult && (
-          <Box flexDirection="column" marginLeft={4}>
-            <Box>
-              <Text dimColor>{GUTTER} </Text>
-              <Text color={statusColor}>result ({content.status ?? "done"})</Text>
-            </Box>
-            {resultLines.map(({ key, line }) => (
-              <Box key={key} marginLeft={6}>
-                <Text color={statusColor} dimColor={!statusColor}>
-                  {line}
-                </Text>
-              </Box>
-            ))}
-          </Box>
-        )}
+    <BlockShell title={label} titleColor="#E4E7EC" backgroundColor={backgroundColor}>
+      <Box onClick={() => setLocalExpanded((value) => !value)} marginBottom={1}>
+        <Text dimColor>{expanded ? "expanded" : "collapsed"}</Text>
+        <Text dimColor> | Ctrl+O toggles details</Text>
       </Box>
-    </Box>
+      {inputLines.map(({ key, line }) => (
+        <Box key={key} marginLeft={2}>
+          <Text dimColor>{line}</Text>
+        </Box>
+      ))}
+      {content.status === "running" && (
+        <Box marginLeft={2}>
+          <Spinner verb={label} showElapsed />
+        </Box>
+      )}
+      {content.result && (
+        <Box flexDirection="column" marginTop={1} marginLeft={2}>
+          <Text color={content.status === "error" ? "#F07C82" : "#89D99D"}>Result</Text>
+          {resultLines.map(({ key, line }) => (
+            <Box key={key} marginLeft={2}>
+              <Text dimColor={content.status !== "error"} color={content.status === "error" ? "#F07C82" : undefined}>
+                {line}
+              </Text>
+            </Box>
+          ))}
+        </Box>
+      )}
+    </BlockShell>
   );
 }
 
@@ -199,197 +318,148 @@ function ThinkingBlock({
 }): React.ReactNode {
   const [localCollapsed, setLocalCollapsed] = useState(content.collapsed ?? true);
   const collapsed = allExpanded !== undefined ? !allExpanded : localCollapsed;
+  const previewLines = extractProgressLines(content.text, 2);
+  const preview = previewLines.join(" ").slice(0, 96);
   const lines = getStableLineEntries(content.text, "thinking");
 
   return (
-    <Box flexDirection="column" marginLeft={2}>
-      {/* eslint-disable-next-line react/no-unknown-property */}
-      <Box onClick={() => setLocalCollapsed((c) => !c)}>
-        <Text color="#DA7756">{"\u273B"} </Text>
-        <Text dimColor>
-          {collapsed ? `Reasoning (Ctrl+T to expand)` : `Reasoning (Ctrl+T to collapse)`}
-        </Text>
+    <BlockShell title={collapsed ? "Reasoning" : "Reasoning details"} backgroundColor={CARD_BG_SOFT}>
+      <Box onClick={() => setLocalCollapsed((value) => !value)} marginBottom={!collapsed ? 1 : 0}>
+        <Text dimColor>{collapsed ? (preview || "Model is reasoning") : "Ctrl+T to collapse"}</Text>
       </Box>
       {!collapsed &&
         lines.map(({ key, line }) => (
-          <Box key={key} marginLeft={4}>
+          <Box key={key} marginLeft={2}>
             <Text dimColor>{line}</Text>
           </Box>
         ))}
-    </Box>
+    </BlockShell>
   );
 }
 
-function DiffBlock({
-  content,
-}: {
-  content: Extract<MessageContent, { type: "diff" }>;
-}): React.ReactNode {
+function DiffBlock({ content }: { content: Extract<MessageContent, { type: "diff" }> }): React.ReactNode {
   const diffLines = getStableLineEntries(content.diff, `${content.filename}:diff`);
 
   return (
-    <Box flexDirection="column" marginLeft={2}>
-      <Box>
-        <Text dimColor>{GUTTER} </Text>
-        <Text bold>{content.filename}</Text>
-      </Box>
+    <BlockShell title={content.filename} backgroundColor={CARD_BG_SOFT}>
       {diffLines.map(({ key, line }) => {
         let color: string | undefined;
         if (line.startsWith("+")) color = "green";
         else if (line.startsWith("-")) color = "red";
         else if (line.startsWith("@")) color = "cyan";
         return (
-          <Box key={key} marginLeft={4}>
+          <Box key={key} marginLeft={2}>
             <Text color={color} dimColor={!color}>
               {line}
             </Text>
           </Box>
         );
       })}
-    </Box>
+    </BlockShell>
   );
 }
 
-function CodeBlock({
-  content,
-}: {
-  content: Extract<MessageContent, { type: "code" }>;
-}): React.ReactNode {
+function CodeBlock({ content }: { content: Extract<MessageContent, { type: "code" }> }): React.ReactNode {
   const language = content.language ?? "";
   const [highlighted, setHighlighted] = useState<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
     getHighlighter().then((hl) => {
-      if (cancelled || !hl) return;
+      if (!hl || cancelled) return;
       try {
         const result = hl(content.code, { language: language || undefined });
         if (!cancelled) setHighlighted(result);
-      } catch { /* fallback to plain text */ }
+      } catch {
+        // Fall back to plain text.
+      }
     });
-    return () => { cancelled = true; };
+    return () => {
+      cancelled = true;
+    };
   }, [content.code, language]);
 
-  // Show highlighted ANSI text
-  if (highlighted) {
-    return (
-      <Box flexDirection="column" marginLeft={2}>
-        <Text dimColor>```{language}</Text>
+  return (
+    <BlockShell title={language ? `Code | ${language}` : "Code"} backgroundColor={CARD_BG_SOFT}>
+      {highlighted ? (
         <Box marginLeft={2}>
           <Ansi>{highlighted}</Ansi>
         </Box>
-        <Text dimColor>```</Text>
-      </Box>
-    );
-  }
-
-  // Fallback: plain text
-  const codeLines = getStableLineEntries(content.code, `code:${language || "plain"}`);
-  return (
-    <Box flexDirection="column" marginLeft={2}>
-      <Text dimColor>```{language}</Text>
-      {codeLines.map(({ key, line }) => (
-        <Box key={key} marginLeft={2}>
-          <Text>{line}</Text>
-        </Box>
-      ))}
-      <Text dimColor>```</Text>
-    </Box>
+      ) : (
+        getStableLineEntries(content.code, `code:${language || "plain"}`).map(({ key, line }) => (
+          <Box key={key} marginLeft={2}>
+            <Text>{line}</Text>
+          </Box>
+        ))
+      )}
+    </BlockShell>
   );
 }
 
-function ErrorBlock({
-  content,
-}: {
-  content: Extract<MessageContent, { type: "error" }>;
-}): React.ReactNode {
+function ErrorBlock({ content }: { content: Extract<MessageContent, { type: "error" }> }): React.ReactNode {
   const detailLines = content.details ? getStableLineEntries(content.details, "error-details") : [];
 
   return (
-    <Box flexDirection="column" marginLeft={2}>
-      <Box>
-        <Text color="red">{"\u2716"} Error: </Text>
-        <Text color="red">{content.message}</Text>
-      </Box>
+    <BlockShell title={`Error | ${content.message}`} titleColor="#F07C82" backgroundColor={CARD_BG_ERROR}>
       {detailLines.map(({ key, line }) => (
-        <Box key={key} marginLeft={4}>
-          <Text color="red" dimColor>
-            {line}
-          </Text>
+        <Box key={key} marginLeft={2}>
+          <Text color="#F7C4C7" dimColor>{line}</Text>
         </Box>
       ))}
-    </Box>
+    </BlockShell>
   );
 }
 
 const STATUS_ICONS: Record<string, string> = {
-  pending: "⏳", // ⏳
-  in_progress: "\u{1F504}", // 🔄
-  completed: "✅", // ✅
+  pending: "o",
+  in_progress: "~",
+  completed: "x",
 };
 
-function TaskBlock({
-  content,
-}: {
-  content: Extract<MessageContent, { type: "task_result" }>;
-}): React.ReactNode {
-  const { tasks, counts } = content;
-  const summaryParts: string[] = [];
-  if (counts.pending > 0) summaryParts.push(`${counts.pending} pending`);
-  if (counts.in_progress > 0) summaryParts.push(`${counts.in_progress} in progress`);
-  if (counts.completed > 0) summaryParts.push(`${counts.completed} completed`);
+function TaskBlock({ content }: { content: Extract<MessageContent, { type: "task_result" }> }): React.ReactNode {
+  const summary = [
+    content.counts.pending > 0 ? `${content.counts.pending} pending` : null,
+    content.counts.in_progress > 0 ? `${content.counts.in_progress} in progress` : null,
+    content.counts.completed > 0 ? `${content.counts.completed} completed` : null,
+  ].filter(Boolean).join(" | ");
 
   return (
-    <Box flexDirection="column" marginLeft={2}>
-      <Box>
-        <Text dimColor>{GUTTER} </Text>
-        <Text bold>Tasks</Text>
-        {summaryParts.length > 0 && (
-          <Text dimColor> ({summaryParts.join(", ")})</Text>
-        )}
-      </Box>
-      {tasks.map((task) => (
-        <Box key={task.id} marginLeft={4}>
-          <Text>{STATUS_ICONS[task.status] ?? "  "} </Text>
+    <BlockShell title={summary ? `Tasks | ${summary}` : "Tasks"} backgroundColor={CARD_BG_SOFT}>
+      {content.tasks.map((task) => (
+        <Box key={task.id} marginLeft={2}>
+          <Text>{STATUS_ICONS[task.status] ?? " "}</Text>
+          <Text> </Text>
           <Text dimColor={task.status === "completed"}>{task.subject}</Text>
         </Box>
       ))}
-    </Box>
+    </BlockShell>
   );
 }
 
-function PlanBlock({
-  content,
-}: {
-  content: Extract<MessageContent, { type: "plan" }>;
-}): React.ReactNode {
+function PlanBlock({ content }: { content: Extract<MessageContent, { type: "plan" }> }): React.ReactNode {
   const steps = content.steps ?? [];
+
   return (
-    <Box flexDirection="column" marginLeft={2}>
-      <Box>
-        <Text dimColor>{GUTTER} </Text>
-        <Text bold color="#DA7756">Plan: </Text>
-        <Text color="#DA7756">{content.summary}</Text>
-      </Box>
-      {steps.map((step, i) => (
-        <Box key={`plan-step-${i}`} marginLeft={4} flexDirection="column">
+    <BlockShell title={`Plan | ${content.summary}`} titleColor="#DA7756" backgroundColor={CARD_BG_SOFT}>
+      {steps.map((step, index) => (
+        <Box key={`plan-step-${index}`} marginLeft={2} flexDirection="column" marginBottom={1}>
           <Box>
-            <Text dimColor>{String(i + 1)}. </Text>
+            <Text dimColor>{index + 1}. </Text>
             <Text>{step.step}</Text>
           </Box>
           {step.files && step.files.length > 0 && (
-            <Box marginLeft={4}>
-              <Text dimColor>files: {step.files.join(", ")}</Text>
+            <Box marginLeft={3}>
+              <Text dimColor>files | {step.files.join(", ")}</Text>
             </Box>
           )}
           {step.verification && (
-            <Box marginLeft={4}>
-              <Text dimColor>verify: {step.verification}</Text>
+            <Box marginLeft={3}>
+              <Text dimColor>verify | {step.verification}</Text>
             </Box>
           )}
         </Box>
       ))}
-    </Box>
+    </BlockShell>
   );
 }
 
@@ -404,7 +474,7 @@ function ContentBlock({
 }): React.ReactNode {
   switch (block.type) {
     case "text":
-      return <Markdown>{block.text}</Markdown>;
+      return <TextBlock text={block.text} />;
     case "tool_use":
       return <ToolUseBlock content={block} allExpanded={allToolResultsExpanded} />;
     case "thinking":
@@ -433,32 +503,26 @@ function MessageItem({
   renderMessage,
   allThinkingExpanded,
   allToolResultsExpanded,
+  isActiveSearchHit,
+  searchQuery,
 }: {
   message: Message;
   renderMessage?: (message: Message) => React.ReactNode;
   allThinkingExpanded?: boolean;
   allToolResultsExpanded?: boolean;
+  isActiveSearchHit?: boolean;
+  searchQuery?: string;
 }): React.ReactNode {
-  if (renderMessage) {
-    return renderMessage(message);
-  }
+  if (renderMessage) return renderMessage(message);
 
   const config = ROLE_CONFIG[message.role];
   const isSystem = message.role === "system";
+  const searchExcerpt = isActiveSearchHit && searchQuery ? buildSearchExcerpt(message, searchQuery) : null;
 
   if (typeof message.content === "string") {
     const textLines = getStableLineEntries(message.content, `${message.id}:message`);
-    return (
+    const body = (
       <Box flexDirection="column">
-        <Box>
-          <Text color={config.color} dimColor={isSystem}>
-            {config.icon}
-          </Text>
-          <Text color={config.color} dimColor={isSystem} bold={!isSystem}>
-            {" "}
-            {config.label}
-          </Text>
-        </Box>
         {textLines.map(({ key, line }) => (
           <Box key={key} marginLeft={2}>
             <Text dimColor={isSystem}>{line}</Text>
@@ -466,24 +530,29 @@ function MessageItem({
         ))}
       </Box>
     );
+
+    return (
+      <MessageRail
+        color={config.railColor}
+        label={
+          <Box>
+            <Text color={config.color} dimColor={isSystem}>{config.icon}</Text>
+            <Text color={config.color} dimColor={isSystem} bold={!isSystem}> {config.label}</Text>
+          </Box>
+        }
+        body={body}
+        isActiveSearchHit={isActiveSearchHit}
+        searchExcerpt={searchExcerpt}
+      />
+    );
   }
 
   const blockKeys = getStableKeys(message.content, getMessageContentFingerprint);
-
-  return (
+  const body = (
     <Box flexDirection="column">
-      <Box>
-        <Text color={config.color} dimColor={isSystem}>
-          {config.icon}
-        </Text>
-        <Text color={config.color} dimColor={isSystem} bold={!isSystem}>
-          {" "}
-          {config.label}
-        </Text>
-      </Box>
-      {message.content.map((block, i) => (
+      {message.content.map((block, index) => (
         <ContentBlock
-          key={blockKeys[i]}
+          key={blockKeys[index]}
           block={block}
           allThinkingExpanded={allThinkingExpanded}
           allToolResultsExpanded={allToolResultsExpanded}
@@ -491,71 +560,127 @@ function MessageItem({
       ))}
     </Box>
   );
+
+  return (
+    <MessageRail
+      color={config.railColor}
+      label={
+        <Box>
+          <Text color={config.color} dimColor={isSystem}>{config.icon}</Text>
+          <Text color={config.color} dimColor={isSystem} bold={!isSystem}> {config.label}</Text>
+        </Box>
+      }
+      body={body}
+      isActiveSearchHit={isActiveSearchHit}
+      searchExcerpt={searchExcerpt}
+    />
+  );
+}
+
+function LiveReasoningBlock({
+  text,
+  elapsedMs,
+  expanded,
+}: {
+  text: string;
+  elapsedMs?: number;
+  expanded?: boolean;
+}): React.ReactNode {
+  const progressLines = extractProgressLines(text, expanded ? 8 : 4);
+  const rawLines = getStableLineEntries(text.slice(-4096), "streaming-thinking");
+  const thoughtLabel = formatElapsed(elapsedMs);
+  const title = thoughtLabel ? `Thought for ${thoughtLabel}` : "Thinking";
+  const fallbackLines = rawLines.map(({ line }) => line.trim()).filter(Boolean).slice(-4);
+  const bodyLines = expanded
+    ? rawLines.map(({ line }) => line).filter((line) => line.trim())
+    : (progressLines.length > 0 ? progressLines : fallbackLines);
+
+  return (
+    <BlockShell title={title} backgroundColor={CARD_BG_SOFT}>
+      <Box marginBottom={bodyLines.length > 0 ? 1 : 0}>
+        <Text dimColor>{expanded ? "Ctrl+T to collapse" : "Ctrl+T to expand live reasoning"}</Text>
+      </Box>
+      {bodyLines.map((line, index) => (
+        <Box key={`live-thinking-${index}`} marginLeft={2}>
+          <Text dimColor>{expanded ? line : `- ${line}`}</Text>
+        </Box>
+      ))}
+    </BlockShell>
+  );
 }
 
 export function MessageList({
   messages,
   streamingContent,
   streamingThinking,
+  streamingElapsedMs,
   renderMessage,
   allThinkingExpanded,
   allToolResultsExpanded,
+  searchQuery,
+  activeSearchMatch,
 }: MessageListProps): React.ReactNode {
-  const streamingLines =
-    streamingContent != null && streamingContent.length > 0
-      ? getStableLineEntries(streamingContent, "streaming")
-      : [];
-  const thinkingLines =
-    streamingThinking != null && streamingThinking.length > 0
-      ? getStableLineEntries(streamingThinking.slice(-4096), "streaming-thinking")
-      : [];
+  const streamingLines = streamingContent ? getStableLineEntries(streamingContent, "streaming") : [];
 
   return (
     <Box flexDirection="column">
-      {messages.map((message, i) => (
-        <Box key={message.id} flexDirection="column" marginTop={i > 0 ? 1 : 0}>
-          <MessageItem
-            message={message}
-            renderMessage={renderMessage}
-            allThinkingExpanded={allThinkingExpanded}
-            allToolResultsExpanded={allToolResultsExpanded}
-          />
-        </Box>
+      {messages.map((message, index) => (
+        <MessageItem
+          key={message.id}
+          message={message}
+          renderMessage={renderMessage}
+          allThinkingExpanded={allThinkingExpanded}
+          allToolResultsExpanded={allToolResultsExpanded}
+          isActiveSearchHit={activeSearchMatch?.index === index}
+          searchQuery={searchQuery}
+        />
       ))}
 
-      {/* Live thinking display — grows as model reasons (CC/OpenClaw pattern) */}
-      {thinkingLines.length > 0 && (
-        <Box flexDirection="column" marginTop={messages.length > 0 ? 1 : 0} marginLeft={2}>
-          <Box>
-            <Text dimColor>{GUTTER} </Text>
-            <Text color="#DA7756">{"✻"} Reasoning</Text>
-          </Box>
-          {thinkingLines.slice(-8).map(({ key, line }) => (
-            <Box key={key} marginLeft={4}>
-              <Text dimColor>{line}</Text>
+      {streamingThinking && streamingThinking.trim() && (
+        <MessageRail
+          color={ROLE_CONFIG.assistant.railColor}
+          label={
+            <Box>
+              <Text color={ROLE_CONFIG.assistant.color}>{ROLE_CONFIG.assistant.icon}</Text>
+              <Text color={ROLE_CONFIG.assistant.color} bold> Jarvis</Text>
+              <Text dimColor> | working</Text>
             </Box>
-          ))}
-        </Box>
+          }
+          body={
+            <LiveReasoningBlock
+              text={streamingThinking}
+              elapsedMs={streamingElapsedMs}
+              expanded={allThinkingExpanded}
+            />
+          }
+        />
       )}
 
-      {streamingContent != null && streamingContent.length > 0 && (
-        <Box flexDirection="column" marginTop={messages.length > 0 ? 1 : 0}>
-          <Box>
-            <Text color="#DA7756">{"\u25CF"}</Text>
-            <Text color="#DA7756" bold>
-              {" "}
-              Jarvis
-            </Text>
-          </Box>
-          {streamingLines.map(({ key, line }, i) => (
-            <Box key={key} marginLeft={2}>
-              <Text>
-                {line}
-                {i === streamingLines.length - 1 && <Text color="#DA7756">{"\u2588"}</Text>}
-              </Text>
+      {streamingLines.length > 0 && (
+        <MessageRail
+          color={ROLE_CONFIG.assistant.railColor}
+          label={
+            <Box>
+              <Text color={ROLE_CONFIG.assistant.color}>{ROLE_CONFIG.assistant.icon}</Text>
+              <Text color={ROLE_CONFIG.assistant.color} bold> Jarvis</Text>
+              <Text dimColor> | drafting reply</Text>
             </Box>
-          ))}
-        </Box>
+          }
+          body={
+            <Box marginLeft={2} flexDirection="column">
+              {streamingLines.map(({ key, line }, index) => (
+                <Box key={key}>
+                  <Text>
+                    {line}
+                    {index === streamingLines.length - 1 && (
+                      <StreamCursor visible streaming color="#DA7756" />
+                    )}
+                  </Text>
+                </Box>
+              ))}
+            </Box>
+          }
+        />
       )}
     </Box>
   );

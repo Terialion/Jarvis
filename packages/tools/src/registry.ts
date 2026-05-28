@@ -6,6 +6,7 @@
 export interface ToolContext {
   taskId?: string;
   sessionId?: string;
+  signal?: AbortSignal;
 }
 
 /** A tool handler function. Returns a JSON string (or Promise<string> for async). */

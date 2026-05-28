@@ -202,7 +202,7 @@ function parseFinalTag(tagText: string): FinalTagMatch | null {
   return { isClose: false, isSelfClosing, index: 0, text: tagText };
 }
 
-function findFinalTagMatches(text: string): Required<Omit<FinalTagMatch, 'index'>> & { index: number; text: string }[] {
+function findFinalTagMatches(text: string): (Required<Omit<FinalTagMatch, 'index'>> & { index: number; text: string })[] {
   const matches: (Required<Omit<FinalTagMatch, 'index'>> & { index: number; text: string })[] = [];
   const re = /<[^<>]*>/g;
   for (const match of text.matchAll(re)) {

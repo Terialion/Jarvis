@@ -17,11 +17,9 @@ export type WelcomeScreenProps = {
 export function ArcReactorLogo({ color = DEFAULT_COLOR }: { color?: string }): React.ReactNode {
   return (
     <Box flexDirection="column">
-      <Text color={color}>{"   ╭─────────╮"}</Text>
-      <Text color={color}>{"  ╱  ▗▖  ▗▖  ╲"}</Text>
-      <Text color={color}>{"  │   ◈▽◈   │"}</Text>
-      <Text color={color}>{"  ╲  ▝▖  ▝▖  ╱"}</Text>
-      <Text color={color}>{"   ╰─────────╯"}</Text>
+      <Text color={color}>{"  <>  "}</Text>
+      <Text color={color}>{" <##> "}</Text>
+      <Text color={color}>{"  <>  "}</Text>
     </Box>
   );
 }
@@ -44,10 +42,10 @@ export function WelcomeScreen({
   const tipKeys = tips ? getStableKeys(tips, (tip) => tip) : [];
 
   return (
-    <Box flexDirection="column" gap={1} marginTop={1} marginLeft={1}>
-      <Box flexDirection="row" gap={2} alignItems="flex-start">
+    <Box flexDirection="column" marginTop={1} marginLeft={1}>
+      <Box flexDirection="row" gap={2} alignItems="center">
         {logoNode}
-        <Box flexDirection="column" justifyContent="center">
+        <Box flexDirection="column">
           <Box flexDirection="row" gap={1}>
             <Text bold color={color}>
               {appName}
@@ -60,10 +58,12 @@ export function WelcomeScreen({
       </Box>
 
       {tips && tips.length > 0 && (
-        <Box flexDirection="column" gap={0}>
-          <Text dimColor>Tips:</Text>
-          {tips.map((tip, i) => (
-            <Text key={tipKeys[i]} dimColor>{`  - ${tip}`}</Text>
+        <Box flexDirection="row" marginTop={1}>
+          {tips.map((tip, index) => (
+            <Box key={tipKeys[index]} flexDirection="row">
+              {index > 0 && <Text dimColor> · </Text>}
+              <Text dimColor>{tip}</Text>
+            </Box>
           ))}
         </Box>
       )}

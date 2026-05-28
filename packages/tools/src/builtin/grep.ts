@@ -59,10 +59,17 @@ async function walkFiles(
   globPattern: string | undefined,
   results: string[],
   maxResults: number = 10_000,
+  signal?: AbortSignal,
 ): Promise<void> {
+  if (signal?.aborted) {
+    throw new Error('Tool interrupted');
+  }
   try {
     const entries = await readdir(dir, { withFileTypes: true });
     for (const entry of entries) {
+      if (signal?.aborted) {
+        throw new Error('Tool interrupted');
+      }
       if (results.length >= maxResults) return;
       const fullPath = join(dir, entry.name);
       if (entry.isDirectory()) {
@@ -72,7 +79,7 @@ async function walkFiles(
         ]);
         if (skipDirs.has(entry.name)) continue;
         if (entry.name.startsWith('.')) continue;
-        await walkFiles(fullPath, globPattern, results, maxResults);
+        await walkFiles(fullPath, globPattern, results, maxResults, signal);
       } else if (entry.isFile()) {
         if (globPattern) {
           const relPath = relative(dir, fullPath).replace(/\\/g, '/');
@@ -118,7 +125,7 @@ const grepHandler: ToolHandler = async (args, _context) => {
     if (st.isFile()) {
       filesToSearch = [basePath];
     } else if (st.isDirectory()) {
-      await walkFiles(basePath, globFilter, filesToSearch);
+        await walkFiles(basePath, globFilter, filesToSearch, 10_000, _context.signal);
     } else {
       return JSON.stringify({ error: `Path does not exist: ${basePath}` });
     }
@@ -130,6 +137,9 @@ const grepHandler: ToolHandler = async (args, _context) => {
   const fileResults: Map<string, { lines: string[]; count: number }> = new Map();
 
   for (const filePath of filesToSearch) {
+    if (_context.signal?.aborted) {
+      throw new Error('Tool interrupted');
+    }
     try {
       const size = statSync(filePath).size;
       if (size > MAX_FILE_SIZE) continue;

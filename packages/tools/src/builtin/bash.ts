@@ -3,7 +3,7 @@
 // ============================================================================
 
 import * as fs from 'node:fs';
-import { exec, type ExecOptions } from 'node:child_process';
+import { exec, type ChildProcess, type ExecOptions } from 'node:child_process';
 import { toOpenAITool } from '@jarvis/shared';
 import type { ToolEntry, ToolHandler, ToolContext } from '../registry.js';
 import { getBackgroundTaskRegistry } from './task.js';
@@ -59,25 +59,51 @@ function detectShell(): string {
 
 // ---- handler ----
 
-function doExec(command: string, timeout: number, workdir?: string): Promise<{ result?: string; error?: string }> {
+function doExec(
+  command: string,
+  timeout: number,
+  workdir?: string,
+  signal?: AbortSignal,
+): Promise<{ result?: string; error?: string }> {
   return new Promise((resolve) => {
-    const options: ExecOptions = { timeout, maxBuffer: 10 * 1024 * 1024, cwd: workdir, shell: detectShell() };
+    const options: ExecOptions = { timeout, maxBuffer: 10 * 1024 * 1024, cwd: workdir, shell: detectShell(), signal };
     let settled = false;
-    const child = exec(command, options, (error, stdout, stderr) => {
+    let child: ChildProcess;
+    const settle = (payload: { result?: string; error?: string }) => {
       if (settled) return;
       settled = true;
+      signal?.removeEventListener('abort', onAbort);
+      resolve(payload);
+    };
+    const onAbort = () => {
+      if (child && !child.killed) {
+        child.kill('SIGTERM');
+        setTimeout(() => {
+          if (!child.killed) child.kill('SIGKILL');
+        }, 250);
+      }
+      settle({
+        result: JSON.stringify({ exitCode: -1, stdout: '', stderr: '', killed: true, error: 'Tool interrupted' }),
+      });
+    };
+    child = exec(command, options, (error, stdout, stderr) => {
       if (error) {
-        resolve({ result: JSON.stringify({ exitCode: (error as { code?: number }).code ?? 1, stdout: stdout || '', stderr: stderr || '', killed: (error as { killed?: boolean }).killed ?? false, error: error.message }) });
+        settle({ result: JSON.stringify({ exitCode: (error as { code?: number }).code ?? 1, stdout: stdout || '', stderr: stderr || '', killed: (error as { killed?: boolean }).killed ?? false, error: error.message }) });
       } else {
-        resolve({ result: JSON.stringify({ exitCode: 0, stdout, stderr }) });
+        settle({ result: JSON.stringify({ exitCode: 0, stdout, stderr }) });
       }
     });
+    if (signal?.aborted) {
+      onAbort();
+      return;
+    }
+    signal?.addEventListener('abort', onAbort, { once: true });
     const killTimer = setTimeout(() => { child.kill('SIGTERM'); setTimeout(() => { if (!child.killed) child.kill('SIGKILL'); }, 2000); }, timeout);
     child.on('close', () => clearTimeout(killTimer));
   });
 }
 
-const bashHandler: ToolHandler = (args, _context) => {
+const bashHandler: ToolHandler = (args, context) => {
   const command = String(args.command ?? '');
   const timeout = Number(args.timeout ?? 120_000);
   const workdir = args.workdir ? String(args.workdir) : undefined;
@@ -109,7 +135,7 @@ const bashHandler: ToolHandler = (args, _context) => {
   }
 
   // Foreground mode
-  return doExec(command, timeout, workdir).then((r) => r.result ?? JSON.stringify({ error: 'Unknown error' }));
+  return doExec(command, timeout, workdir, context.signal).then((r) => r.result ?? JSON.stringify({ error: 'Unknown error' }));
 };
 
 // ---- availability check ----

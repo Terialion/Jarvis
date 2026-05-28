@@ -2,13 +2,14 @@
 // AgentEventBus — lightweight typed event emitter for agent lifecycle events
 // ============================================================================
 
-import type { AgentEvent } from '@jarvis/shared';
+import type { AgentEvent, ThreadEvent } from '@jarvis/shared';
 
 // ============================================================================
 // Types
 // ============================================================================
 
 export type EventHandler = (payload: Record<string, unknown>) => void;
+export type ThreadEventHandler = (event: ThreadEvent) => void;
 
 // ============================================================================
 // AgentEventBus
@@ -16,6 +17,7 @@ export type EventHandler = (payload: Record<string, unknown>) => void;
 
 export class AgentEventBus {
   private _handlers = new Map<string, Set<EventHandler>>();
+  private _threadHandlers = new Set<ThreadEventHandler>();
 
   /**
    * Register an event handler.
@@ -57,6 +59,24 @@ export class AgentEventBus {
     }
   }
 
+  onThreadEvent(handler: ThreadEventHandler): void {
+    this._threadHandlers.add(handler);
+  }
+
+  offThreadEvent(handler: ThreadEventHandler): void {
+    this._threadHandlers.delete(handler);
+  }
+
+  emitThreadEvent(event: ThreadEvent): void {
+    for (const handler of this._threadHandlers) {
+      try {
+        handler(event);
+      } catch (err) {
+        console.error('[AgentEventBus] Error in thread event handler:', err);
+      }
+    }
+  }
+
   /**
    * Create an AgentEvent object with an auto-generated eventId.
    */
@@ -78,6 +98,7 @@ export class AgentEventBus {
    */
   clear(): void {
     this._handlers.clear();
+    this._threadHandlers.clear();
   }
 
   /**

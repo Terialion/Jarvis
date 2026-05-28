@@ -9,6 +9,8 @@
   },
   "scripts": {
     "build": "tsc",
+    "replay": "tsx --tsconfig tsconfig.json src/replay.ts",
+    "replay:suite": "tsx --tsconfig tsconfig.json src/replay-suite.ts",
     "test": "vitest run",
     "typecheck": "tsc --noEmit"
   },
