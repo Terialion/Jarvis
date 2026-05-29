@@ -227,6 +227,9 @@ function formatTurnStatus(status: CodexTimelineTurnView['status'], stopReason?: 
   if (status === 'running') return 'working';
   if (status === 'failed') return stopReason ? `failed: ${stopReason}` : 'failed';
   if (!stopReason || stopReason === 'completed' || stopReason === 'stop') return 'completed';
+  if (stopReason === 'finalized_after_stagnation') return 'finalized after low progress';
+  if (stopReason === 'finalized_after_rejections') return 'finalized after tool retries';
+  if (stopReason === 'finalize_timeout') return 'stopped during finalization';
   if (stopReason === 'consecutive_rejections') return 'stopped after repeated retries';
   return `completed: ${stopReason}`;
 }

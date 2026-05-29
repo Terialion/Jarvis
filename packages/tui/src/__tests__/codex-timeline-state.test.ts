@@ -180,4 +180,35 @@ describe('codex timeline tool card polish', () => {
       expect(progress.elapsedText).toBe('2s · ↓168 tokens');
     }
   });
+
+  it('maps finalize stop reasons to human-readable turn status', () => {
+    const state = buildCodexTimelineState({
+      events: [
+        { type: 'turn.started', turn_id: 'turn_finalized' },
+        {
+          type: 'turn.completed',
+          turn_id: 'turn_finalized',
+          stop_reason: 'finalized_after_stagnation',
+        },
+        { type: 'turn.started', turn_id: 'turn_finalized_retry' },
+        {
+          type: 'turn.completed',
+          turn_id: 'turn_finalized_retry',
+          stop_reason: 'finalized_after_rejections',
+        },
+        { type: 'turn.started', turn_id: 'turn_finalized_timeout' },
+        {
+          type: 'turn.completed',
+          turn_id: 'turn_finalized_timeout',
+          stop_reason: 'finalize_timeout',
+        },
+      ],
+      liveStatus: { isLoading: false },
+      messages: [],
+    });
+
+    expect(state.turns[0]?.statusText).toBe('finalized after low progress');
+    expect(state.turns[1]?.statusText).toBe('finalized after tool retries');
+    expect(state.turns[2]?.statusText).toBe('stopped during finalization');
+  });
 });

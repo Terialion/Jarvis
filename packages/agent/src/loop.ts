@@ -99,6 +99,11 @@ export interface AgentRunResult {
   modelName: string;
 }
 
+type CompareTaskTemplate = {
+  fileA: string;
+  fileB: string;
+};
+
 // ============================================================================
 // AgentLoop
 // ============================================================================
@@ -789,9 +794,21 @@ export class AgentLoop {
     });
 
     const { messages } = this.contextBuilder.buildMessagesFromContext(turnContext, this.promptBuilder);
+    const compareTaskTemplate = this._buildCompareTaskTemplate(userInput);
+    let structuredFinalizeRetries = 0;
+    const collectedReadPaths = new Set<string>();
+    let sawDiffEvidence = false;
+
+    if (compareTaskTemplate) {
+      messages.push({
+        role: 'user',
+        content: this._buildCompareTemplateInstruction(compareTaskTemplate),
+      });
+    }
 
     // Obtain tool specs filtered by activeAllowedTools (updated dynamically per-step)
     const getToolSpecs = (): Record<string, unknown>[] => {
+      if (forceNoToolsNextStep) return [];
       return this.tools
         ? this.tools.getDefinitions(
             activeAllowedTools
@@ -801,17 +818,63 @@ export class AgentLoop {
         : [];
     };
 
-    // Failure tracking
+    // Failure tracking + convergence state machine
     const failureTracker = new FailureTracker(5, 4, 3);
     let noProgressCount = 0;
     let lastProgressMarker = '';
     const seenCalls = new Map<string, Array<{ argsFrozen: string; result: Record<string, unknown> }>>();
     let retryWithToolInstructionCount = 0;
     let retryWithLengthCount = 0;
+    let forceNoToolsNextStep = false;
+    let forcedSynthesisAttempted = false;
+    let reasoningLenHighWaterMark = 0;
+    let stagnationCount = 0;
+    let finalizeAttempts = 0;
+    let finalizeReason: 'stagnation' | 'rejections' | null = null;
+    let phase: 'discover' | 'analyze' | 'finalize' = 'discover';
+
+    const enterFinalize = (reason: 'stagnation' | 'rejections'): boolean => {
+      if (compareTaskTemplate) {
+        const evidenceCheck = this._checkCompareEvidence(
+          compareTaskTemplate,
+          collectedReadPaths,
+          sawDiffEvidence,
+        );
+        if (!evidenceCheck.ok) {
+          messages.push({
+            role: 'user',
+            content:
+              `Evidence is incomplete. Before finalizing, gather missing evidence: ${evidenceCheck.missing.join('; ')}. ` +
+              'Use tools now and then produce the final Markdown answer.',
+          });
+          return false;
+        }
+      }
+      if (phase !== 'finalize') {
+        phase = 'finalize';
+        finalizeReason = reason;
+        finalizeAttempts = 0;
+        forceNoToolsNextStep = true;
+        this._emit(events, turnId, 'phase_changed', { phase, reason });
+        this.eventBus?.emit('turn:warning', {
+          warning: 'Finalizing answer from collected results',
+        });
+        messages.push({
+          role: 'user',
+          content:
+            'Stop calling tools now. Use only the evidence already collected and produce the final answer in Markdown.',
+        });
+      }
+      return true;
+    };
 
     try {
       for (let step = 1; step <= this.maxSteps; step++) {
         finalAnswer = '';
+        if (phase === 'discover' && step > 1) {
+          phase = 'analyze';
+          this._emit(events, turnId, 'phase_changed', { phase });
+        }
 
         if ((Date.now() - started) > this.timeoutS * 1000) {
           stopReason = 'timeout';
@@ -870,6 +933,9 @@ export class AgentLoop {
         // Model call with retry
         this._emit(events, turnId, 'model_call_started', { step });
         const modelResp = await this._callModelWithRetry(events, turnId, step, messages as LLMMessage[], getToolSpecs());
+        if (forceNoToolsNextStep) {
+          forceNoToolsNextStep = false;
+        }
         this._emit(events, turnId, 'model_call_completed', {
           step,
           finish_reason: modelResp.finishReason,
@@ -901,8 +967,28 @@ export class AgentLoop {
         }
 
         if (finalAnswer && modelResp.toolCalls.length === 0) {
+          if (compareTaskTemplate) {
+            const structCheck = this._validateStructuredCompareFinalAnswer(finalAnswer);
+            if (!structCheck.ok && structuredFinalizeRetries < 2) {
+              structuredFinalizeRetries++;
+              if (finalizeReason === null) {
+                enterFinalize('stagnation');
+              }
+              forceNoToolsNextStep = true;
+              messages.push({
+                role: 'user',
+                content:
+                  `Your answer is missing required structure: ${structCheck.missing.join(', ')}. ` +
+                  'Rewrite now in Markdown with exactly these sections: 依据清单, 结论, 未确认点. ' +
+                  'Use only collected evidence and do not call tools.',
+              });
+              continue;
+            }
+          }
           outputType = toolCallsLog.length > 0 ? 'tool_result' : 'answer';
-          stopReason = 'completed';
+          stopReason = finalizeReason !== null
+            ? (finalizeReason === 'rejections' ? 'finalized_after_rejections' : 'finalized_after_stagnation')
+            : 'completed';
           this._emit(events, turnId, 'final_answer_created', { step });
           break;
         }
@@ -912,6 +998,21 @@ export class AgentLoop {
 
           // Tool-intent retry (only before any tools have been called)
           if (finish === 'retry_with_tool_instruction') {
+            if (finalizeReason !== null) {
+              finalizeAttempts++;
+              if (finalizeAttempts >= 2) {
+                stopReason = 'finalize_timeout';
+                outputType = 'partial';
+                break;
+              }
+              forceNoToolsNextStep = true;
+              messages.push({
+                role: 'user',
+                content:
+                  'Do not call tools. Provide the final Markdown deliverable now from the collected evidence.',
+              });
+              continue;
+            }
             if (toolCallsLog.length === 0) {
               retryWithToolInstructionCount++;
               if (retryWithToolInstructionCount >= 2) {
@@ -924,14 +1025,57 @@ export class AgentLoop {
               });
               continue;
             }
+            if (!forcedSynthesisAttempted) {
+              forcedSynthesisAttempted = true;
+              forceNoToolsNextStep = true;
+              messages.push({
+                role: 'user',
+                content:
+                  'Stop calling tools now. You already collected enough evidence. ' +
+                  'Write the final answer directly in Markdown using only the results already gathered.',
+              });
+              continue;
+            }
             finalAnswer = modelResp.finalAnswer || modelResp.assistantText || '';
             if (!finalAnswer) {
               stopReason = finish || 'no_progress';
               break;
             }
+            if (compareTaskTemplate) {
+              const structCheck = this._validateStructuredCompareFinalAnswer(finalAnswer);
+              if (!structCheck.ok && structuredFinalizeRetries < 2) {
+                structuredFinalizeRetries++;
+                forceNoToolsNextStep = true;
+                messages.push({
+                  role: 'user',
+                  content:
+                    `Your answer is missing required structure: ${structCheck.missing.join(', ')}. ` +
+                    'Rewrite now in Markdown with exactly these sections: 依据清单, 结论, 未确认点. ' +
+                    'Do not call tools.',
+                });
+                continue;
+              }
+            }
             outputType = 'answer';
-            stopReason = 'completed';
+            stopReason = finalizeReason !== null
+              ? (finalizeReason === 'rejections' ? 'finalized_after_rejections' : 'finalized_after_stagnation')
+              : 'completed';
             break;
+          }
+          if (finalizeReason !== null) {
+            finalizeAttempts++;
+            if (finalizeAttempts >= 2) {
+              stopReason = 'finalize_timeout';
+              outputType = 'partial';
+              break;
+            }
+            forceNoToolsNextStep = true;
+            messages.push({
+              role: 'user',
+              content:
+                'You must provide the final answer now in Markdown with no further tool calls.',
+            });
+            continue;
           }
           stopReason = finish || 'no_progress';
           break;
@@ -954,7 +1098,25 @@ export class AgentLoop {
         }
         messages.push(assistantMsg);
 
+        if (finalizeReason !== null && modelResp.toolCalls.length > 0) {
+          finalizeAttempts++;
+          if (finalizeAttempts >= 2) {
+            stopReason = 'finalize_timeout';
+            outputType = 'partial';
+            break;
+          }
+          forceNoToolsNextStep = true;
+          messages.push({
+            role: 'user',
+            content:
+              'Finalization mode is active. Do not call tools. Output the final Markdown answer now.',
+          });
+          continue;
+        }
+
         let anyOkThisStep = false;
+        let requestForcedSynthesis = false;
+        let newEvidenceThisStep = false;
         for (const call of modelResp.toolCalls) {
           const toolItemBase: ToolCallThreadItem = {
             id: call.callId,
@@ -972,7 +1134,7 @@ export class AgentLoop {
             });
             if (reject.kind === 'repeat') {
               if (failureTracker.isRepeatHardStop(call.name)) {
-                stopReason = 'consecutive_rejections';
+                requestForcedSynthesis = enterFinalize('rejections');
                 break;
               }
               messages.push({
@@ -1071,6 +1233,14 @@ export class AgentLoop {
 
           const resultDict = { ...result, content: result.content };
           toolResultsLog.push(resultDict);
+          newEvidenceThisStep = true;
+          const evidencePath = this._extractReadPathFromToolCall(call.name, call.arguments);
+          if (evidencePath) {
+            collectedReadPaths.add(evidencePath);
+          }
+          if (this._isDiffLikeToolCall(call.name, call.arguments)) {
+            sawDiffEvidence = true;
+          }
           this._emit(events, turnId, 'tool_call_completed', { step, tool_result: resultDict });
           this.emitThreadEvent({
             type: 'item.completed',
@@ -1161,6 +1331,7 @@ export class AgentLoop {
             if (retryResult.ok) {
               failureTracker.recordSuccess(retryResult.name);
               anyOkThisStep = true;
+              newEvidenceThisStep = true;
               messages.push({
                 role: 'tool',
                 tool_call_id: call.callId,
@@ -1191,6 +1362,10 @@ export class AgentLoop {
           });
         }
 
+        if (requestForcedSynthesis) {
+          continue;
+        }
+
         if (['approval_required', 'timeout', 'consecutive_failures', 'consecutive_rejections'].includes(stopReason)) {
           break;
         }
@@ -1207,16 +1382,39 @@ export class AgentLoop {
           messages.push(...compacted.map((m) => ({ role: m.role, content: m.content })));
         }
 
-        // No-progress detection
+        // No-progress detection + phase-driven convergence
+        const reasoningGrowth = Math.max(0, reasoning.length - reasoningLenHighWaterMark);
+        reasoningLenHighWaterMark = Math.max(reasoningLenHighWaterMark, reasoning.length);
+
+        let progressScore = 0;
+        if (newEvidenceThisStep) progressScore += 2;
+        if (reasoningGrowth >= 120) progressScore += 1;
+        if (modelResp.toolCalls.length > 0 && !anyOkThisStep) progressScore -= 1;
+
         const marker = `${toolCallsLog.length}:${toolResultsLog.length}:${finalAnswer.slice(0, 60)}`;
-        if (marker === lastProgressMarker) {
+        if (marker === lastProgressMarker && progressScore <= 0) {
           noProgressCount++;
-        } else {
+        } else if (progressScore > 0) {
           noProgressCount = 0;
-          lastProgressMarker = marker;
+        } else {
+          noProgressCount += 1;
         }
-        if (noProgressCount >= 4) {
-          stopReason = 'no_progress';
+        lastProgressMarker = marker;
+
+        if (finalizeReason === null) {
+          if (progressScore <= 0) {
+            stagnationCount++;
+          } else {
+            stagnationCount = 0;
+          }
+          if (stagnationCount >= 3) {
+            enterFinalize('stagnation');
+            continue;
+          }
+        }
+
+        if (noProgressCount >= 5) {
+          stopReason = finalizeReason !== null ? 'finalize_timeout' : 'no_progress';
           outputType = 'partial';
           break;
         }
@@ -1508,6 +1706,87 @@ export class AgentLoop {
       modelProvider: this.modelInfo['model_provider'] || '',
       modelName: this.modelInfo['model_name'] || '',
     };
+  }
+
+  private _buildCompareTaskTemplate(userInput: string): CompareTaskTemplate | null {
+    const asksCompare =
+      /(compare|diff|difference|summari[sz]e|总结|对比|比较|差异)/i.test(userInput);
+    if (!asksCompare) return null;
+
+    const fileMatches = Array.from(
+      userInput.matchAll(/([A-Za-z0-9_\-./\\\u4e00-\u9fa5]+\.[A-Za-z0-9]{1,8})/g),
+    ).map((m) => m[1] ?? '');
+    const normalized = Array.from(
+      new Set(fileMatches.map((f) => this._normalizePathKey(f)).filter(Boolean)),
+    );
+    if (normalized.length < 2) return null;
+    return {
+      fileA: normalized[0]!,
+      fileB: normalized[1]!,
+    };
+  }
+
+  private _buildCompareTemplateInstruction(template: CompareTaskTemplate): string {
+    return [
+      'Follow this fixed workflow for this task:',
+      `1) Read ${template.fileA}`,
+      `2) Read ${template.fileB}`,
+      '3) Compare differences (diff or equivalent)',
+      '4) Produce final markdown summary',
+      'Do not skip steps and do not finalize before evidence is complete.',
+    ].join('\n');
+  }
+
+  private _normalizePathKey(pathLike: string): string {
+    return pathLike.replace(/\\/g, '/').replace(/^\.?\//, '').trim().toLowerCase();
+  }
+
+  private _extractReadPathFromToolCall(
+    toolName: string,
+    args: Record<string, unknown>,
+  ): string | null {
+    if (toolName !== 'read_file') return null;
+    const raw =
+      typeof args['path'] === 'string'
+        ? args['path']
+        : (typeof args['file'] === 'string' ? args['file'] : '');
+    if (!raw) return null;
+    return this._normalizePathKey(raw);
+  }
+
+  private _isDiffLikeToolCall(toolName: string, args: Record<string, unknown>): boolean {
+    if (toolName !== 'bash') return false;
+    const cmd = typeof args['command'] === 'string' ? args['command'].toLowerCase() : '';
+    if (!cmd) return false;
+    return /\bdiff\b|\bgit\s+diff\b|\bfc\b/.test(cmd);
+  }
+
+  private _checkCompareEvidence(
+    template: CompareTaskTemplate,
+    readPaths: Set<string>,
+    hasDiffEvidence: boolean,
+  ): { ok: boolean; missing: string[] } {
+    const missing: string[] = [];
+    if (!readPaths.has(template.fileA)) {
+      missing.push(`read ${template.fileA}`);
+    }
+    if (!readPaths.has(template.fileB)) {
+      missing.push(`read ${template.fileB}`);
+    }
+    if (!hasDiffEvidence) {
+      missing.push('run a diff between the two files');
+    }
+    return { ok: missing.length === 0, missing };
+  }
+
+  private _validateStructuredCompareFinalAnswer(answer: string): { ok: boolean; missing: string[] } {
+    const checks = [
+      { key: '依据清单', regex: /(依据清单|evidence)/i },
+      { key: '结论', regex: /(结论|conclusion)/i },
+      { key: '未确认点', regex: /(未确认点|uncertain|unknown|not confirmed)/i },
+    ];
+    const missing = checks.filter((c) => !c.regex.test(answer)).map((c) => c.key);
+    return { ok: missing.length === 0, missing };
   }
 
   private async _callModelWithRetry(

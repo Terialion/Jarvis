@@ -75,6 +75,28 @@ function DetailLine({
   );
 }
 
+function SummaryCard({
+  text,
+  color,
+  backgroundColor,
+  borderColor,
+}: {
+  text: string;
+  color: string;
+  backgroundColor: string;
+  borderColor: string;
+}): React.ReactNode {
+  const decoded = decodeHtmlEntities(text);
+  return (
+    <Box marginLeft={4}>
+      <Text color="#4B5563">{'| '}</Text>
+      <Box borderStyle="round" borderColor={borderColor} paddingX={1} backgroundColor={backgroundColor}>
+        <Text color={color} bold>{decoded}</Text>
+      </Box>
+    </Box>
+  );
+}
+
 function getPreviewLineStyle(line: string): {
   color?: string;
   backgroundColor?: string;
@@ -93,6 +115,7 @@ function getPreviewLineStyle(line: string): {
 function getCollapsedDetailStyle(item: Extract<CodexTimelineItemView, { kind: 'tool_call' }>): {
   color?: string;
   backgroundColor?: string;
+  borderColor?: string;
   bold?: boolean;
   dim?: boolean;
 } {
@@ -100,10 +123,22 @@ function getCollapsedDetailStyle(item: Extract<CodexTimelineItemView, { kind: 't
     return { color: 'red', bold: true, dim: false };
   }
   if (item.label.startsWith('Update(')) {
-    return { color: '#F5F7FB', backgroundColor: '#2B3342', bold: true, dim: false };
+    return {
+      color: '#F5F7FB',
+      backgroundColor: '#2B3342',
+      borderColor: '#596781',
+      bold: true,
+      dim: false,
+    };
   }
   if (item.label.startsWith('Write(')) {
-    return { color: '#D7E3F4', backgroundColor: '#1E2532', bold: true, dim: false };
+    return {
+      color: '#D7E3F4',
+      backgroundColor: '#1E2532',
+      borderColor: '#41516C',
+      bold: true,
+      dim: false,
+    };
   }
   return { dim: true };
 }
@@ -180,6 +215,16 @@ function TimelineItemView({
           <ExpandHint expanded={detailsExpanded} />
           {item.collapsedDetail ? (() => {
             const style = getCollapsedDetailStyle(item);
+            if (style.borderColor && style.backgroundColor && style.color) {
+              return (
+                <SummaryCard
+                  text={item.collapsedDetail}
+                  color={style.color}
+                  backgroundColor={style.backgroundColor}
+                  borderColor={style.borderColor}
+                />
+              );
+            }
             return (
               <DetailLine
                 text={item.collapsedDetail}
