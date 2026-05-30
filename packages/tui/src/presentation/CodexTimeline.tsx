@@ -122,23 +122,8 @@ function getCollapsedDetailStyle(item: Extract<CodexTimelineItemView, { kind: 't
   if (item.status === 'failed') {
     return { color: 'red', bold: true, dim: false };
   }
-  if (item.label.startsWith('Update(')) {
-    return {
-      color: '#F5F7FB',
-      backgroundColor: '#2B3342',
-      borderColor: '#596781',
-      bold: true,
-      dim: false,
-    };
-  }
-  if (item.label.startsWith('Write(')) {
-    return {
-      color: '#D7E3F4',
-      backgroundColor: '#1E2532',
-      borderColor: '#41516C',
-      bold: true,
-      dim: false,
-    };
+  if (item.label.startsWith('Update(') || item.label.startsWith('Write(')) {
+    return { dim: true };
   }
   return { dim: true };
 }

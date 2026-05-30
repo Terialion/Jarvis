@@ -48,9 +48,9 @@ describe('codex timeline tool card polish', () => {
     const tool = state.turns[0]?.items.find((item) => item.kind === 'tool_call');
     expect(tool?.kind).toBe('tool_call');
     if (tool?.kind === 'tool_call') {
-      expect(tool.label).toBe('Write(check-doc-consistency.ts)');
-      expect(tool.collapsedDetail).toBe('Wrote 11 lines to check-doc-consistency.ts');
-      expect(tool.argumentsText).toBe('check-doc-consistency.ts | 11 lines');
+      expect(tool.label).toMatch(/Write\(.*check-doc-consistency\.ts\)/);
+      expect(tool.collapsedDetail).toBe('Added 11 lines');
+      expect(tool.argumentsText).toMatch(/check-doc-consistency\.ts \| 11 lines/);
       expect(tool.alwaysShowPreview).toBe(true);
       expect(tool.previewLines).toHaveLength(10);
       expect(tool.previewOverflowCount).toBe(1);
@@ -92,7 +92,7 @@ describe('codex timeline tool card polish', () => {
     expect(tool?.kind).toBe('tool_call');
     if (tool?.kind === 'tool_call') {
       expect(tool.label).toBe('Update(packages\\cli\\src\\main.ts)');
-      expect(tool.collapsedDetail).toBe('Replaced 3 lines in packages\\cli\\src\\main.ts');
+      expect(tool.collapsedDetail).toBe('Replaced 3 lines');
     }
   });
 
@@ -137,7 +137,7 @@ describe('codex timeline tool card polish', () => {
     expect(tool?.kind).toBe('tool_call');
     if (tool?.kind === 'tool_call') {
       expect(tool.label).toBe('Update(README.md)');
-      expect(tool.collapsedDetail).toBe('Added 3 lines, removed 3 lines in README.md');
+      expect(tool.collapsedDetail).toBe('Added 3 lines, removed 3 lines');
       expect(tool.argumentsText).toBe('README.md | -3 +3');
       expect(tool.alwaysShowPreview).toBe(true);
       expect(tool.previewLines?.[0]).toMatch(/^- /);

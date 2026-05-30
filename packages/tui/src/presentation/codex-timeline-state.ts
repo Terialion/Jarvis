@@ -357,29 +357,26 @@ function buildToolResultSummary(
   const parsed = parseJsonObject(resultText);
   switch (toolName) {
     case 'write_file': {
-      const pathLabel = getPathLabel(args.path);
       const content = typeof args.content === 'string' ? args.content : '';
       const lineCount = countLines(content);
-      if (pathLabel && lineCount > 0 && wasOverwriteWrite(resultText)) {
-        return `Replaced ${lineCount} lines in ${pathLabel}`;
-      }
-      if (pathLabel && lineCount > 0) return `Wrote ${lineCount} lines to ${pathLabel}`;
-      if (pathLabel) return `Wrote file ${pathLabel}`;
-      break;
+      const unit = lineCount === 1 ? 'line' : 'lines';
+      if (lineCount > 0 && wasOverwriteWrite(resultText)) return `Replaced ${lineCount} ${unit}`;
+      if (lineCount > 0) return `Added ${lineCount} ${unit}`;
+      return `Wrote file`;
     }
     case 'edit_file': {
-      const pathLabel = getPathLabel(args.path);
-      const replacements = parsed && typeof parsed.replacements === 'number' ? parsed.replacements : undefined;
       const oldString = typeof args.old_string === 'string' ? args.old_string : '';
       const newString = typeof args.new_string === 'string' ? args.new_string : '';
       const removedLines = countLines(oldString);
       const addedLines = countLines(newString);
-      if (pathLabel && (addedLines > 0 || removedLines > 0)) {
-        return `Added ${addedLines} lines, removed ${removedLines} lines in ${pathLabel}`;
+      const replacements = parsed && typeof parsed.replacements === 'number' ? parsed.replacements : undefined;
+      if (addedLines > 0 || removedLines > 0) {
+        const addUnit = addedLines === 1 ? 'line' : 'lines';
+        const remUnit = removedLines === 1 ? 'line' : 'lines';
+        return `Added ${addedLines} ${addUnit}, removed ${removedLines} ${remUnit}`;
       }
-      if (pathLabel && replacements) return `Updated ${pathLabel} (${replacements} replacements)`;
-      if (pathLabel) return `Updated ${pathLabel}`;
-      break;
+      if (replacements) return `${replacements} replacements`;
+      return `Updated`;
     }
     case 'read_file': {
       const pathLabel = getPathLabel(args.path);
@@ -426,8 +423,17 @@ function buildToolArgumentsSummary(toolName: string, args: Record<string, unknow
   }
 }
 
-function buildToolCollapsedDetail(summary?: string, resultText?: string, errorText?: string): string | undefined {
+function buildToolCollapsedDetail(
+  toolName?: string,
+  summary?: string,
+  resultText?: string,
+  errorText?: string,
+): string | undefined {
   if (errorText) return `failed | ${truncate(errorText, 140)}`;
+  // For write/edit: show compact +/- summary without "done |" prefix
+  if (toolName === 'write_file' || toolName === 'edit_file') {
+    return summary ?? (resultText ? truncate(resultText, 140) : undefined);
+  }
   if (summary) return summary;
   if (resultText) return `done | ${truncate(resultText, 140)}`;
   return undefined;
@@ -630,6 +636,7 @@ function buildItemView(
         statusLabel: formatToolStatus(item.status),
         summary: resultSummary ?? headline.summary,
         collapsedDetail: buildToolCollapsedDetail(
+          item.tool_name,
           resultSummary ?? headline.summary,
           item.result ? truncate(item.result, 260) : undefined,
           item.error ? truncate(item.error, 260) : undefined,
