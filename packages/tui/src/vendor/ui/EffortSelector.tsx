@@ -135,6 +135,13 @@ export function EffortSelector({
         <Box flexDirection="row">{labelRow}</Box>
       </Box>
 
+      {/* Current effort */}
+      <Box marginBottom={1}>
+        <Text dimColor>
+          Current: {labelOf(currentEffort)}
+        </Text>
+      </Box>
+
       {/* Footer */}
       <Box>
         <Text dimColor>←/→ to adjust · Enter to confirm · Esc to cancel</Text>

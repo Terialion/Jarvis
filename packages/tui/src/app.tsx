@@ -2260,6 +2260,7 @@ export function App({ options }: { options: TUIOptions }): React.ReactNode {
       cwd,
       model: parseModelName(modelRef.current).cleanName,
       gitBranch,
+      effort: reasoningEffortRef.current,
       isLoading,
       hasQuestion: askQuestions !== null,
       totalTokens: tracker?.turnCount ? tracker.totalBlended : undefined,

@@ -17,6 +17,7 @@ export interface StatusSegmentInput {
   contextPercentRemaining?: number;
   taskCounts: TaskCounts;
   elapsedMs: number;
+  effort?: string;
   sessionId?: string | null;
 }
 
@@ -56,6 +57,7 @@ export function buildStatusSegments(input: StatusSegmentInput): StatusLineSegmen
   const segments: StatusLineSegment[] = [
     { content: `project ${getProjectLabel(input.cwd)}`, color: "cyan" },
     { content: `model ${input.model}` },
+    ...(input.effort && input.effort !== "auto" ? [{ content: `effort ${input.effort}`, color: "magenta" as const }] : []),
     { content: `state ${formatRunState(input)}`, color: input.isLoading ? "yellow" : "green" },
   ];
 
