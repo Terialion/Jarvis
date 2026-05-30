@@ -996,8 +996,42 @@ function buildReplCommands(
   setMessages: (v: Message[] | ((prev: Message[]) => Message[])) => void,
   skills?: SkillRegistry | null,
   setModelSelectorOpen?: (open: boolean) => void,
+  setEffortSelectorOpen?: (open: boolean) => void,
 ): REPLCommandDef[] {
   const builtins = SLASH_COMMANDS.map((cmd) => {
+    // Override /effort (no args) to open interactive selector
+    if (cmd.name === 'effort') {
+      return {
+        name: cmd.name,
+        description: cmd.description,
+        onExecute: (rawArgs: string, fullInput: string) => {
+          const userMsg: Message = {
+            id: `cmd_${Date.now()}`,
+            role: 'user',
+            content: fullInput,
+            timestamp: Date.now(),
+          };
+          const args = rawArgs ? rawArgs.split(/\s+/) : [];
+
+          if (args.length === 0 && setEffortSelectorOpen) {
+            setMessages((prev) => [...prev, userMsg]);
+            setEffortSelectorOpen(true);
+            return;
+          }
+
+          // Text-based effort set
+          const result = cmd.handler(args, ctx);
+          if (result instanceof Promise) {
+            result.then((text) =>
+              setMessages((prev) => [...prev, userMsg, makeSysMsg(text)]),
+            );
+          } else {
+            setMessages((prev) => [...prev, userMsg, makeSysMsg(result)]);
+          }
+        },
+      };
+    }
+
     // Override /model (no args) to open interactive selector
     if (cmd.name === 'model') {
       return {
@@ -1322,6 +1356,9 @@ export function App({ options }: { options: TUIOptions }): React.ReactNode {
   // Model selector state
   const [modelSelectorOpen, setModelSelectorOpen] = useState(false);
 
+  // Effort selector state
+  const [effortSelectorOpen, setEffortSelectorOpen] = useState(false);
+
   // Persistent command history — survives restarts like CC/Codex
   const HISTORY_FILE = join(process.cwd(), '.jarvis', 'history.json');
   const historyRef2 = useRef<string[]>([]);
@@ -1425,6 +1462,19 @@ export function App({ options }: { options: TUIOptions }): React.ReactNode {
     saveSettings({ reasoning_effort: effort as JarvisReasoningEffort });
     invalidateAgent();
   }, [invalidateAgent]);
+
+  // Effort selector handlers
+  const handleEffortSelect = useCallback((effort: string) => {
+    reasoningEffortRef.current = effort;
+    saveSettings({ reasoning_effort: effort as JarvisReasoningEffort });
+    invalidateAgent();
+    setEffortSelectorOpen(false);
+    setMessages((prev) => [...prev, makeSysMsg(`Reasoning effort set to: ${effort}`)]);
+  }, [invalidateAgent, setMessages]);
+
+  const handleEffortSelectorCancel = useCallback(() => {
+    setEffortSelectorOpen(false);
+  }, []);
 
   const pushSpinnerDetail = useCallback((line: string | null) => {
     if (!line) return;
@@ -2182,6 +2232,7 @@ export function App({ options }: { options: TUIOptions }): React.ReactNode {
         setMessages,
         skillsRef.current,
         setModelSelectorOpen,
+        setEffortSelectorOpen,
       ),
     // Rebuild only when getAgent changes (lazy init via useCallback)
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -2353,6 +2404,11 @@ export function App({ options }: { options: TUIOptions }): React.ReactNode {
       onModelSelect={handleModelSelect}
       onModelSelectorCancel={handleModelSelectorCancel}
       onModelEffortChange={handleModelEffortChange}
+      effortSelectorOpen={effortSelectorOpen}
+      effortSelectorCurrent={reasoningEffortRef.current}
+      effortSelectorLevels={JARVIS_REASONING_EFFORTS}
+      onEffortSelect={handleEffortSelect}
+      onEffortSelectorCancel={handleEffortSelectorCancel}
       welcome={<WelcomeScreen appName="Jarvis" subtitle="AI Coding Assistant" model={parseModelName(modelRef.current).cleanName} color="#00BFFF" tips={['Send a prompt to begin', '/help for commands', 'Ctrl+C twice exits']} />}
     />
   );

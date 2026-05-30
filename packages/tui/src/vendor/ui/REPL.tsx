@@ -16,6 +16,8 @@ import { Divider } from "./Divider";
 import { type Message, MessageList } from "./MessageList";
 import { ModelSelector, type ModelSelectionResult } from "./ModelSelector";
 import type { ModelSelectorProps } from "./ModelSelector";
+import { EffortSelector } from "./EffortSelector";
+import type { EffortSelectorProps } from "./EffortSelector";
 import { type PermissionAction, PermissionRequest } from "./PermissionRequest";
 import { PromptInput } from "./PromptInput";
 import { computeMatches, SearchOverlay } from "./SearchOverlay";
@@ -84,6 +86,14 @@ export type REPLProps = {
   onModelSelectorCancel?: () => void;
   onModelEffortChange?: (effort: string) => void;
 
+  // Effort selector
+  effortSelectorOpen?: boolean;
+  effortSelectorCurrent?: string;
+  effortSelectorLevels?: readonly string[];
+  onEffortSelect?: (effort: string) => void;
+  onEffortSelectorCancel?: () => void;
+  onEffortSelectorChange?: (effort: string) => void;
+
   prefix?: string;
   placeholder?: string;
   history?: string[];
@@ -144,6 +154,13 @@ export function REPL({
   onModelSelect,
   onModelSelectorCancel,
   onModelEffortChange,
+  // Effort selector
+  effortSelectorOpen = false,
+  effortSelectorCurrent = "high",
+  effortSelectorLevels = [],
+  onEffortSelect,
+  onEffortSelectorCancel,
+  onEffortSelectorChange,
 }: REPLProps): React.ReactNode {
   const { exit } = useApp();
   const [inputValue, setInputValue] = useState("");
@@ -184,6 +201,12 @@ export function REPL({
         const cmd = commands.find((c) => c.name === cmdName);
         if (cmd) {
           setInputValue("");
+          // Save to history before executing (slash commands were bypassing history)
+          if (!externalHistory) {
+            setInternalHistory((prev) => [trimmed, ...prev]);
+          } else {
+            onHistoryAdd?.(trimmed);
+          }
           cmd.onExecute(cmdArgs, trimmed);
           return;
         }
@@ -259,8 +282,8 @@ export function REPL({
         setToolResultsExpanded((prev) => !prev);
       }
     },
-    // Deactivate when search or model selector overlays are open
-    { isActive: !searchOpen && !modelSelectorOpen },
+    // Deactivate when search, model, or effort selector overlays are open
+    { isActive: !searchOpen && !modelSelectorOpen && !effortSelectorOpen },
   );
 
   const resolvedSegments = statusSegments ?? buildDefaultSegments(model);
@@ -391,6 +414,18 @@ export function REPL({
             onSelect={(result: ModelSelectionResult) => onModelSelect?.(result)}
             onCancel={() => onModelSelectorCancel?.()}
             onEffortChange={(effort: string) => onModelEffortChange?.(effort)}
+          />
+        </Box>
+      )}
+
+      {effortSelectorOpen && (
+        <Box flexDirection="column" paddingX={1} borderStyle="round" borderColor="cyan">
+          <EffortSelector
+            currentEffort={effortSelectorCurrent}
+            levels={effortSelectorLevels}
+            onSelect={(effort: string) => onEffortSelect?.(effort)}
+            onCancel={() => onEffortSelectorCancel?.()}
+            onChange={(effort: string) => onEffortSelectorChange?.(effort)}
           />
         </Box>
       )}
