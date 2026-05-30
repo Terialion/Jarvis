@@ -11,7 +11,7 @@ import type { Message, MessageContent } from './vendor/ui/MessageList.js';
 import type { StatusLineSegment } from './vendor/ui/StatusLine.js';
 import { WelcomeScreen } from './vendor/ui/WelcomeScreen.js';
 import { loadSettings, saveSettings, type UserSettings } from './settings-store.js';
-import { AgentLoop, AgentEventBus, ConversationSummarizer, TokenTracker, formatTokensCompact, estimateTokens, validateContextWindow, getAllModels, addUserModel, removeUserModel, parseModelName, findModel, buildSystemPrompt, type ThreadEvent, type ModelInfo } from '@jarvis/agent';
+import { AgentLoop, AgentEventBus, ConversationSummarizer, TokenTracker, formatTokensCompact, estimateTokens, validateContextWindow, getAllModels, addUserModel, removeUserModel, parseModelName, findModel, buildSystemPrompt, createMemorySearchHandler, createMemoryGetHandler, type ThreadEvent, type ModelInfo } from '@jarvis/agent';
 import {
   ToolRegistry,
   allBuiltinTools,
@@ -25,10 +25,17 @@ import {
   createMcpStatusTool,
   createMcpHealthcheckTool,
   createMcpToolEntries,
+  webSearchTool,
+  webFetchTool,
+  createWebSearchTool,
+  createWebFetchHandler,
+  tryCreateTavilySearch,
+  tryCreateTavilyFetch,
 } from '@jarvis/tools';
 import type { AskQuestionDef } from '@jarvis/tools';
 import { SkillRegistry, SkillExecutor } from '@jarvis/skills';
 import { SessionStore } from '@jarvis/store';
+import { MarkdownMemoryStore } from '@jarvis/store';
 import { SubagentPool, toolWhitelistForType, type SubagentConfig } from '@jarvis/subagents';
 import { MCPClient, connectMcpServers, type McpConnectionStatus, type McpServerConfig } from '@jarvis/mcp';
 import { HookRegistry } from '@jarvis/hooks';
@@ -1657,6 +1664,63 @@ export function App({ options }: { options: TUIOptions }): React.ReactNode {
       const tools = new ToolRegistry();
       for (const tool of allBuiltinTools) {
         tools.register(tool);
+      }
+      // Register web tools (mirrors CLI main.ts registerWebTools)
+      {
+        const tavilySearch = tryCreateTavilySearch();
+        const tavilyFetch = tryCreateTavilyFetch();
+        if (tavilySearch) { tools.register(createWebSearchTool(tavilySearch)); }
+        else { tools.register(webSearchTool); }
+        if (tavilyFetch) { tools.register({ ...webFetchTool, handler: createWebFetchHandler(tavilyFetch) }); }
+        else { tools.register(webFetchTool); }
+      }
+      // Memory search/get tools (mirrors CLI main.ts bootstrap)
+      {
+        const memoryStore = new MarkdownMemoryStore();
+        tools.register({
+          name: 'memory_search',
+          toolset: 'memory',
+          description: 'Search persistent memory entries by keyword',
+          isAsync: true,
+          schema: {
+            type: 'function',
+            function: {
+              name: 'memory_search',
+              description: 'Search persistent memory entries by keyword',
+              parameters: {
+                type: 'object',
+                properties: {
+                  query: { type: 'string', description: 'Search query' },
+                  maxResults: { type: 'number', description: 'Max results (default 5)' },
+                  memoryType: { type: 'string', description: 'Filter by type: user, project, feedback, reference' },
+                },
+                required: ['query'],
+              },
+            },
+          },
+          handler: (args: Record<string, unknown>) => createMemorySearchHandler(memoryStore)(args),
+        });
+        tools.register({
+          name: 'memory_get',
+          toolset: 'memory',
+          description: 'Read a specific memory entry by name',
+          isAsync: true,
+          schema: {
+            type: 'function',
+            function: {
+              name: 'memory_get',
+              description: 'Read a specific memory entry by name',
+              parameters: {
+                type: 'object',
+                properties: {
+                  name: { type: 'string', description: 'Memory entry name' },
+                },
+                required: ['name'],
+              },
+            },
+          },
+          handler: (args: Record<string, unknown>) => createMemoryGetHandler(memoryStore)(args),
+        });
       }
       toolsRef.current = tools;
 
