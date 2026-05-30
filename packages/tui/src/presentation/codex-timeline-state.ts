@@ -73,6 +73,8 @@ export type CodexTimelineItemView =
       argumentsText?: string;
       resultText?: string;
       errorText?: string;
+      mcpSource?: string;
+      failureReason?: string;
       previewLines?: string[];
       previewOverflowCount?: number;
       alwaysShowPreview?: boolean;
@@ -298,6 +300,10 @@ function buildToolTitle(
   fallbackLabel: string,
   resultText?: string,
 ): string {
+  const mcpMeta = parseMcpToolName(toolName);
+  if (mcpMeta) {
+    return `MCP(${mcpMeta.server}/${mcpMeta.tool})`;
+  }
   switch (toolName) {
     case 'bash': {
       const command = typeof args.command === 'string' ? normalizeText(args.command) : '';
@@ -331,6 +337,16 @@ function buildToolTitle(
     default:
       return fallbackLabel;
   }
+}
+
+function parseMcpToolName(toolName: string): { server: string; tool: string } | null {
+  if (!toolName.startsWith('mcp__')) return null;
+  const parts = toolName.split('__');
+  if (parts.length < 3) return null;
+  return {
+    server: parts[1] || 'unknown',
+    tool: parts.slice(2).join('__') || 'tool',
+  };
 }
 
 function buildToolResultSummary(
@@ -600,7 +616,8 @@ function buildItemView(
       };
     }
     case 'tool_call': {
-      if (item.status === 'failed') return null;
+      const mcpMeta = parseMcpToolName(item.tool_name);
+      if (item.status === 'failed' && !mcpMeta) return null;
       const formattedLine = formatToolLine(item.tool_name, item.arguments);
       const headline = splitToolHeadline(formattedLine, item.tool_name);
       const resultSummary = buildToolResultSummary(item.tool_name, item.arguments, item.result);
@@ -620,6 +637,8 @@ function buildItemView(
         argumentsText: buildToolArgumentsSummary(item.tool_name, item.arguments),
         resultText: resultSummary ?? (item.result ? truncate(item.result, 260) : undefined),
         errorText: item.error ? truncate(item.error, 260) : undefined,
+        mcpSource: mcpMeta ? mcpMeta.server : undefined,
+        failureReason: item.status === 'failed' ? (item.error ? truncate(item.error, 180) : 'tool failed') : undefined,
         previewLines: preview.previewLines,
         previewOverflowCount: preview.previewOverflowCount,
         alwaysShowPreview: preview.alwaysShowPreview,
@@ -662,11 +681,13 @@ function getSearchableText(item: CodexTimelineItemView): string {
     case 'tool_call':
       return [
         item.label,
+        item.mcpSource ? `mcp:${item.mcpSource}` : undefined,
         item.status,
         item.summary,
         item.argumentsText,
         item.resultText,
         item.errorText,
+        item.failureReason,
         ...(item.previewLines ?? []),
       ]
         .filter(Boolean)

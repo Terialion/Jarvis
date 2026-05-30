@@ -16,6 +16,53 @@ export interface McpResourceClient {
   readResource(connection: McpResourceClient['connections'][number], uri: string): Promise<unknown>;
 }
 
+// ---- mcp_status ----
+
+export const mcpStatusSchema = toOpenAITool({
+  name: 'mcp_status',
+  description:
+    'Show MCP connection status, including connected servers and exposed capability counts.',
+  parameters: {
+    type: 'object',
+    properties: {},
+  },
+});
+
+export const mcpHealthcheckSchema = toOpenAITool({
+  name: 'mcp_healthcheck',
+  description:
+    'One-shot MCP health check: combines status and resource snapshot for connected servers.',
+  parameters: {
+    type: 'object',
+    properties: {
+      maxResourcesPerServer: {
+        type: 'number',
+        description: 'Optional cap per server for resource previews (default 5).',
+      },
+    },
+  },
+});
+
+export function createMcpStatusHandler(client: McpResourceClient): ToolHandler {
+  return (_args: Record<string, unknown>, _context: ToolContext): string => {
+    const servers = client.connections.map((conn) => ({
+      name: conn.serverInfo?.name ?? 'unknown',
+      version: conn.serverInfo?.version ?? '',
+      resources: Array.isArray(conn.resources) ? conn.resources.length : 0,
+    }));
+
+    return JSON.stringify({
+      connected: servers.length > 0,
+      serverCount: servers.length,
+      servers,
+      message:
+        servers.length > 0
+          ? `Connected to ${servers.length} MCP server(s).`
+          : 'No MCP servers connected. Configure and connect servers before using MCP tools/resources.',
+    });
+  };
+}
+
 // ---- list_mcp_resources ----
 
 export const listMcpResourcesSchema = toOpenAITool({
@@ -118,6 +165,50 @@ export function createReadMcpResourceHandler(client: McpResourceClient): ToolHan
   };
 }
 
+export function createMcpHealthcheckHandler(client: McpResourceClient): ToolHandler {
+  return (args: Record<string, unknown>, _context: ToolContext): string => {
+    const maxResourcesPerServer =
+      typeof args.maxResourcesPerServer === 'number' && Number.isFinite(args.maxResourcesPerServer)
+        ? Math.max(1, Math.floor(args.maxResourcesPerServer))
+        : 5;
+
+    const servers = client.connections.map((conn) => {
+      const name = conn.serverInfo?.name ?? 'unknown';
+      const version = conn.serverInfo?.version ?? '';
+      const resources = Array.isArray(conn.resources) ? conn.resources : [];
+      return {
+        name,
+        version,
+        resourceCount: resources.length,
+        resourcesPreview: resources.slice(0, maxResourcesPerServer).map((resource) => ({
+          uri: resource.uri,
+          name: resource.name,
+          mimeType: resource.mimeType ?? 'text/plain',
+        })),
+        previewOverflow: Math.max(0, resources.length - maxResourcesPerServer),
+      };
+    });
+
+    return JSON.stringify({
+      ok: true,
+      connected: servers.length > 0,
+      serverCount: servers.length,
+      servers,
+      message:
+        servers.length > 0
+          ? `MCP healthy: connected to ${servers.length} server(s).`
+          : 'No MCP servers connected.',
+      suggestions:
+        servers.length > 0
+          ? []
+          : [
+              'Run plugin_bootstrap or mcp_bootstrap to configure a server.',
+              'Restart Jarvis and run mcp_status again.',
+            ],
+    });
+  };
+}
+
 // ---- factories ----
 
 export function createListMcpResourcesTool(client: McpResourceClient): ToolEntry {
@@ -141,5 +232,29 @@ export function createReadMcpResourceTool(client: McpResourceClient): ToolEntry 
     isAsync: true,
     emoji: '📄',
     maxResultSizeChars: 100_000,
+  };
+}
+
+export function createMcpStatusTool(client: McpResourceClient): ToolEntry {
+  return {
+    name: 'mcp_status',
+    toolset: 'mcp',
+    schema: mcpStatusSchema,
+    handler: createMcpStatusHandler(client),
+    isAsync: false,
+    emoji: '🧭',
+    maxResultSizeChars: 30_000,
+  };
+}
+
+export function createMcpHealthcheckTool(client: McpResourceClient): ToolEntry {
+  return {
+    name: 'mcp_healthcheck',
+    toolset: 'mcp',
+    schema: mcpHealthcheckSchema,
+    handler: createMcpHealthcheckHandler(client),
+    isAsync: false,
+    emoji: '🩺',
+    maxResultSizeChars: 50_000,
   };
 }

@@ -5,6 +5,7 @@ import { readFileSync, existsSync, readdirSync, writeFileSync, mkdirSync } from 
 import { join } from 'node:path';
 import { platform, arch, totalmem, freemem, uptime } from 'node:os';
 import { REPL } from './vendor/ui/REPL.js';
+import type { StatusDetailLine } from './vendor/ui/REPL.js';
 import type { Message, MessageContent } from './vendor/ui/MessageList.js';
 import type { StatusLineSegment } from './vendor/ui/StatusLine.js';
 import { WelcomeScreen } from './vendor/ui/WelcomeScreen.js';
@@ -20,13 +21,15 @@ import {
   createAgentTool,
   createListMcpResourcesTool,
   createReadMcpResourceTool,
+  createMcpStatusTool,
+  createMcpHealthcheckTool,
   createMcpToolEntries,
 } from '@jarvis/tools';
 import type { AskQuestionDef } from '@jarvis/tools';
 import { SkillRegistry, SkillExecutor } from '@jarvis/skills';
 import { SessionStore } from '@jarvis/store';
 import { SubagentPool, toolWhitelistForType, type SubagentConfig } from '@jarvis/subagents';
-import { MCPClient } from '@jarvis/mcp';
+import { MCPClient, connectMcpServers, type McpConnectionStatus, type McpServerConfig } from '@jarvis/mcp';
 import { HookRegistry } from '@jarvis/hooks';
 import { LLMProvider } from '@jarvis/agent';
 import type { ModelReasoningEffort } from '@jarvis/agent';
@@ -42,6 +45,7 @@ import {
 import { formatToolLine } from './vendor/ui/tool-display.js';
 import { buildStatusSegments } from './status-segments.js';
 import type { CodexTaskSnapshot, CodexTurnSnapshot } from './presentation/codex-timeline-state.js';
+import { buildContextPanelLines, resolveContextMode, type ToolTokenEntry, type SkillTokenEntry, type MemoryTokenEntry } from './context-panel.js';
 
 // ============================================================================
 // Slash command definitions
@@ -67,6 +71,11 @@ interface SlashCommandCtx {
   maxTurns: number;
   outputStyleRef: React.MutableRefObject<string>;
   permissionModeRef: React.MutableRefObject<string>;
+  mcpClientRef: React.MutableRefObject<MCPClient | null>;
+  mcpStatusesRef: React.MutableRefObject<McpConnectionStatus[]>;
+  mcpConfiguredRef: React.MutableRefObject<Array<{ id: string; plugin?: string; config: McpServerConfig }>>;
+  tokenTrackerRef: React.MutableRefObject<TokenTracker | null>;
+  toolsRef: React.MutableRefObject<ToolRegistry | null>;
 }
 
 interface SlashCommandDef {
@@ -86,6 +95,108 @@ function makeSysMsg(msg: string): Message {
 }
 
 const TASK_TOOLS = new Set(['task_create', 'task_update', 'task_list']);
+
+function discoverPluginSkillDirs(projectRoot: string): string[] {
+  const roots = [
+    join(projectRoot, '.jarvis', 'plugins'),
+    join(process.env['USERPROFILE'] ?? '', '.jarvis', 'plugins'),
+  ].filter(Boolean);
+  const result: string[] = [];
+  for (const root of roots) {
+    if (!existsSync(root)) continue;
+    let dirents: import('node:fs').Dirent[] = [];
+    try {
+      dirents = readdirSync(root, { withFileTypes: true });
+    } catch {
+      continue;
+    }
+    for (const dirent of dirents) {
+      if (!dirent.isDirectory()) continue;
+      const pluginRoot = join(root, dirent.name);
+      const manifestPath = join(pluginRoot, 'plugin.json');
+      if (!existsSync(manifestPath)) continue;
+      try {
+        const manifest = JSON.parse(readFileSync(manifestPath, 'utf8')) as { skills?: string };
+        if (manifest.skills) {
+          result.push(join(pluginRoot, manifest.skills));
+        }
+      } catch {
+        // ignore invalid plugin manifest
+      }
+    }
+  }
+  return [...new Set(result)];
+}
+
+function discoverPluginMcpServers(projectRoot: string): Array<{ id: string; plugin: string; config: McpServerConfig }> {
+  const roots = [
+    join(projectRoot, '.jarvis', 'plugins'),
+    join(process.env['USERPROFILE'] ?? '', '.jarvis', 'plugins'),
+  ].filter(Boolean);
+  const servers: Array<{ id: string; plugin: string; config: McpServerConfig }> = [];
+  for (const root of roots) {
+    if (!existsSync(root)) continue;
+    let dirents: import('node:fs').Dirent[] = [];
+    try {
+      dirents = readdirSync(root, { withFileTypes: true });
+    } catch {
+      continue;
+    }
+    for (const dirent of dirents) {
+      if (!dirent.isDirectory()) continue;
+      const pluginRoot = join(root, dirent.name);
+      const manifestPath = join(pluginRoot, 'plugin.json');
+      if (!existsSync(manifestPath)) continue;
+      try {
+        const manifest = JSON.parse(readFileSync(manifestPath, 'utf8')) as { mcpServers?: string; enabled?: boolean };
+        if (manifest.enabled === false || !manifest.mcpServers) continue;
+        const mcpPath = join(pluginRoot, manifest.mcpServers, '.mcp.json');
+        if (!existsSync(mcpPath)) continue;
+        const mcpConfig = JSON.parse(readFileSync(mcpPath, 'utf8')) as { servers?: Record<string, McpServerConfig> };
+        for (const [id, cfg] of Object.entries(mcpConfig.servers ?? {})) {
+          if (!cfg || typeof cfg.command !== 'string' || !cfg.command.trim()) continue;
+          servers.push({
+            id,
+            plugin: dirent.name,
+            config: {
+              ...cfg,
+              cwd: cfg.cwd ?? projectRoot,
+            },
+          });
+        }
+      } catch {
+        // ignore invalid plugin config
+      }
+    }
+  }
+  return servers;
+}
+
+function discoverUserMcpServers(projectRoot: string): Array<{ id: string; plugin?: string; config: McpServerConfig }> {
+  const configPath = join(process.env['USERPROFILE'] ?? '', '.jarvis', 'mcp_server_config.json');
+  if (!configPath || !existsSync(configPath)) return [];
+  try {
+    const raw = JSON.parse(readFileSync(configPath, 'utf8')) as {
+      mcpServers?: Record<string, McpServerConfig>;
+      servers?: Record<string, McpServerConfig>;
+    };
+    const serverMap = raw.mcpServers ?? raw.servers ?? {};
+    const out: Array<{ id: string; plugin?: string; config: McpServerConfig }> = [];
+    for (const [id, cfg] of Object.entries(serverMap)) {
+      if (!cfg || typeof cfg.command !== 'string' || !cfg.command.trim()) continue;
+      out.push({
+        id,
+        config: {
+          ...cfg,
+          cwd: cfg.cwd ?? projectRoot,
+        },
+      });
+    }
+    return out;
+  } catch {
+    return [];
+  }
+}
 
 function getGitBranch(cwd: string): string | null {
   try {
@@ -262,21 +373,59 @@ const SLASH_COMMANDS: SlashCommandDef[] = [
   {
     name: 'context',
     description: 'Show current session context info',
-    usage: '/context',
-    handler: (_args, ctx) => {
+    usage: '/context [mcp|memory|skills|tools|all]',
+    handler: (args, ctx) => {
       const msgCount = ctx.historyRef.current.length;
       const totalChars = ctx.historyRef.current.reduce((sum, m) => sum + m.content.length, 0);
-      const estTokens = Math.ceil(totalChars / 4);
+      const messageTokens = Math.ceil(totalChars / 4);
+      const snapshot = ctx.tokenTrackerRef.current?.snapshot();
+      const contextWindow = snapshot?.contextWindow ?? 200_000;
+      const totalTokens = snapshot?.totalTokens ?? messageTokens;
       const shortSid = (ctx.sid ?? 'none').slice(-16);
-      const modFiles = ctx.modifiedFilesRef.current.size;
-      return [
-        `Session: ${shortSid}`,
-        `Model: ${ctx.modelRef.current}`,
-        `Messages: ${msgCount}`,
-        `Estimated tokens: ${estTokens.toLocaleString()}`,
-        `Modified files: ${modFiles}`,
-        `UI messages: ${ctx.messages.length}`,
-      ].join('\n');
+      const systemPromptTokens = estimateTokensFromText(ctx.systemPromptRef.current);
+      const memoryEntries = estimateMemoryEntries(ctx.cwd);
+      const skillEntries: SkillTokenEntry[] = (ctx.skills?.listLoadable() ?? []).map((skill) => ({
+        name: skill.name,
+        source: skill.source,
+        tokens: estimateTokensFromText(`${skill.name}\n${skill.description}`),
+      }));
+      const allToolSchemas = ctx.toolsRef.current?.getDefinitions() ?? [];
+      const toolEntries: ToolTokenEntry[] = allToolSchemas.map((schema) => {
+        const fn = (schema as { function?: { name?: string } }).function?.name ?? 'unknown';
+        const serialized = JSON.stringify(schema);
+        return {
+          name: fn,
+          tokens: estimateTokensFromText(serialized),
+          isMcp: typeof fn === 'string' && fn.toLowerCase().includes('mcp'),
+        };
+      });
+      return buildContextPanelLines({
+        mode: resolveContextMode(args),
+        modelName: parseModelName(ctx.modelRef.current).cleanName,
+        sessionId: shortSid,
+        messageCount: msgCount,
+        uiMessageCount: ctx.messages.length,
+        contextWindow,
+        totalTokens,
+        systemPromptTokens,
+        messageTokens,
+        memoryEntries,
+        skillEntries,
+        toolEntries,
+        mcpConfigured: ctx.mcpConfiguredRef.current.map((entry) => ({
+          id: entry.id,
+          plugin: entry.plugin,
+          command: entry.config.command,
+        })),
+        mcpStatuses: ctx.mcpStatusesRef.current.map((status) => ({
+          id: status.id,
+          state: status.state,
+          serverName: status.serverName,
+          toolCount: status.toolCount,
+          resourceCount: status.resourceCount,
+          error: status.error,
+        })),
+      }).join('\n');
     },
   },
   {
@@ -465,6 +614,22 @@ const SLASH_COMMANDS: SlashCommandDef[] = [
       }
 
       return lines.join('\n');
+    },
+  },
+  {
+    name: 'mcp',
+    description: 'Show MCP server diagnostics',
+    usage: '/mcp [full]',
+    handler: (args, ctx) => {
+      const mode = (args[0] ?? '').toLowerCase();
+      if (mode === 'full') {
+        return formatMcpDiagnostics(
+          ctx.mcpConfiguredRef.current,
+          ctx.mcpStatusesRef.current,
+          ctx.mcpClientRef.current,
+        );
+      }
+      return 'Pinned MCP summary under status line. Run /mcp full for full diagnostics table.';
     },
   },
   {
@@ -857,6 +1022,109 @@ function formatFileChangeSummary(changes: FileChange[]): string {
   }).join('\n');
 }
 
+function formatMcpDiagnostics(
+  configured: Array<{ id: string; plugin?: string; config: McpServerConfig }>,
+  statuses: McpConnectionStatus[],
+  client: MCPClient | null,
+): string {
+  const lines: string[] = ['MCP diagnostics:\n'];
+  lines.push(`Configured servers: ${configured.length}`);
+  lines.push(`Connected servers: ${client?.connections.length ?? 0}`);
+  lines.push('');
+
+  if (configured.length > 0) {
+    lines.push('Configured:');
+    lines.push('  ID                   Source        Command');
+    lines.push('  -------------------- ------------- ------------------------------');
+    for (const entry of configured) {
+      const id = entry.id.padEnd(20, ' ').slice(0, 20);
+      const source = (entry.plugin ?? 'user').padEnd(13, ' ').slice(0, 13);
+      const cmd = (entry.config.command ?? '').slice(0, 30);
+      lines.push(`  ${id} ${source} ${cmd}`);
+    }
+    lines.push('');
+  }
+
+  if (statuses.length > 0) {
+    lines.push('Connection status:');
+    lines.push('  ID                   State       Server                  Tools  Resources');
+    lines.push('  -------------------- ----------- ----------------------- ------ ---------');
+    for (const status of statuses) {
+      const id = status.id.padEnd(20, ' ').slice(0, 20);
+      const state = status.state.padEnd(11, ' ').slice(0, 11);
+      const server = (status.serverName ?? '-').padEnd(23, ' ').slice(0, 23);
+      const tools = String(status.toolCount ?? 0).padStart(6, ' ');
+      const resources = String(status.resourceCount ?? 0).padStart(9, ' ');
+      lines.push(`  ${id} ${state} ${server} ${tools} ${resources}`);
+      if (status.error) lines.push(`    error: ${status.error}`);
+    }
+  } else {
+    lines.push('No connection status available yet. Start a new turn or restart Jarvis after config changes.');
+  }
+
+  return lines.join('\n');
+}
+
+function estimateTokensFromText(text: string | undefined): number {
+  if (!text) return 0;
+  return Math.ceil(text.length / 4);
+}
+
+function estimateMemoryEntries(cwd: string): MemoryTokenEntry[] {
+  const entries: MemoryTokenEntry[] = [];
+  const claudePath = join(cwd, 'CLAUDE.md');
+  if (existsSync(claudePath)) {
+    entries.push({
+      path: 'CLAUDE.md',
+      tokens: estimateTokensFromText(readFileSync(claudePath, 'utf8')),
+    });
+  }
+  const memoryDir = join(cwd, '.jarvis', 'memory');
+  if (existsSync(memoryDir)) {
+    try {
+      const files = readdirSync(memoryDir).filter((f) => f.endsWith('.md'));
+      for (const file of files) {
+        entries.push({
+          path: `.jarvis/memory/${file}`,
+          tokens: estimateTokensFromText(readFileSync(join(memoryDir, file), 'utf8')),
+        });
+      }
+    } catch {
+      // ignore memory read errors
+    }
+  }
+  return entries;
+}
+
+function buildContextProgressBar(percentRemaining?: number): StatusDetailLine | null {
+  if (percentRemaining === undefined || !Number.isFinite(percentRemaining)) return null;
+  const width = 18;
+  const left = Math.max(0, Math.min(100, percentRemaining));
+  const used = Math.max(0, 100 - left);
+  const filled = Math.round((used / 100) * width);
+  const bar = `${'█'.repeat(filled)}${'░'.repeat(Math.max(0, width - filled))}`;
+  const color: StatusDetailLine['color'] =
+    used < 40 ? 'green' : used < 70 ? 'yellow' : 'red';
+  return { content: `CTX [${bar}] used ${used}% · left ${left}%`, color };
+}
+
+function buildMcpFooterLines(
+  statuses: McpConnectionStatus[],
+): StatusDetailLine[] {
+  if (statuses.length === 0) return [{ content: '[MCP --] waiting for status', color: 'gray' }];
+  const ok = statuses.filter((status) => status.state === 'ready' || status.state === 'degraded');
+  const failed = statuses.filter((status) => status.state === 'failed');
+  const firstError = failed[0]?.error;
+  const summaryColor: StatusDetailLine['color'] = failed.length > 0 ? 'red' : 'green';
+  const summary = `[MCP ${ok.length}/${statuses.length}]`;
+  if (!firstError) return [{ content: summary, color: summaryColor }];
+  const compactError = firstError.length > 92 ? `${firstError.slice(0, 92)}...` : firstError;
+  return [
+    { content: summary, color: summaryColor },
+    { content: `[MCP ERR] ${compactError}`, color: 'red' },
+  ];
+}
+
 function estimateTurnTokenCount(stats: {
   trackerStartBlended: number;
   tokenChars: number;
@@ -899,6 +1167,8 @@ export function App({ options }: { options: TUIOptions }): React.ReactNode {
   const permissionModeRef = useRef<string>(savedSettings.permission_mode || 'workspace_write');
   const poolRef = useRef<SubagentPool | null>(null);
   const mcpRef = useRef<MCPClient | null>(null);
+  const mcpStatusesRef = useRef<McpConnectionStatus[]>([]);
+  const mcpConfiguredRef = useRef<Array<{ id: string; plugin?: string; config: McpServerConfig }>>([]);
   const tokenTrackerRef = useRef<TokenTracker | null>(null);
   const elapsedRef = useRef<number>(0);
   const elapsedTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -1098,10 +1368,12 @@ export function App({ options }: { options: TUIOptions }): React.ReactNode {
       toolsRef.current = tools;
 
       if (!skillsRef.current) {
+        const pluginSkillDirs = discoverPluginSkillDirs(process.cwd());
         skillsRef.current = new SkillRegistry();
         skillsRef.current.discover({
           builtinDir: 'skills',
           projectDir: '.jarvis/skills',
+          extraDirs: pluginSkillDirs.map((p) => ({ path: p, source: 'plugin' as const })),
         });
       }
       if (!executorRef.current) {
@@ -1116,6 +1388,25 @@ export function App({ options }: { options: TUIOptions }): React.ReactNode {
       }
       tools.register(createListMcpResourcesTool(mcpRef.current));
       tools.register(createReadMcpResourceTool(mcpRef.current));
+      tools.register(createMcpStatusTool(mcpRef.current));
+      tools.register(createMcpHealthcheckTool(mcpRef.current));
+      const mcpServers = [
+        ...discoverUserMcpServers(process.cwd()),
+        ...discoverPluginMcpServers(process.cwd()),
+      ];
+      mcpConfiguredRef.current = mcpServers;
+      if (mcpServers.length > 0) {
+        void connectMcpServers(mcpRef.current, mcpServers).then((statuses) => {
+          mcpStatusesRef.current = statuses;
+          for (const mcpTool of createMcpToolEntries(mcpRef.current!)) {
+            try {
+              tools.register(mcpTool);
+            } catch {
+              // ignore duplicate dynamic tool registration
+            }
+          }
+        });
+      }
       for (const mcpTool of createMcpToolEntries(mcpRef.current)) {
         tools.register(mcpTool);
       }
@@ -1637,6 +1928,11 @@ export function App({ options }: { options: TUIOptions }): React.ReactNode {
           maxTurns: options.maxTurns,
           outputStyleRef,
           permissionModeRef,
+          mcpClientRef: mcpRef,
+          mcpStatusesRef,
+          mcpConfiguredRef,
+          tokenTrackerRef,
+          toolsRef,
         },
         setMessages,
         skillsRef.current,
@@ -1661,6 +1957,23 @@ export function App({ options }: { options: TUIOptions }): React.ReactNode {
       sessionId: sessionIdRef.current,
     });
   }, [askQuestions, cwd, elapsedMs, gitBranch, isLoading, messages.length, modelRef.current]);
+
+  const statusDetailLines = useMemo(() => {
+    const lines: StatusDetailLine[] = [];
+    const tracker = tokenTrackerRef.current;
+    const contextLine = buildContextProgressBar(tracker?.contextPercentRemaining);
+    if (contextLine) lines.push(contextLine);
+    const mcpLines = buildMcpFooterLines(mcpStatusesRef.current);
+    const mcpHealthy = mcpStatusesRef.current.length > 0
+      && mcpStatusesRef.current.every((status) => status.state === 'ready' || status.state === 'degraded');
+    if (!mcpHealthy) {
+      lines.push(...mcpLines);
+    } else if (lines.length === 0) {
+      // keep one short line only if nothing else is shown
+      lines.push(mcpLines[0]!);
+    }
+    return lines.slice(0, 3);
+  }, [elapsedMs, isLoading, messages.length]);
 
   const spinnerTokenCount = useMemo(() => {
     if (!isLoading) return undefined;
@@ -1732,6 +2045,7 @@ export function App({ options }: { options: TUIOptions }): React.ReactNode {
       onExit={handleExit}
       model={modelRef.current}
       statusSegments={statusSegments}
+      statusDetailLines={statusDetailLines}
       commands={replCommands}
       askUserQuestion={askUserQuestion}
       spinnerTokenCount={spinnerTokenCount}

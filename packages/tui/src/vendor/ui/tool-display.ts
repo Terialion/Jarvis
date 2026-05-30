@@ -34,6 +34,9 @@ const TOOL_DISPLAY: Record<string, ToolDisplay> = {
   agent: { label: 'Agent', detailKeys: ['description'] },
   list_mcp_resources: { label: 'MCP', detailKeys: [] },
   read_mcp_resource: { label: 'MCP', detailKeys: ['server', 'uri'] },
+  mcp_healthcheck: { label: 'MCP Healthcheck', detailKeys: [] },
+  mcp_bootstrap: { label: 'MCP Setup', detailKeys: ['server'] },
+  plugin_bootstrap: { label: 'Plugin Setup', detailKeys: ['pluginName', 'server'] },
 };
 
 // ---- Shell word splitting (OpenClaw tool-display-common:4-95) ----

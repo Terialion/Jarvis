@@ -46,8 +46,10 @@ export type { CronJob } from './builtin/cron-scheduler.js';
 export { enterWorktreeTool, exitWorktreeTool } from './builtin/worktree.js';
 export { createSkillLoadTool, createSkillLoadHandler, createSkillTool, createSkillHandler, type SkillSupplier } from './builtin/skill-load.js';
 export { createAgentTool, createAgentHandler, type AgentPool } from './builtin/agent.js';
-export { createListMcpResourcesTool, createReadMcpResourceTool, type McpResourceClient } from './builtin/mcp-resource.js';
+export { createListMcpResourcesTool, createReadMcpResourceTool, createMcpStatusTool, createMcpHealthcheckTool, type McpResourceClient } from './builtin/mcp-resource.js';
 export { createMcpToolEntries, type McpToolClient } from './builtin/mcp-tools.js';
+export { mcpBootstrapTool, mcpBootstrapSchema } from './builtin/mcp-setup.js';
+export { pluginBootstrapTool, pluginBootstrapSchema } from './builtin/plugin-setup.js';
 export { TavilySearchBackend, TavilyFetchBackend, tryCreateTavilySearch, tryCreateTavilyFetch, type TavilyOptions } from './builtin/tavily-backend.js';
 
 import type { ToolEntry } from './registry.js';
@@ -63,6 +65,8 @@ import { enterPlanModeTool, exitPlanModeTool } from './builtin/plan-mode.js';
 import { notebookEditTool } from './builtin/notebook-edit.js';
 import { cronCreateTool, cronDeleteTool, cronListTool, scheduleWakeupTool } from './builtin/cron.js';
 import { enterWorktreeTool, exitWorktreeTool } from './builtin/worktree.js';
+import { mcpBootstrapTool } from './builtin/mcp-setup.js';
+import { pluginBootstrapTool } from './builtin/plugin-setup.js';
 
 /** All builtin tool entries in one array. */
 export const allBuiltinTools: ToolEntry[] = [
@@ -88,4 +92,6 @@ export const allBuiltinTools: ToolEntry[] = [
   scheduleWakeupTool,
   enterWorktreeTool,
   exitWorktreeTool,
+  mcpBootstrapTool,
+  pluginBootstrapTool,
 ];

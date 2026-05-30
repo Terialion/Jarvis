@@ -26,22 +26,21 @@ export class PluginDiscovery {
     if (this.cache) return this.cache;
 
     const entries: PluginEntry[] = [];
-    const seen = new Set<string>();
 
     // Project scope: .jarvis/plugins/ in project root
     if (options.projectRoot) {
       const projectPlugins = path.join(options.projectRoot, '.jarvis', 'plugins');
-      this._scanDir(projectPlugins, 'project', entries, seen);
+      this._scanDir(projectPlugins, 'project', entries);
     }
 
     // User scope
     if (options.userPluginsDir) {
-      this._scanDir(options.userPluginsDir, 'user', entries, seen);
+      this._scanDir(options.userPluginsDir, 'user', entries);
     }
 
     // Extra dirs (from env)
     for (const dir of options.extraDirs ?? []) {
-      this._scanDir(dir, 'user', entries, seen);
+      this._scanDir(dir, 'user', entries);
     }
 
     this.cache = entries;
@@ -61,7 +60,6 @@ export class PluginDiscovery {
     dir: string,
     source: PluginEntry['source'],
     entries: PluginEntry[],
-    seen: Set<string>,
     depth = 0,
   ): void {
     if (depth > 3) return;
@@ -84,8 +82,7 @@ export class PluginDiscovery {
         try {
           const raw = fs.readFileSync(manifestPath, 'utf-8');
           const manifest: PluginManifest = JSON.parse(raw);
-          if (manifest.name && !seen.has(manifest.name)) {
-            seen.add(manifest.name);
+          if (manifest.name) {
             entries.push({ rootDir: full, manifest, source });
           }
         } catch {
@@ -94,7 +91,7 @@ export class PluginDiscovery {
       }
 
       // Recurse into subdirectories
-      this._scanDir(full, source, entries, seen, depth + 1);
+      this._scanDir(full, source, entries, depth + 1);
     }
   }
 }

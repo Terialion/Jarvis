@@ -5,6 +5,7 @@
 export interface PluginManifest {
   name: string;
   version: string;
+  enabled?: boolean;
   description?: string;
   author?: string;
   /** Relative paths from plugin root to component directories/files */
@@ -14,6 +15,13 @@ export interface PluginManifest {
   hooks?: string;
   mcpServers?: string;
 }
+
+export type PluginIssue = {
+  plugin: string;
+  level: 'warning' | 'error';
+  code: 'disabled' | 'duplicate' | 'invalid_manifest';
+  message: string;
+};
 
 export interface PluginEntry {
   /** Plugin root directory on disk */

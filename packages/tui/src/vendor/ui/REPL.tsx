@@ -28,6 +28,11 @@ type REPLCommand = {
   onExecute: (args: string, fullInput: string) => void;
 };
 
+export type StatusDetailLine = {
+  content: string;
+  color?: "green" | "yellow" | "red" | "cyan" | "gray";
+};
+
 type PermissionRequestState = {
   toolName: string;
   description: string;
@@ -66,6 +71,7 @@ export type REPLProps = {
   commands?: REPLCommand[];
   model?: string;
   statusSegments?: StatusLineSegment[];
+  statusDetailLines?: StatusDetailLine[];
 
   prefix?: string;
   placeholder?: string;
@@ -103,6 +109,7 @@ export function REPL({
   commands = [],
   model,
   statusSegments,
+  statusDetailLines = [],
   prefix = "\u276F",
   placeholder,
   history: externalHistory,
@@ -384,6 +391,15 @@ export function REPL({
       <Divider />
 
       {resolvedSegments.length > 0 && <StatusLine segments={resolvedSegments} />}
+      {statusDetailLines.length > 0 && (
+        <Box flexDirection="column" paddingX={1}>
+          {statusDetailLines.map((line, index) => (
+            <Text key={`${index}:${line.content}`} dimColor color={line.color}>
+              {line.content}
+            </Text>
+          ))}
+        </Box>
+      )}
     </Box>
   );
 }

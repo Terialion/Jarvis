@@ -5,13 +5,15 @@
 
 import * as path from 'node:path';
 import * as fs from 'node:fs';
+import * as os from 'node:os';
 import { parseArgs } from 'node:util';
 import { LLMProvider, AgentLoop } from '@jarvis/agent';
-import { ToolRegistry, allBuiltinTools, createToolRuntime, createSkillLoadTool, createSkillTool, createAgentTool, createListMcpResourcesTool, createReadMcpResourceTool, createMcpToolEntries, webSearchTool, webFetchTool, createWebSearchTool, createWebFetchHandler, tryCreateTavilySearch, tryCreateTavilyFetch } from '@jarvis/tools';
+import { ToolRegistry, allBuiltinTools, createToolRuntime, createSkillLoadTool, createSkillTool, createAgentTool, createListMcpResourcesTool, createReadMcpResourceTool, createMcpStatusTool, createMcpHealthcheckTool, createMcpToolEntries, webSearchTool, webFetchTool, createWebSearchTool, createWebFetchHandler, tryCreateTavilySearch, tryCreateTavilyFetch } from '@jarvis/tools';
 import { HookRegistry } from '@jarvis/hooks';
 import { SkillRegistry, SkillExecutor } from '@jarvis/skills';
 import { SubagentPool, toolWhitelistForType, type SubagentConfig } from '@jarvis/subagents';
-import { MCPClient } from '@jarvis/mcp';
+import { MCPClient, connectMcpServers, type McpServerConfig } from '@jarvis/mcp';
+import { PluginRegistry } from '@jarvis/plugins';
 import { MarkdownMemoryStore } from '@jarvis/store';
 import { createMemorySearchHandler, createMemoryGetHandler } from '@jarvis/agent';
 import { SlashCommandRegistry, registerBuiltinCommands } from './commands.js';
@@ -188,20 +190,88 @@ export function createSkillRegistry(projectRoot?: string): SkillRegistry {
   const root = projectRoot ?? findProjectRoot();
   const builtinSkillsDir = path.join(root, 'skills');
   const projectSkillsDir = path.join(root, '.jarvis', 'skills');
+  const userPluginsDir = path.join(os.homedir(), '.jarvis', 'plugins');
+  const pluginRegistry = new PluginRegistry();
+  pluginRegistry.loadAll({ projectRoot: root, userPluginsDir });
+  for (const issue of pluginRegistry.listIssues()) {
+    if (process.env['JARVIS_DEBUG']) {
+      console.error(`[plugins] ${issue.level} ${issue.code}: ${issue.message}`);
+    }
+  }
+  const pluginSkillExtraDirs = pluginRegistry
+    .listSkillDirs()
+    .map((pluginName) => pluginRegistry.getPlugin(pluginName))
+    .filter((entry): entry is NonNullable<typeof entry> => Boolean(entry))
+    .map((entry) => ({
+      path: path.join(entry.rootDir, entry.manifest.skills ?? 'skills'),
+      source: 'plugin' as const,
+    }));
 
   const skills = registry.discover({
     builtinDir: builtinSkillsDir,
     projectDir: projectSkillsDir,
+    extraDirs: pluginSkillExtraDirs,
   });
 
   if (process.env['JARVIS_DEBUG']) {
     console.error('[skills] Discovered %d skill(s) from %s + %s', skills.length, builtinSkillsDir, projectSkillsDir);
+    if (pluginSkillExtraDirs.length > 0) {
+      console.error('[skills] Plugin skill dirs: %s', pluginSkillExtraDirs.map((d) => d.path).join(', '));
+    }
     for (const s of skills) {
       console.error('[skills]   - %s (tags: %s)', s.name, s.tags?.join(', ') ?? 'none');
     }
   }
 
   return registry;
+}
+
+function collectPluginMcpServers(projectRoot: string): Array<{ id: string; plugin: string; config: McpServerConfig }> {
+  const userPluginsDir = path.join(os.homedir(), '.jarvis', 'plugins');
+  const pluginRegistry = new PluginRegistry();
+  pluginRegistry.loadAll({ projectRoot, userPluginsDir });
+  const servers: Array<{ id: string; plugin: string; config: McpServerConfig }> = [];
+  for (const cfg of pluginRegistry.listMcpConfigs()) {
+    const serverMap = (cfg.config['servers'] ?? {}) as Record<string, McpServerConfig>;
+    for (const [id, server] of Object.entries(serverMap)) {
+      if (!server || typeof server.command !== 'string' || !server.command.trim()) continue;
+      servers.push({
+        id,
+        plugin: cfg.plugin,
+        config: {
+          ...server,
+          cwd: server.cwd ?? projectRoot,
+        },
+      });
+    }
+  }
+  return servers;
+}
+
+function collectUserMcpServers(projectRoot: string): Array<{ id: string; plugin?: string; config: McpServerConfig }> {
+  const configPath = path.join(os.homedir(), '.jarvis', 'mcp_server_config.json');
+  if (!fs.existsSync(configPath)) return [];
+  try {
+    const raw = JSON.parse(fs.readFileSync(configPath, 'utf8')) as {
+      mcpServers?: Record<string, McpServerConfig>;
+      servers?: Record<string, McpServerConfig>;
+    };
+    const serverMap = raw.mcpServers ?? raw.servers ?? {};
+    const out: Array<{ id: string; plugin?: string; config: McpServerConfig }> = [];
+    for (const [id, cfg] of Object.entries(serverMap)) {
+      if (!cfg || typeof cfg.command !== 'string' || !cfg.command.trim()) continue;
+      out.push({
+        id,
+        config: {
+          ...cfg,
+          cwd: cfg.cwd ?? projectRoot,
+        },
+      });
+    }
+    return out;
+  } catch {
+    return [];
+  }
 }
 
 export function registerSkillCommands(
@@ -316,6 +386,25 @@ export function bootstrap(options: CLIOptions): CLIContext {
   const mcpClient = new MCPClient();
   tools.register(createListMcpResourcesTool(mcpClient));
   tools.register(createReadMcpResourceTool(mcpClient));
+  tools.register(createMcpStatusTool(mcpClient));
+  tools.register(createMcpHealthcheckTool(mcpClient));
+  const projectRoot = findProjectRoot();
+  const mcpServers = [
+    ...collectUserMcpServers(projectRoot),
+    ...collectPluginMcpServers(projectRoot),
+  ];
+  if (mcpServers.length > 0) {
+    void connectMcpServers(mcpClient, mcpServers).then((statuses) => {
+      if (process.env['JARVIS_DEBUG']) {
+        for (const status of statuses) {
+          const detail = status.state === 'failed'
+            ? `error=${status.error ?? 'unknown'}`
+            : `server=${status.serverName ?? status.id} tools=${status.toolCount ?? 0} resources=${status.resourceCount ?? 0}`;
+          console.error(`[mcp] ${status.state} ${status.plugin ? `${status.plugin}:` : ''}${status.id} ${detail}`);
+        }
+      }
+    });
+  }
   for (const mcpTool of createMcpToolEntries(mcpClient)) {
     tools.register(mcpTool);
   }
@@ -487,6 +576,16 @@ export async function runOneShot(options: CLIOptions): Promise<string> {
   const mcpClient = new MCPClient();
   tools.register(createListMcpResourcesTool(mcpClient));
   tools.register(createReadMcpResourceTool(mcpClient));
+  tools.register(createMcpStatusTool(mcpClient));
+  tools.register(createMcpHealthcheckTool(mcpClient));
+  const projectRoot = findProjectRoot();
+  const mcpServers = [
+    ...collectUserMcpServers(projectRoot),
+    ...collectPluginMcpServers(projectRoot),
+  ];
+  if (mcpServers.length > 0) {
+    await connectMcpServers(mcpClient, mcpServers);
+  }
   for (const mcpTool of createMcpToolEntries(mcpClient)) {
     tools.register(mcpTool);
   }

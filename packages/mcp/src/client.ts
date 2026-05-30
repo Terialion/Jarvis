@@ -42,6 +42,7 @@ export class MCPClient {
       method: 'initialize',
       params: {
         protocolVersion: '2025-06-18',
+        capabilities: {},
         clientInfo: { name: 'jarvis', version: '0.1.0' },
       },
     });

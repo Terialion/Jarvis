@@ -4,13 +4,14 @@
 
 import { PluginDiscovery, type DiscoveryOptions } from './discovery.js';
 import { ComponentLoader } from './loader.js';
-import type { PluginEntry, PluginCommand } from './models.js';
+import type { PluginEntry, PluginCommand, PluginIssue } from './models.js';
 
 export class PluginRegistry {
   private discovery: PluginDiscovery;
   private loader: ComponentLoader;
   private plugins: Map<string, PluginEntry> = new Map();
   private commands: PluginCommand[] = [];
+  private issues: PluginIssue[] = [];
   private loaded = false;
 
   constructor() {
@@ -26,8 +27,29 @@ export class PluginRegistry {
     if (this.loaded) return;
 
     const entries = this.discovery.discover(options);
+    const seen = new Map<string, PluginEntry>();
 
     for (const entry of entries) {
+      if (entry.manifest.enabled === false) {
+        this.issues.push({
+          plugin: entry.manifest.name,
+          level: 'warning',
+          code: 'disabled',
+          message: `Plugin "${entry.manifest.name}" is disabled by manifest.enabled=false`,
+        });
+        continue;
+      }
+      const existing = seen.get(entry.manifest.name);
+      if (existing) {
+        this.issues.push({
+          plugin: entry.manifest.name,
+          level: 'warning',
+          code: 'duplicate',
+          message: `Duplicate plugin "${entry.manifest.name}" ignored from ${entry.rootDir}; already loaded from ${existing.rootDir}`,
+        });
+        continue;
+      }
+      seen.set(entry.manifest.name, entry);
       this.plugins.set(entry.manifest.name, entry);
       this.commands.push(...this.loader.loadCommands(entry));
     }
@@ -40,6 +62,7 @@ export class PluginRegistry {
     this.discovery.clearCache();
     this.plugins.clear();
     this.commands = [];
+    this.issues = [];
     this.loaded = false;
   }
 
@@ -86,6 +109,11 @@ export class PluginRegistry {
   /** Get a specific plugin by name. */
   getPlugin(name: string): PluginEntry | undefined {
     return this.plugins.get(name);
+  }
+
+  /** Diagnostics for plugin loading conflicts and disabled manifests. */
+  listIssues(): PluginIssue[] {
+    return [...this.issues];
   }
 
   /** Number of loaded plugins. */
