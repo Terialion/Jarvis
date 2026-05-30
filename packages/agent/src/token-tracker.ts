@@ -61,6 +61,10 @@ export class TokenTracker {
   private _totalCached = 0;
   private _turnCount = 0;
   private _contextWindow: number;
+  /** Input tokens from the most recent turn — actual current context size */
+  private _lastTurnInput = 0;
+  /** Output tokens from the most recent turn */
+  private _lastTurnOutput = 0;
 
   constructor(contextWindow = 128_000) {
     this._contextWindow = contextWindow;
@@ -79,6 +83,8 @@ export class TokenTracker {
     this._totalInput += usage.promptTokens;
     this._totalOutput += usage.completionTokens;
     this._totalCached += usage.cachedTokens;
+    this._lastTurnInput = usage.promptTokens;
+    this._lastTurnOutput = usage.completionTokens;
     this._turnCount++;
   }
 
@@ -87,9 +93,14 @@ export class TokenTracker {
     return this._totalInput - this._totalCached + this._totalOutput;
   }
 
-  /** Total tokens in context window (includes system prompt + history) */
+  /** Total cumulative tokens across all turns */
   get totalTokens(): number {
     return this._totalInput + this._totalOutput;
+  }
+
+  /** Input tokens from the most recent turn (actual current context usage) */
+  get currentTurnTokens(): number {
+    return this._lastTurnInput;
   }
 
   get inputTokens(): number {
@@ -108,11 +119,12 @@ export class TokenTracker {
     return this._turnCount;
   }
 
-  /** Percentage of context window remaining. */
+  /** Percentage of context window remaining (based on last turn's actual usage). */
   get contextPercentRemaining(): number {
-    // Use last-turn token count as estimate of current context size
     if (this._contextWindow <= 0) return 100;
-    const used = this.totalTokens;
+    // Use last-turn input tokens — that's the actual context sent to the model.
+    // Cumulative totalTokens would double-count history across turns.
+    const used = this._lastTurnInput > 0 ? this._lastTurnInput : this.totalTokens;
     const pct = Math.round(((this._contextWindow - used) / this._contextWindow) * 100);
     return Math.max(0, Math.min(100, pct));
   }
@@ -135,5 +147,7 @@ export class TokenTracker {
     this._totalOutput = 0;
     this._totalCached = 0;
     this._turnCount = 0;
+    this._lastTurnInput = 0;
+    this._lastTurnOutput = 0;
   }
 }

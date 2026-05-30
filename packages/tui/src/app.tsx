@@ -3,6 +3,7 @@ import { useState, useCallback, useRef, useEffect, useMemo } from 'react';
 import { execSync } from 'node:child_process';
 import { readFileSync, existsSync, readdirSync, writeFileSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
+import { homedir } from 'node:os';
 import { platform, arch, totalmem, freemem, uptime } from 'node:os';
 import { REPL } from './vendor/ui/REPL.js';
 import type { StatusDetailLine } from './vendor/ui/REPL.js';
@@ -10,7 +11,7 @@ import type { Message, MessageContent } from './vendor/ui/MessageList.js';
 import type { StatusLineSegment } from './vendor/ui/StatusLine.js';
 import { WelcomeScreen } from './vendor/ui/WelcomeScreen.js';
 import { loadSettings, saveSettings, type UserSettings } from './settings-store.js';
-import { AgentLoop, AgentEventBus, ConversationSummarizer, TokenTracker, parseModelName, buildSystemPrompt, type ThreadEvent } from '@jarvis/agent';
+import { AgentLoop, AgentEventBus, ConversationSummarizer, TokenTracker, formatTokensCompact, estimateTokens, validateContextWindow, getAllModels, addUserModel, removeUserModel, parseModelName, findModel, buildSystemPrompt, type ThreadEvent, type ModelInfo } from '@jarvis/agent';
 import {
   ToolRegistry,
   allBuiltinTools,
@@ -41,6 +42,7 @@ import {
   loadJarvisConfig,
   normalizeJarvisReasoningEffort,
   saveJarvisConfig,
+  type JarvisReasoningEffort,
 } from '@jarvis/shared';
 import { formatToolLine } from './vendor/ui/tool-display.js';
 import { buildStatusSegments } from './status-segments.js';
@@ -497,9 +499,32 @@ const SLASH_COMMANDS: SlashCommandDef[] = [
   },
   {
     name: 'model',
-    description: 'Show or set the current model',
-    usage: '/model [model-name]',
+    description: 'Show or set the current model. /model add <slug> <name> <provider> <ctx> to register a custom model.',
+    usage: '/model [model-name | add <slug> <name> <provider> <ctx> | remove <slug>]',
     handler: (args, ctx) => {
+      // /model add <slug> <displayName> <provider> <contextWindow>
+      if (args[0] === 'add' && args.length >= 5) {
+        const [_, slug, ...rest] = args;
+        // Last arg is contextWindow, second-to-last is provider, rest is displayName
+        const ctxWindow = parseInt(rest[rest.length - 1]!, 10);
+        const provider = rest[rest.length - 2]!;
+        const displayName = rest.slice(0, -2).join(' ');
+        if (!slug || !displayName || !provider || isNaN(ctxWindow)) {
+          return 'Usage: /model add <slug> <display-name> <provider> <context-window>\nExample: /model add qwen3.5-thinking "Qwen 3.5 Thinking" qwen 128000';
+        }
+        const added = addUserModel({ slug, displayName, provider, contextWindow: ctxWindow, maxContextWindow: ctxWindow });
+        return added
+          ? `Model "${displayName}" (${slug}) added to user catalog. Use /model to select it.`
+          : `Model "${slug}" already exists in the catalog.`;
+      }
+      // /model remove <slug>
+      if (args[0] === 'remove' && args.length >= 2) {
+        const slug = args[1]!;
+        const removed = removeUserModel(slug);
+        return removed
+          ? `Model "${slug}" removed from user catalog.`
+          : `Model "${slug}" not found in user catalog (built-in models cannot be removed).`;
+      }
       if (args.length > 0) {
         ctx.modelRef.current = args[0];
         saveSettings({ model: args[0] });
@@ -970,28 +995,65 @@ function buildReplCommands(
   ctx: SlashCommandCtx,
   setMessages: (v: Message[] | ((prev: Message[]) => Message[])) => void,
   skills?: SkillRegistry | null,
+  setModelSelectorOpen?: (open: boolean) => void,
 ): REPLCommandDef[] {
-  const builtins = SLASH_COMMANDS.map((cmd) => ({
-    name: cmd.name,
-    description: cmd.description,
-    onExecute: (rawArgs: string, fullInput: string) => {
-      const userMsg: Message = {
-        id: `cmd_${Date.now()}`,
-        role: 'user',
-        content: fullInput,
-        timestamp: Date.now(),
+  const builtins = SLASH_COMMANDS.map((cmd) => {
+    // Override /model (no args) to open interactive selector
+    if (cmd.name === 'model') {
+      return {
+        name: cmd.name,
+        description: cmd.description,
+        onExecute: (rawArgs: string, fullInput: string) => {
+          const userMsg: Message = {
+            id: `cmd_${Date.now()}`,
+            role: 'user',
+            content: fullInput,
+            timestamp: Date.now(),
+          };
+          const args = rawArgs ? rawArgs.split(/\s+/) : [];
+
+          if (args.length === 0 && setModelSelectorOpen) {
+            // Open interactive model selector
+            setMessages((prev) => [...prev, userMsg]);
+            setModelSelectorOpen(true);
+            return;
+          }
+
+          // Text-based model set
+          const result = cmd.handler(args, ctx);
+          if (result instanceof Promise) {
+            result.then((text) =>
+              setMessages((prev) => [...prev, userMsg, makeSysMsg(text)]),
+            );
+          } else {
+            setMessages((prev) => [...prev, userMsg, makeSysMsg(result)]);
+          }
+        },
       };
-      const args = rawArgs ? rawArgs.split(/\s+/) : [];
-      const result = cmd.handler(args, ctx);
-      if (result instanceof Promise) {
-        result.then((text) =>
-          setMessages((prev) => [...prev, userMsg, makeSysMsg(text)]),
-        );
-      } else {
-        setMessages((prev) => [...prev, userMsg, makeSysMsg(result)]);
-      }
-    },
-  }));
+    }
+
+    return {
+      name: cmd.name,
+      description: cmd.description,
+      onExecute: (rawArgs: string, fullInput: string) => {
+        const userMsg: Message = {
+          id: `cmd_${Date.now()}`,
+          role: 'user',
+          content: fullInput,
+          timestamp: Date.now(),
+        };
+        const args = rawArgs ? rawArgs.split(/\s+/) : [];
+        const result = cmd.handler(args, ctx);
+        if (result instanceof Promise) {
+          result.then((text) =>
+            setMessages((prev) => [...prev, userMsg, makeSysMsg(text)]),
+          );
+        } else {
+          setMessages((prev) => [...prev, userMsg, makeSysMsg(result)]);
+        }
+      },
+    };
+  });
 
   // Auto-derive slash commands from skill names (CC/Codex convention)
   if (skills) {
@@ -1145,8 +1207,8 @@ async function refreshMcpStatuses(
 }
 
 function estimateTokensFromText(text: string | undefined): number {
-  if (!text) return 0;
-  return Math.ceil(text.length / 4);
+  // Delegate to shared CJK-aware estimator from @jarvis/agent
+  return estimateTokens(text);
 }
 
 function estimateMemoryEntries(cwd: string): MemoryTokenEntry[] {
@@ -1257,6 +1319,30 @@ export function App({ options }: { options: TUIOptions }): React.ReactNode {
   const taskCountRef = useRef<{ pending: number; in_progress: number; completed: number }>({ pending: 0, in_progress: 0, completed: 0 });
   const abortRef = useRef<AbortController | null>(null);
 
+  // Model selector state
+  const [modelSelectorOpen, setModelSelectorOpen] = useState(false);
+
+  // Persistent command history — survives restarts like CC/Codex
+  const HISTORY_FILE = join(process.cwd(), '.jarvis', 'history.json');
+  const historyRef2 = useRef<string[]>([]);
+  if (historyRef2.current.length === 0 && existsSync(HISTORY_FILE)) {
+    try {
+      const data = JSON.parse(readFileSync(HISTORY_FILE, 'utf-8'));
+      if (Array.isArray(data)) historyRef2.current = data.slice(0, 500);
+    } catch { /* corrupt file, start fresh */ }
+  }
+  const [historyVersion, setHistoryVersion] = useState(0);
+  const handleHistoryAdd = useCallback((entry: string) => {
+    // Dedup consecutive duplicates
+    if (historyRef2.current[0] === entry) return;
+    historyRef2.current = [entry, ...historyRef2.current].slice(0, 500);
+    setHistoryVersion((v) => v + 1);
+    try {
+      mkdirSync(join(process.cwd(), '.jarvis'), { recursive: true });
+      writeFileSync(HISTORY_FILE, JSON.stringify(historyRef2.current, null, 2), 'utf-8');
+    } catch { /* best-effort */ }
+  }, []);
+
   // AskUserQuestion bridge state
   const [askQuestions, setAskQuestions] = useState<AskQuestionDef[] | null>(null);
   const askResolveRef = useRef<((answers: Record<string, string>) => void) | null>(null);
@@ -1314,6 +1400,32 @@ export function App({ options }: { options: TUIOptions }): React.ReactNode {
     tokenTrackerRef.current = null;
     liveContextUsageRef.current = null;
   }, []);
+
+  // Model selector handlers
+  const handleModelSelect = useCallback((result: import('./vendor/ui/ModelSelector.js').ModelSelectionResult) => {
+    const { model, mode } = result;
+    modelRef.current = model;
+    if (mode === 'default') {
+      saveSettings({ model });
+    }
+    invalidateAgent();
+    setModelSelectorOpen(false);
+    setMessages((prev) => [
+      ...prev,
+      makeSysMsg(`Model set to: ${model}${mode === 'session' ? ' (this session only)' : ''}`),
+    ]);
+  }, [invalidateAgent, setMessages]);
+
+  const handleModelSelectorCancel = useCallback(() => {
+    setModelSelectorOpen(false);
+  }, []);
+
+  const handleModelEffortChange = useCallback((effort: string) => {
+    reasoningEffortRef.current = effort;
+    saveSettings({ reasoning_effort: effort as JarvisReasoningEffort });
+    invalidateAgent();
+  }, [invalidateAgent]);
+
   const pushSpinnerDetail = useCallback((line: string | null) => {
     if (!line) return;
     setSpinnerDetails((prev) => {
@@ -2069,6 +2181,7 @@ export function App({ options }: { options: TUIOptions }): React.ReactNode {
         },
         setMessages,
         skillsRef.current,
+        setModelSelectorOpen,
       ),
     // Rebuild only when getAgent changes (lazy init via useCallback)
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -2120,6 +2233,25 @@ export function App({ options }: { options: TUIOptions }): React.ReactNode {
       liveContextRemaining ?? (tracker?.turnCount ? tracker.contextPercentRemaining : undefined),
     );
     if (contextLine) lines.push(contextLine);
+    // Per-component breakdown (when available from context_usage_breakdown event)
+    if (liveUsage) {
+      const parts: string[] = [];
+      if (liveUsage.systemPromptTokens) parts.push(`sys:${formatTokensCompact(liveUsage.systemPromptTokens)}`);
+      if (liveUsage.conversationTokens) parts.push(`msg:${formatTokensCompact(liveUsage.conversationTokens)}`);
+      if (liveUsage.skillsTokens) parts.push(`skills:${formatTokensCompact(liveUsage.skillsTokens)}`);
+      if (liveUsage.mcpToolsTokens) parts.push(`mcp:${formatTokensCompact(liveUsage.mcpToolsTokens)}`);
+      const toolTotal = (liveUsage.toolSchemasTokens ?? 0) + (liveUsage.mcpToolsTokens ?? 0);
+      if (toolTotal > 0 && !liveUsage.mcpToolsTokens) parts.push(`tools:${formatTokensCompact(toolTotal)}`);
+      if (parts.length > 0) {
+        lines.push({ content: `  ${parts.join(' · ')}`, color: 'gray' });
+      }
+    }
+    // Context window size guard — warn for small windows
+    const contextWindow = liveUsage?.contextWindow ?? tracker?.contextWindow ?? 128_000;
+    const guard = validateContextWindow(contextWindow);
+    if (guard.level !== 'ok') {
+      lines.push({ content: `CTX guard: ${guard.message}`, color: guard.level === 'error' ? 'red' : 'yellow' });
+    }
     const mcpLines = buildMcpFooterLines(mcpStatusesRef.current);
     const mcpHealthy = mcpStatusesRef.current.length > 0
       && mcpStatusesRef.current.every((status) => status.state === 'ready' || status.state === 'degraded');
@@ -2212,6 +2344,15 @@ export function App({ options }: { options: TUIOptions }): React.ReactNode {
       spinnerRunning={spinnerRunning}
       spinnerCompleted={spinnerCompleted}
       agents={agentEntries}
+      history={historyRef2.current}
+      onHistoryAdd={handleHistoryAdd}
+      modelSelectorOpen={modelSelectorOpen}
+      modelSelectorCurrentModel={modelRef.current}
+      modelSelectorCurrentEffort={reasoningEffortRef.current}
+      modelSelectorKnownModels={getAllModels()}
+      onModelSelect={handleModelSelect}
+      onModelSelectorCancel={handleModelSelectorCancel}
+      onModelEffortChange={handleModelEffortChange}
       welcome={<WelcomeScreen appName="Jarvis" subtitle="AI Coding Assistant" model={parseModelName(modelRef.current).cleanName} color="#00BFFF" tips={['Send a prompt to begin', '/help for commands', 'Ctrl+C twice exits']} />}
     />
   );

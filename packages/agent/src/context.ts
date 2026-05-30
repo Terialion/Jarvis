@@ -19,6 +19,82 @@ import { removeOrphanToolResults } from './compactor.js';
 // Configuration
 // ============================================================================
 
+// ============================================================================
+// Token estimation — CJK-aware char/4 approximation
+// ============================================================================
+
+/** Unicode ranges for CJK characters that tokenize as ~1 token/char */
+const CJK_RANGES: Array<[number, number]> = [
+  [0x4E00, 0x9FFF],   // CJK Unified Ideographs
+  [0x3400, 0x4DBF],   // CJK Unified Ideographs Extension A
+  [0x20000, 0x2A6DF], // CJK Unified Ideographs Extension B
+  [0x2A700, 0x2B73F], // CJK Unified Ideographs Extension C
+  [0x2B740, 0x2B81F], // CJK Unified Ideographs Extension D
+  [0x2B820, 0x2CEAF], // CJK Unified Ideographs Extension E
+  [0xF900, 0xFAFF],   // CJK Compatibility Ideographs
+  [0x2F800, 0x2FA1F], // CJK Compatibility Ideographs Supplement
+  [0x3040, 0x309F],   // Hiragana
+  [0x30A0, 0x30FF],   // Katakana
+  [0xAC00, 0xD7AF],   // Hangul Syllables
+  [0x1100, 0x11FF],   // Hangul Jamo
+  [0x3130, 0x318F],   // Hangul Compatibility Jamo
+  [0xFF00, 0xFFEF],   // Fullwidth forms (includes fullwidth Latin/numbers/punctuation)
+  [0x3000, 0x303F],   // CJK Symbols and Punctuation
+  [0x2E80, 0x2EFF],   // CJK Radicals Supplement
+  [0x31C0, 0x31EF],   // CJK Strokes
+];
+
+function isCJK(codePoint: number): boolean {
+  return CJK_RANGES.some(([lo, hi]) => codePoint >= lo && codePoint <= hi);
+}
+
+/**
+ * Estimate tokens in a string using CJK-aware char/4 approximation.
+ * - CJK characters: ~1 token each (most tokenizers encode one CJK char per token)
+ * - Non-CJK: chars/4 (4 Latin chars ≈ 1 token on average)
+ */
+export function estimateTokens(text: string | null | undefined): number {
+  if (!text) return 0;
+  let total = 0;
+  for (const ch of text) {
+    const cp = ch.codePointAt(0) ?? 0;
+    total += isCJK(cp) ? 1 : 0.25;
+  }
+  return Math.ceil(total);
+}
+
+// ============================================================================
+// Context window guard — validates model context window size
+// ============================================================================
+
+export interface ContextWindowGuard {
+  ok: boolean;
+  level: 'ok' | 'warn' | 'error';
+  message?: string;
+}
+
+const MIN_RECOMMENDED_WINDOW = 32_000;
+const MIN_VIABLE_WINDOW = 16_000;
+
+/** Validate a context window size. Returns warnings for small windows. */
+export function validateContextWindow(window: number): ContextWindowGuard {
+  if (window < MIN_VIABLE_WINDOW) {
+    return {
+      ok: false,
+      level: 'error',
+      message: `Context window ${window.toLocaleString()} is below ${MIN_VIABLE_WINDOW.toLocaleString()} tokens — agent may not function.`,
+    };
+  }
+  if (window < MIN_RECOMMENDED_WINDOW) {
+    return {
+      ok: true,
+      level: 'warn',
+      message: `Context window ${window.toLocaleString()} is below recommended ${MIN_RECOMMENDED_WINDOW.toLocaleString()} tokens.`,
+    };
+  }
+  return { ok: true, level: 'ok' };
+}
+
 export interface ContextConfig {
   maxTokens?: number;
   thresholdPercent?: number;
@@ -375,12 +451,17 @@ export class ContextBuilder {
     return Object.keys(diffs).length > 0 ? diffs : null;
   }
 
+  /** Safety margin (20%) applied to estimates to prevent overflow from estimation error. */
+  static readonly SAFETY_MARGIN = 1.2;
+
   shouldCompress(estimatedTokens: number): boolean {
-    return estimatedTokens > this.config.maxTokens * this.config.thresholdPercent;
+    const withMargin = estimatedTokens * ContextBuilder.SAFETY_MARGIN;
+    return withMargin > this.config.maxTokens * this.config.thresholdPercent;
   }
 
+  // Delegate to the shared CJK-aware function
   estimateTokens(text: string): number {
-    return Math.ceil(text.length / 4);
+    return estimateTokens(text);
   }
 
   estimateMessageTokens(messages: ChatMessage[]): number {

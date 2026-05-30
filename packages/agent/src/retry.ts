@@ -270,6 +270,11 @@ export class FailureTracker {
   recordSuccess(toolName: string): void {
     this.consecutiveFailures = [];
     this.toolFailureCounts.delete(toolName);
+    // When a different tool succeeds, the model is making progress —
+    // reset repeat counters so alternating tools don't hit maxRepeat.
+    for (const key of this.toolTotalCalls.keys()) {
+      if (key !== toolName) this.toolTotalCalls.set(key, 0);
+    }
     this.toolTotalCalls.set(toolName, (this.toolTotalCalls.get(toolName) ?? 0) + 1);
   }
 

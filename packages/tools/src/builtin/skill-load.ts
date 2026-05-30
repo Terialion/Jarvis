@@ -91,7 +91,9 @@ export function createSkillLoadHandler(supplier: SkillSupplier): ToolHandler {
       metadata: {
         name: skill.name,
         description: skill.description,
-        allowedTools: skill.allowedTools,
+        // allowedTools intentionally omitted — the loop reads it from
+        // SkillRegistry directly for activeAllowedTools enforcement.
+        // Exposing it in the response metadata risks confusing the model.
       },
     });
   };
@@ -141,7 +143,11 @@ export function createSkillHandler(supplier: SkillSupplier): ToolHandler {
     if (!body) return JSON.stringify({ error: `Skill "${skillName}" found but body could not be loaded.` });
     let instructions = body;
     if (skillArgs) instructions = `**Args:** ${skillArgs}\n\n${body}`;
-    return JSON.stringify({ skill_name: skill.name, body: instructions, metadata: { name: skill.name, description: skill.description, allowedTools: skill.allowedTools } });
+    // NOTE: allowedTools intentionally omitted — the loop enforces tool
+    // restrictions from SkillRegistry directly (via activeAllowedTools).
+    // Exposing allowedTools in metadata confuses smaller models that interpret
+    // an empty array literally as "no tools available" instead of "no restriction".
+    return JSON.stringify({ skill_name: skill.name, body: instructions, metadata: { name: skill.name, description: skill.description } });
   };
 }
 

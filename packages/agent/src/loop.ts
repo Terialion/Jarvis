@@ -16,11 +16,15 @@ import type { HookRegistry } from '@jarvis/hooks';
 import { LLMProvider, type ModelConfig, type LLMMessage, FakeModelClient } from './model.js';
 import { TokenTracker } from './token-tracker.js';
 import { AgentEventBus } from './events.js';
-import { ContextBuilder, type ContextConfig, type TurnContext, type ContextPack, type SessionStoreLike, type MemoryStoreLike, type SkillRegistryLike } from './context.js';
+import { ContextBuilder, estimateTokens, type ContextConfig, type TurnContext, type ContextPack, type SessionStoreLike, type MemoryStoreLike, type SkillRegistryLike } from './context.js';
 import { PromptBuilder, AGENT_SYSTEM_PROMPT } from './prompt-builder.js';
 import { ResponseComposer } from './summary.js';
 import { withRetry, type RetryConfig, ErrorClassifier, RetryPolicy as ToolRetryPolicy, FailureTracker, ReplanPolicy } from './retry.js';
 import type { AgentMailbox } from './mailbox.js';
+import { compact, setTokenEstimator, type CompactionMessage, type CompactionModelClient } from './compactor.js';
+
+// Wire up CJK-aware token estimation for the compaction pipeline
+setTokenEstimator(estimateTokens);
 
 // ============================================================================
 // Configuration
@@ -426,7 +430,7 @@ export class AgentLoop {
 
       const llmMessages = this.contextBuilder.buildMessages(effectiveSystemPrompt, allMessages);
 
-      // Compaction check
+      // Compaction check — use full pipeline (truncation stages only, no LLM at pre-turn)
       const estimatedTokens = this.contextBuilder.estimateMessageTokens(allMessages);
       if (this.contextBuilder.shouldCompress(estimatedTokens)) {
         this.eventBus?.emit('context:compressing', {
@@ -434,7 +438,17 @@ export class AgentLoop {
           estimatedTokens,
           maxTokens: this.config.context.maxTokens ?? 128_000,
         });
-        allMessages = this.contextBuilder.compactToolResults(allMessages);
+        const compactable = allMessages.map((m) => ({
+          role: m.role,
+          content: m.content,
+        })) as CompactionMessage[];
+        const result = await compact(compactable, {
+          contextWindow: this.config.context.maxTokens ?? 128_000,
+        });
+        allMessages = result.messages.map((m) => ({
+          ...m,
+          role: m.role as ChatMessage['role'],
+        })) as ChatMessage[];
       }
 
       const toolDefs = this.tools ? this.tools.getDefinitions() : [];
@@ -600,7 +614,7 @@ export class AgentLoop {
 
       if (finishReason === 'retry_with_tool_instruction') {
         retryWithToolInstructionCount++;
-        if (retryWithToolInstructionCount >= 2) {
+        if (retryWithToolInstructionCount >= 3) {
           this.eventBus?.emit('turn:warning', {
             turnId, turn,
             warning: 'retry_with_tool_instruction exhausted',
@@ -828,7 +842,9 @@ export class AgentLoop {
     };
 
     // Failure tracking + convergence state machine
-    const failureTracker = new FailureTracker(5, 4, 3);
+    // maxRepeat=25: each tool can be called up to 25 times per turn.
+    // Bumped from 3 — multi-URL reads and large refactors need many calls.
+    const failureTracker = new FailureTracker(5, 4, 25);
     let noProgressCount = 0;
     let lastProgressMarker = '';
     const seenCalls = new Map<string, Array<{ argsFrozen: string; result: Record<string, unknown> }>>();
@@ -1038,13 +1054,20 @@ export class AgentLoop {
             }
             if (toolCallsLog.length === 0) {
               retryWithToolInstructionCount++;
-              if (retryWithToolInstructionCount >= 2) {
+              if (retryWithToolInstructionCount >= 3) {
                 stopReason = 'retry_with_tool_instruction';
                 break;
               }
               messages.push({
                 role: 'user',
-                content: 'Your last response described what you intend to do but did NOT actually call any tool. You MUST call the appropriate tool function directly — do NOT just say what you will do. Use the tool now.',
+                content: [
+                  '你的回复只是描述了你要做什么，但没有真正调用工具。',
+                  '你必须直接调用工具函数——不要只是说"我来做X"。现在就调用工具。',
+                  '',
+                  'Your last response described what you intend to do but did NOT actually call any tool.',
+                  'You MUST call the appropriate tool function directly — do NOT just say what you will do.',
+                  'Use the tool now.',
+                ].join('\n'),
               });
               continue;
             }
@@ -1289,8 +1312,9 @@ export class AgentLoop {
           });
           this.config.onToolEnd?.(call.callId, call.name, result);
 
-          // skill.load handling
-          if (call.name === 'skill.load' && result.ok) {
+          // skill.load / Skill handling — both need <skill-context> wrapping
+          // and allowed-tools merging from the registry
+          if ((call.name === 'skill.load' || call.name === 'Skill') && result.ok) {
             const resultMeta = (result as unknown as { metadata?: Record<string, unknown> }).metadata;
             const skillName = String(resultMeta?.['skill_name'] || call.arguments['name'] || '').trim();
             if (skillName && !loadedSkills.includes(skillName)) loadedSkills.push(skillName);
@@ -1404,16 +1428,52 @@ export class AgentLoop {
           break;
         }
 
-        // Mid-turn compaction (70%)
-        const midPct = this.contextBuilder.estimateMessageTokens(
+        // Mid-turn compaction with safety margin
+        const midPct = (this.contextBuilder.estimateMessageTokens(
           messages.map((m) => ({ role: m.role as ChatMessage['role'], content: m.content, messageId: '' })),
-        ) / this.config.context.maxTokens!;
+        ) * ContextBuilder.SAFETY_MARGIN) / this.config.context.maxTokens!;
         if (midPct > 0.70) {
-          const compacted = this.contextBuilder.compactToolResults(
-            messages.map((m) => ({ role: m.role as ChatMessage['role'], content: m.content, messageId: '' })),
-          );
-          messages.length = 0;
-          messages.push(...compacted.map((m) => ({ role: m.role, content: m.content })));
+          const compactable = messages.map((m) => ({
+            role: m.role,
+            content: typeof m.content === 'string' ? m.content : JSON.stringify(m.content),
+          })) as CompactionMessage[];
+          const ctxWindow = this.config.context.maxTokens!;
+
+          if (midPct > 0.85) {
+            // Stage 4-5: full compaction pipeline with LLM summarization
+            const modelClient: CompactionModelClient = {
+              complete: async (opts) => {
+                const resp = await (this.provider as LLMProvider).chat(
+                  opts.messages.map((msg) => ({ role: msg.role as 'user' | 'system', content: msg.content })),
+                  [],
+                );
+                return { content: resp.content, text: resp.content };
+              },
+            };
+            const result = await compact(compactable, {
+              modelClient,
+              contextWindow: ctxWindow,
+            });
+            messages.length = 0;
+            messages.push(...result.messages.map((m) => ({
+              role: m.role as LLMMessage['role'],
+              content: m.content,
+            })));
+            this._emit(events, turnId, 'context:compacting', {
+              stage: result.report.stage,
+              tokensBefore: result.report.tokensBefore,
+              tokensAfter: result.report.tokensAfter,
+              usagePct: midPct,
+            });
+          } else {
+            // Stage 1-3: lightweight truncation (no LLM call)
+            const result = await compact(compactable, { contextWindow: ctxWindow });
+            messages.length = 0;
+            messages.push(...result.messages.map((m) => ({
+              role: m.role as LLMMessage['role'],
+              content: m.content,
+            })));
+          }
         }
 
         // No-progress detection + phase-driven convergence
@@ -1692,8 +1752,7 @@ export class AgentLoop {
   }
 
   private _estimateTokensFromText(text: string | null | undefined): number {
-    if (!text) return 0;
-    return Math.ceil(text.length / 4);
+    return estimateTokens(text);
   }
 
   private _estimateContextBreakdown(

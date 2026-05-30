@@ -299,8 +299,11 @@ describe('ContextBuilder', () => {
     expect(builder.shouldCompress(4000)).toBe(false); // 4000 < 5000
   });
 
-  it('shouldCompress returns false at exact threshold', () => {
-    expect(builder.shouldCompress(5000)).toBe(false); // 5000 not > 5000
+  it('shouldCompress accounts for safety margin at threshold', () => {
+    // 5000 * 1.2 safety margin = 6000 > 5000 threshold → compress
+    expect(builder.shouldCompress(5000)).toBe(true);
+    // 4000 * 1.2 = 4800 < 5000 → still below threshold
+    expect(builder.shouldCompress(4000)).toBe(false);
   });
 
   it('buildMessages includes system prompt', () => {

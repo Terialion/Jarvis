@@ -182,15 +182,22 @@ const STAGE5_THRESHOLD = 0.92;
 // Token estimation (chars/4 heuristic, matching existing convention)
 // ============================================================================
 
+// Reuse the shared CJK-aware estimator when available, fall back to char/4
+let _cjkEstimator: ((text: string | null | undefined) => number) | null = null;
+export function setTokenEstimator(fn: (text: string | null | undefined) => number): void {
+  _cjkEstimator = fn;
+}
+
 function estimateTokens(messages: CompactionMessage[]): number {
   let total = 0;
   for (const msg of messages) {
-    total += Math.ceil((typeof msg.content === 'string' ? msg.content : String(msg.content ?? '')).length / 4);
+    total += estimateTextTokens(typeof msg.content === 'string' ? msg.content : String(msg.content ?? ''));
   }
   return total;
 }
 
 function estimateTextTokens(text: string): number {
+  if (_cjkEstimator) return _cjkEstimator(text);
   return Math.ceil(text.length / 4);
 }
 

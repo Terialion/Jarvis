@@ -115,14 +115,21 @@ const TOOL_INTENT_MARKERS = [
   'run command',
   'list directory',
   'read file',
-  // Chinese tool-intent phrases
+  // Chinese tool-intent phrases — detecting "describes action instead of doing it"
   '让我尝试用', '让我试试', '让我来调用', '让我来执行', '让我来运行',
   '让我抓取', '让我读取', '让我搜索', '让我检查', '让我查看',
   '让我看一看', '让我看一下',
+  '让我写', '让我来写', '我来写', '让我创建', '我来创建',
+  '让我做', '我来做', '让我来做',
+  '开始写', '开始做', '写一下', '做一下',
   '调用工具', '尝试用工具',
   '写入工具返回',
   '重试一次',
   '再试一下',
+  // General action-description starters
+  '好的，我来', '好的，让我', '行，我来', '行，让我',
+  '下面我来', '下面让我',
+  '我先', '先让我',
 ];
 
 function looksLikeToolIntentText(text: string): boolean {

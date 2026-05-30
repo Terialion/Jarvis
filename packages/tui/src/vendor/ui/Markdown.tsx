@@ -6,7 +6,7 @@ import { useTheme } from "./design-system/ThemeProvider";
 import { MarkdownTable } from "./MarkdownTable";
 import { addOsc8Links } from "./osc8.js";
 import { hashContent } from "./utils/hash";
-import { configureMarked, formatToken } from "./utils/markdown";
+import { configureMarked, decodeHtmlEntities, formatToken } from "./utils/markdown";
 import { type CliHighlight, getCliHighlightPromise } from "./utils/optional/cliHighlight";
 
 type Props = {
@@ -43,21 +43,25 @@ function stripPromptXMLTags(content: string): string {
 }
 
 function cachedLexer(content: string): Token[] {
+  // Decode HTML entities that models (especially DeepSeek) emit in text.
+  // Must be done before marked.lexer so &quot; → " in both markdown and plain text.
+  const decoded = decodeHtmlEntities(content);
+
   // Fast path: plain text with no markdown syntax → single paragraph token.
   // Skips marked.lexer's full GFM parse (~3ms on long content). Not cached —
   // reconstruction is a single object allocation, and caching would retain
   // 4× content in raw/text fields plus the hash key for zero benefit.
-  if (!hasMarkdownSyntax(content)) {
+  if (!hasMarkdownSyntax(decoded)) {
     return [
       {
         type: "paragraph",
-        raw: content,
-        text: content,
-        tokens: [{ type: "text", raw: content, text: content }],
+        raw: decoded,
+        text: decoded,
+        tokens: [{ type: "text", raw: decoded, text: decoded }],
       } as Token,
     ];
   }
-  const key = hashContent(content);
+  const key = hashContent(decoded);
   const hit = tokenCache.get(key);
   if (hit) {
     // Promote to MRU — without this the eviction is FIFO (scrolling back to
@@ -66,7 +70,7 @@ function cachedLexer(content: string): Token[] {
     tokenCache.set(key, hit);
     return hit;
   }
-  const tokens = marked.lexer(content);
+  const tokens = marked.lexer(decoded);
   if (tokenCache.size >= TOKEN_CACHE_MAX) {
     // LRU-ish: drop oldest. Map preserves insertion order.
     const first = tokenCache.keys().next().value;
@@ -162,7 +166,7 @@ export function StreamingMarkdown({ children }: StreamingProps): React.ReactNode
 
   // Strip before boundary tracking to match <Markdown>'s stripping.
   // startsWith reset below handles non-prefix cases from closing tags.
-  const stripped = stripPromptXMLTags(children);
+  const stripped = decodeHtmlEntities(stripPromptXMLTags(children));
 
   const stablePrefixRef = useRef("");
 

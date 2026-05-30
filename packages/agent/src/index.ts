@@ -22,6 +22,12 @@ export { MODEL_REASONING_EFFORTS } from './model.js';
 
 // model catalog
 export {
+  KNOWN_MODELS,
+  loadUserModels,
+  saveUserModels,
+  addUserModel,
+  removeUserModel,
+  getAllModels,
   parseModelName,
   findModel,
   resolveContextWindow,
@@ -74,7 +80,8 @@ export type {
 } from '@jarvis/shared';
 
 // context
-export { ContextBuilder, ContextUpdater, UserFactExtractor } from './context.js';
+export { ContextBuilder, ContextUpdater, UserFactExtractor, estimateTokens, validateContextWindow } from './context.js';
+export type { ContextWindowGuard } from './context.js';
 export type {
   ContextConfig,
   ContextPack,

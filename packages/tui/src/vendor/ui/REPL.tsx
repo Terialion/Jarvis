@@ -4,7 +4,7 @@ import type React from "react";
 import { useCallback, useMemo, useRef, useState } from "react";
 import { AskUserQuestion } from "./AskUserQuestion";
 import type { AskQuestionDef } from "@jarvis/tools";
-import type { ThreadEvent } from "@jarvis/agent";
+import type { ThreadEvent, ModelInfo } from "@jarvis/agent";
 import { CodexTimeline } from "../../presentation/CodexTimeline.js";
 import {
   buildCodexTimelineState,
@@ -14,6 +14,8 @@ import {
 } from "../../presentation/codex-timeline-state.js";
 import { Divider } from "./Divider";
 import { type Message, MessageList } from "./MessageList";
+import { ModelSelector, type ModelSelectionResult } from "./ModelSelector";
+import type { ModelSelectorProps } from "./ModelSelector";
 import { type PermissionAction, PermissionRequest } from "./PermissionRequest";
 import { PromptInput } from "./PromptInput";
 import { computeMatches, SearchOverlay } from "./SearchOverlay";
@@ -73,9 +75,20 @@ export type REPLProps = {
   statusSegments?: StatusLineSegment[];
   statusDetailLines?: StatusDetailLine[];
 
+  // Model selector
+  modelSelectorOpen?: boolean;
+  modelSelectorCurrentModel?: string;
+  modelSelectorCurrentEffort?: string;
+  modelSelectorKnownModels?: ModelInfo[];
+  onModelSelect?: (result: ModelSelectionResult) => void;
+  onModelSelectorCancel?: () => void;
+  onModelEffortChange?: (effort: string) => void;
+
   prefix?: string;
   placeholder?: string;
   history?: string[];
+  /** Called when a prompt is submitted — parent can persist to disk */
+  onHistoryAdd?: (entry: string) => void;
 
   renderMessage?: (message: Message) => React.ReactNode;
   spinner?: React.ReactNode;
@@ -113,6 +126,7 @@ export function REPL({
   prefix = "\u276F",
   placeholder,
   history: externalHistory,
+  onHistoryAdd,
   renderMessage,
   spinner,
   spinnerTokenCount,
@@ -122,6 +136,14 @@ export function REPL({
   spinnerRunning,
   spinnerCompleted,
   agents,
+  // Model selector
+  modelSelectorOpen = false,
+  modelSelectorCurrentModel = "",
+  modelSelectorCurrentEffort = "high",
+  modelSelectorKnownModels = [],
+  onModelSelect,
+  onModelSelectorCancel,
+  onModelEffortChange,
 }: REPLProps): React.ReactNode {
   const { exit } = useApp();
   const [inputValue, setInputValue] = useState("");
@@ -171,6 +193,8 @@ export function REPL({
       setInputValue("");
       if (!externalHistory) {
         setInternalHistory((prev) => [trimmed, ...prev]);
+      } else {
+        onHistoryAdd?.(trimmed);
       }
 
       const result = onSubmit(trimmed);
@@ -235,8 +259,8 @@ export function REPL({
         setToolResultsExpanded((prev) => !prev);
       }
     },
-    // Deactivate when search overlay is open so only SearchOverlay handles input.
-    { isActive: !searchOpen },
+    // Deactivate when search or model selector overlays are open
+    { isActive: !searchOpen && !modelSelectorOpen },
   );
 
   const resolvedSegments = statusSegments ?? buildDefaultSegments(model);
@@ -358,6 +382,19 @@ export function REPL({
         />
       )}
 
+      {modelSelectorOpen && modelSelectorKnownModels.length > 0 && (
+        <Box flexDirection="column" paddingX={1} borderStyle="round" borderColor="cyan">
+          <ModelSelector
+            currentModel={modelSelectorCurrentModel}
+            currentEffort={modelSelectorCurrentEffort}
+            knownModels={modelSelectorKnownModels}
+            onSelect={(result: ModelSelectionResult) => onModelSelect?.(result)}
+            onCancel={() => onModelSelectorCancel?.()}
+            onEffortChange={(effort: string) => onModelEffortChange?.(effort)}
+          />
+        </Box>
+      )}
+
       <Divider />
 
       {askUserQuestion ? (
@@ -381,7 +418,7 @@ export function REPL({
           onSubmit={handleSubmit}
           prefix={prefix}
           placeholder={placeholder}
-          disabled={searchOpen}
+          disabled={searchOpen || modelSelectorOpen}
           isLoading={isLoading}
           commands={promptCommands}
           history={history}
