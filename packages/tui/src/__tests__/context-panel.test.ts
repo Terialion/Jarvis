@@ -24,7 +24,8 @@ describe('buildContextPanelLines', () => {
     messageCount: 42,
     uiMessageCount: 3,
     contextWindow: 200_000,
-    totalTokens: 24_900,
+    estimatedTotalTokens: 24_900,
+    providerReportedTokens: 22_500,
     systemPromptTokens: 1_600,
     messageTokens: 1_400,
     memoryEntries: [{ path: 'CLAUDE.md', tokens: 745 }],
@@ -40,7 +41,8 @@ describe('buildContextPanelLines', () => {
   it('returns compact overview with category totals', () => {
     const lines = buildContextPanelLines(baseInput);
     expect(lines[0]).toBe('Context Usage');
-    expect(lines.join('\n')).toContain('24,900/200,000 tokens');
+    expect(lines.join('\n')).toContain('Estimated: 24,900/200,000 tokens');
+    expect(lines.join('\n')).toContain('Provider-reported: 22,500/200,000 tokens');
     expect(lines.join('\n')).toContain('Estimated usage by category');
     expect(lines.join('\n')).toContain('Groups: /context mcp');
   });
@@ -63,4 +65,3 @@ describe('buildContextPanelLines', () => {
     expect(text).toContain('System tools');
   });
 });
-

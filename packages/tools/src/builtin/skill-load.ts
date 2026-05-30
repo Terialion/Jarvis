@@ -33,29 +33,55 @@ export const skillLoadSchema = toOpenAITool({
 // -- factory --
 export function createSkillLoadHandler(supplier: SkillSupplier): ToolHandler {
   return (args: Record<string, unknown>, _context: ToolContext): string => {
-    const skillName = String(args.name ?? '').trim();
-    if (!skillName) {
+    const rawSkillName = String(args.name ?? args.skill ?? args.skill_name ?? '').trim();
+    if (!rawSkillName) {
       return JSON.stringify({ error: 'Missing required parameter: name' });
     }
 
-    const skill = supplier.get(skillName);
+    const normalizeSkillName = (value: string): string => {
+      const trimmed = value.trim();
+      const unquoted = trimmed
+        .replace(/^["'`]+/, '')
+        .replace(/["'`]+$/, '')
+        .trim();
+      return unquoted.toLowerCase();
+    };
+
+    const directCandidates = [
+      rawSkillName,
+      rawSkillName.replace(/^["'`]+|["'`]+$/g, '').trim(),
+    ].filter(Boolean);
+
+    let skill = directCandidates
+      .map((candidate) => supplier.get(candidate))
+      .find((candidate) => Boolean(candidate));
+
+    if (!skill) {
+      const loadables = supplier.listLoadable();
+      const wanted = normalizeSkillName(rawSkillName);
+      const match = loadables.find((entry) => normalizeSkillName(entry.name) === wanted);
+      if (match) {
+        skill = supplier.get(match.name);
+      }
+    }
+
     if (!skill) {
       const available = supplier.listLoadable().map((s) => s.name).join(', ');
       return JSON.stringify({
-        error: `Skill "${skillName}" not found. Available skills: ${available}`,
+        error: `Skill "${rawSkillName}" not found. Available skills: ${available}`,
       });
     }
 
     if (!skill.enabled || skill.quarantined) {
       return JSON.stringify({
-        error: `Skill "${skillName}" is not loadable (disabled or quarantined).`,
+        error: `Skill "${rawSkillName}" is not loadable (disabled or quarantined).`,
       });
     }
 
     const body = supplier.loadBody(skill);
     if (!body) {
       return JSON.stringify({
-        error: `Skill "${skillName}" found but its SKILL.md body could not be loaded.`,
+        error: `Skill "${rawSkillName}" found but its SKILL.md body could not be loaded.`,
       });
     }
 

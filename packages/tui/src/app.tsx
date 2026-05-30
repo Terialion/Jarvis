@@ -10,7 +10,7 @@ import type { Message, MessageContent } from './vendor/ui/MessageList.js';
 import type { StatusLineSegment } from './vendor/ui/StatusLine.js';
 import { WelcomeScreen } from './vendor/ui/WelcomeScreen.js';
 import { loadSettings, saveSettings, type UserSettings } from './settings-store.js';
-import { AgentLoop, AgentEventBus, ConversationSummarizer, TokenTracker, parseModelName, type ThreadEvent } from '@jarvis/agent';
+import { AgentLoop, AgentEventBus, ConversationSummarizer, TokenTracker, parseModelName, buildSystemPrompt, type ThreadEvent } from '@jarvis/agent';
 import {
   ToolRegistry,
   allBuiltinTools,
@@ -76,7 +76,23 @@ interface SlashCommandCtx {
   mcpConfiguredRef: React.MutableRefObject<Array<{ id: string; plugin?: string; config: McpServerConfig }>>;
   tokenTrackerRef: React.MutableRefObject<TokenTracker | null>;
   toolsRef: React.MutableRefObject<ToolRegistry | null>;
+  liveContextUsageRef: React.MutableRefObject<LiveContextUsage | null>;
 }
+
+type LiveContextUsage = {
+  contextWindow: number;
+  usedTokens: number;
+  usagePct: number;
+  messageCount: number;
+  systemPromptTokens?: number;
+  projectContextTokens?: number;
+  skillsTokens?: number;
+  memoryTokens?: number;
+  conversationTokens?: number;
+  toolSchemasTokens?: number;
+  mcpToolsTokens?: number;
+  estimatedTotalTokens?: number;
+};
 
 interface SlashCommandDef {
   name: string;
@@ -375,14 +391,26 @@ const SLASH_COMMANDS: SlashCommandDef[] = [
     description: 'Show current session context info',
     usage: '/context [mcp|memory|skills|tools|all]',
     handler: (args, ctx) => {
+      // Ensure runtime registries (tools/skills/mcp config) are initialized
+      // even when user only runs slash commands before any normal prompt.
+      try {
+        ctx.getAgent();
+      } catch {
+        // best-effort init
+      }
       const msgCount = ctx.historyRef.current.length;
       const totalChars = ctx.historyRef.current.reduce((sum, m) => sum + m.content.length, 0);
       const messageTokens = Math.ceil(totalChars / 4);
       const snapshot = ctx.tokenTrackerRef.current?.snapshot();
-      const contextWindow = snapshot?.contextWindow ?? 200_000;
-      const totalTokens = snapshot?.totalTokens ?? messageTokens;
+      const live = ctx.liveContextUsageRef.current;
+      const contextWindow = live?.contextWindow ?? snapshot?.contextWindow ?? 200_000;
       const shortSid = (ctx.sid ?? 'none').slice(-16);
-      const systemPromptTokens = estimateTokensFromText(ctx.systemPromptRef.current);
+      const modelName = parseModelName(ctx.modelRef.current).cleanName;
+      const defaultSystemPrompt = buildSystemPrompt(modelName);
+      const systemPromptText = ctx.systemPromptRef.current?.trim()
+        ? `${defaultSystemPrompt}\n\n${ctx.systemPromptRef.current}`
+        : defaultSystemPrompt;
+      const systemPromptTokens = estimateTokensFromText(systemPromptText);
       const memoryEntries = estimateMemoryEntries(ctx.cwd);
       const skillEntries: SkillTokenEntry[] = (ctx.skills?.listLoadable() ?? []).map((skill) => ({
         name: skill.name,
@@ -399,16 +427,31 @@ const SLASH_COMMANDS: SlashCommandDef[] = [
           isMcp: typeof fn === 'string' && fn.toLowerCase().includes('mcp'),
         };
       });
+      const memoryTokens = memoryEntries.reduce((acc, item) => acc + item.tokens, 0);
+      const skillTokens = skillEntries.reduce((acc, item) => acc + item.tokens, 0);
+      const toolTokens = toolEntries.reduce((acc, item) => acc + item.tokens, 0);
+      const estimatedTotalTokens =
+        live?.estimatedTotalTokens
+        ?? (systemPromptTokens + toolTokens + memoryTokens + skillTokens + messageTokens);
+      const resolvedSystemPromptTokens = live?.systemPromptTokens ?? systemPromptTokens;
+      const resolvedMessageTokens = live?.conversationTokens ?? messageTokens;
       return buildContextPanelLines({
         mode: resolveContextMode(args),
-        modelName: parseModelName(ctx.modelRef.current).cleanName,
+        modelName,
         sessionId: shortSid,
         messageCount: msgCount,
         uiMessageCount: ctx.messages.length,
         contextWindow,
-        totalTokens,
-        systemPromptTokens,
-        messageTokens,
+        estimatedTotalTokens,
+        providerReportedTokens: live?.usedTokens ?? snapshot?.totalTokens,
+        systemPromptTokens: resolvedSystemPromptTokens,
+        messageTokens: resolvedMessageTokens,
+        projectContextTokens: live?.projectContextTokens,
+        systemToolsTokens: live?.toolSchemasTokens,
+        mcpToolsTokens: live?.mcpToolsTokens,
+        memoryTokens: live?.memoryTokens,
+        skillsTokens: live?.skillsTokens,
+        conversationTokens: live?.conversationTokens,
         memoryEntries,
         skillEntries,
         toolEntries,
@@ -620,16 +663,35 @@ const SLASH_COMMANDS: SlashCommandDef[] = [
     name: 'mcp',
     description: 'Show MCP server diagnostics',
     usage: '/mcp [full]',
-    handler: (args, ctx) => {
+    handler: async (args, ctx) => {
+      // Ensure MCP config discovery has run even in slash-command-only sessions.
+      try {
+        ctx.getAgent();
+      } catch {
+        // best-effort init
+      }
       const mode = (args[0] ?? '').toLowerCase();
+      let statuses = ctx.mcpStatusesRef.current;
+      if (statuses.length === 0 || statuses.every((status) => status.state === 'connecting' || status.state === 'retrying')) {
+        statuses = await refreshMcpStatuses(ctx);
+      }
       if (mode === 'full') {
         return formatMcpDiagnostics(
           ctx.mcpConfiguredRef.current,
-          ctx.mcpStatusesRef.current,
+          statuses,
           ctx.mcpClientRef.current,
         );
       }
-      return 'Pinned MCP summary under status line. Run /mcp full for full diagnostics table.';
+      const totalCount = statuses.length;
+      const readyCount = statuses.filter((status) => status.state === 'ready' || status.state === 'degraded').length;
+      const firstError = statuses.find((status) => status.error)?.error;
+      if (totalCount === 0) {
+        return 'No MCP servers configured. Run mcp_bootstrap to add one, then restart Jarvis.';
+      }
+      if (firstError) {
+        return `Pinned MCP summary under status line (${readyCount}/${totalCount} ready). First error: ${firstError}. Run /mcp full for full diagnostics table.`;
+      }
+      return `Pinned MCP summary under status line (${readyCount}/${totalCount} ready). Run /mcp full for full diagnostics table.`;
     },
   },
   {
@@ -1065,6 +1127,23 @@ function formatMcpDiagnostics(
   return lines.join('\n');
 }
 
+async function refreshMcpStatuses(
+  ctx: Pick<SlashCommandCtx, 'mcpClientRef' | 'mcpConfiguredRef' | 'mcpStatusesRef'>,
+): Promise<McpConnectionStatus[]> {
+  if (!ctx.mcpClientRef.current) {
+    ctx.mcpClientRef.current = new MCPClient();
+  }
+  const configured = ctx.mcpConfiguredRef.current;
+  if (configured.length === 0) {
+    ctx.mcpStatusesRef.current = [];
+    return [];
+  }
+  ctx.mcpClientRef.current.disconnectAll();
+  const statuses = await connectMcpServers(ctx.mcpClientRef.current, configured);
+  ctx.mcpStatusesRef.current = statuses;
+  return statuses;
+}
+
 function estimateTokensFromText(text: string | undefined): number {
   if (!text) return 0;
   return Math.ceil(text.length / 4);
@@ -1097,15 +1176,17 @@ function estimateMemoryEntries(cwd: string): MemoryTokenEntry[] {
 }
 
 function buildContextProgressBar(percentRemaining?: number): StatusDetailLine | null {
-  if (percentRemaining === undefined || !Number.isFinite(percentRemaining)) return null;
+  if (percentRemaining === undefined || !Number.isFinite(percentRemaining)) {
+    return { content: 'CTX [░░░░░░░░░░░░░░░░░░] used 0% · left 100%', color: 'gray' };
+  }
   const width = 18;
   const left = Math.max(0, Math.min(100, percentRemaining));
   const used = Math.max(0, 100 - left);
   const filled = Math.round((used / 100) * width);
   const bar = `${'█'.repeat(filled)}${'░'.repeat(Math.max(0, width - filled))}`;
   const color: StatusDetailLine['color'] =
-    used < 40 ? 'green' : used < 70 ? 'yellow' : 'red';
-  return { content: `CTX [${bar}] used ${used}% · left ${left}%`, color };
+    used < 60 ? 'green' : used < 85 ? 'yellow' : 'red';
+  return { content: `CTX [${bar}] used ${used.toFixed(1)}% · left ${left.toFixed(1)}%`, color };
 }
 
 function buildMcpFooterLines(
@@ -1170,6 +1251,7 @@ export function App({ options }: { options: TUIOptions }): React.ReactNode {
   const mcpStatusesRef = useRef<McpConnectionStatus[]>([]);
   const mcpConfiguredRef = useRef<Array<{ id: string; plugin?: string; config: McpServerConfig }>>([]);
   const tokenTrackerRef = useRef<TokenTracker | null>(null);
+  const liveContextUsageRef = useRef<LiveContextUsage | null>(null);
   const elapsedRef = useRef<number>(0);
   const elapsedTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const taskCountRef = useRef<{ pending: number; in_progress: number; completed: number }>({ pending: 0, in_progress: 0, completed: 0 });
@@ -1187,6 +1269,8 @@ export function App({ options }: { options: TUIOptions }): React.ReactNode {
   const [spinnerDetails, setSpinnerDetails] = useState<string[]>([]);
   const [spinnerCompleted, setSpinnerCompleted] = useState<string[]>([]);
   const [spinnerRunning, setSpinnerRunning] = useState<string | undefined>(undefined);
+  const [contextUsageVersion, setContextUsageVersion] = useState(0);
+  const [mcpStatusVersion, setMcpStatusVersion] = useState(0);
   const [agentEntries, setAgentEntries] = useState<import('./vendor/ui/AgentsPanel.js').AgentStatusEntry[]>([]);
   const cwd = process.cwd();
   const gitBranch = useMemo(() => getGitBranch(cwd), [cwd, messages.length]);
@@ -1228,6 +1312,7 @@ export function App({ options }: { options: TUIOptions }): React.ReactNode {
   const invalidateAgent = useCallback(() => {
     agentRef.current = null;
     tokenTrackerRef.current = null;
+    liveContextUsageRef.current = null;
   }, []);
   const pushSpinnerDetail = useCallback((line: string | null) => {
     if (!line) return;
@@ -1360,6 +1445,52 @@ export function App({ options }: { options: TUIOptions }): React.ReactNode {
       for (const eventName of ['turn:start', 'skills:matched', 'context:compressing', 'llm:request', 'llm:response', 'tool:executing', 'tool:result', 'turn:warning', 'turn:complete']) {
         bindProgressEvent(eventName);
       }
+      eventBus.on('context_window_usage', (payload) => {
+        const used = Number(payload.used_tokens ?? 0);
+        const window = Number(payload.context_window ?? tokenTrackerRef.current?.contextWindow ?? 200_000);
+        const pct = Number(payload.usage_pct ?? (window > 0 ? used / window : 0));
+        const messageCount = Number(payload.message_count ?? 0);
+        const prev = liveContextUsageRef.current;
+        liveContextUsageRef.current = {
+          ...(prev ?? {
+            contextWindow: window,
+            usedTokens: used,
+            usagePct: pct,
+            messageCount,
+          }),
+          contextWindow: window,
+          usedTokens: used,
+          usagePct: pct,
+          messageCount,
+        };
+        setContextUsageVersion((v) => v + 1);
+      });
+      eventBus.on('context_usage_breakdown', (payload) => {
+        const prev = liveContextUsageRef.current;
+        const contextWindow = Number(payload.context_window ?? prev?.contextWindow ?? tokenTrackerRef.current?.contextWindow ?? 200_000);
+        const estimatedTotal = Number(payload.estimated_total_tokens ?? 0);
+        const estimatedUsagePct = contextWindow > 0 ? (estimatedTotal / contextWindow) : 0;
+        liveContextUsageRef.current = {
+          ...(prev ?? {
+            contextWindow,
+            usedTokens: Number(payload.estimated_total_tokens ?? payload.used_tokens ?? 0),
+            usagePct: estimatedUsagePct,
+            messageCount: Number(payload.message_count ?? 0),
+          }),
+          contextWindow,
+          usedTokens: estimatedTotal > 0 ? estimatedTotal : (prev?.usedTokens ?? 0),
+          usagePct: estimatedUsagePct,
+          systemPromptTokens: Number(payload.system_prompt_tokens ?? 0),
+          projectContextTokens: Number(payload.project_context_tokens ?? 0),
+          skillsTokens: Number(payload.skills_tokens ?? 0),
+          memoryTokens: Number(payload.memory_tokens ?? 0),
+          conversationTokens: Number(payload.conversation_tokens ?? 0),
+          toolSchemasTokens: Number(payload.tool_schemas_tokens ?? 0),
+          mcpToolsTokens: Number(payload.mcp_tools_tokens ?? 0),
+          estimatedTotalTokens: estimatedTotal,
+        };
+        setContextUsageVersion((v) => v + 1);
+      });
 
       const tools = new ToolRegistry();
       for (const tool of allBuiltinTools) {
@@ -1398,6 +1529,7 @@ export function App({ options }: { options: TUIOptions }): React.ReactNode {
       if (mcpServers.length > 0) {
         void connectMcpServers(mcpRef.current, mcpServers).then((statuses) => {
           mcpStatusesRef.current = statuses;
+          setMcpStatusVersion((v) => v + 1);
           for (const mcpTool of createMcpToolEntries(mcpRef.current!)) {
             try {
               tools.register(mcpTool);
@@ -1933,6 +2065,7 @@ export function App({ options }: { options: TUIOptions }): React.ReactNode {
           mcpConfiguredRef,
           tokenTrackerRef,
           toolsRef,
+          liveContextUsageRef,
         },
         setMessages,
         skillsRef.current,
@@ -1942,8 +2075,23 @@ export function App({ options }: { options: TUIOptions }): React.ReactNode {
     [getAgent, invalidateAgent, options.maxTurns, messages],
   );
 
+  useEffect(() => {
+    try {
+      getAgent();
+    } catch {
+      // Best-effort prewarm only.
+    }
+  }, [getAgent]);
+
   const statusSegments: StatusLineSegment[] = useMemo(() => {
     const tracker = tokenTrackerRef.current;
+    const liveUsage = liveContextUsageRef.current;
+    const liveUsedPct = liveUsage
+      ? Math.max(0, Math.min(100, liveUsage.usagePct * 100))
+      : undefined;
+    const liveContextRemaining = liveUsedPct !== undefined
+      ? Math.max(0, Math.min(100, 100 - liveUsedPct))
+      : undefined;
     return buildStatusSegments({
       cwd,
       model: parseModelName(modelRef.current).cleanName,
@@ -1951,17 +2099,26 @@ export function App({ options }: { options: TUIOptions }): React.ReactNode {
       isLoading,
       hasQuestion: askQuestions !== null,
       totalTokens: tracker?.turnCount ? tracker.totalBlended : undefined,
-      contextPercentRemaining: tracker?.turnCount ? tracker.contextPercentRemaining : undefined,
+      contextPercentRemaining: liveContextRemaining ?? (tracker?.turnCount ? tracker.contextPercentRemaining : undefined),
       taskCounts: taskCountRef.current,
       elapsedMs,
       sessionId: sessionIdRef.current,
     });
-  }, [askQuestions, cwd, elapsedMs, gitBranch, isLoading, messages.length, modelRef.current]);
+  }, [askQuestions, contextUsageVersion, cwd, elapsedMs, gitBranch, isLoading, messages.length, modelRef.current]);
 
   const statusDetailLines = useMemo(() => {
     const lines: StatusDetailLine[] = [];
     const tracker = tokenTrackerRef.current;
-    const contextLine = buildContextProgressBar(tracker?.contextPercentRemaining);
+    const liveUsage = liveContextUsageRef.current;
+    const liveUsedPct = liveUsage
+      ? Math.max(0, Math.min(100, liveUsage.usagePct * 100))
+      : undefined;
+    const liveContextRemaining = liveUsedPct !== undefined
+      ? Math.max(0, Math.min(100, 100 - liveUsedPct))
+      : undefined;
+    const contextLine = buildContextProgressBar(
+      liveContextRemaining ?? (tracker?.turnCount ? tracker.contextPercentRemaining : undefined),
+    );
     if (contextLine) lines.push(contextLine);
     const mcpLines = buildMcpFooterLines(mcpStatusesRef.current);
     const mcpHealthy = mcpStatusesRef.current.length > 0
@@ -1973,7 +2130,7 @@ export function App({ options }: { options: TUIOptions }): React.ReactNode {
       lines.push(mcpLines[0]!);
     }
     return lines.slice(0, 3);
-  }, [elapsedMs, isLoading, messages.length]);
+  }, [contextUsageVersion, elapsedMs, isLoading, mcpStatusVersion, messages.length]);
 
   const spinnerTokenCount = useMemo(() => {
     if (!isLoading) return undefined;

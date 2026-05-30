@@ -104,6 +104,15 @@ type CompareTaskTemplate = {
   fileB: string;
 };
 
+function normalizeSkillName(value: string): string {
+  return value
+    .trim()
+    .replace(/^["'`]+/, '')
+    .replace(/["'`]+$/, '')
+    .trim()
+    .toLowerCase();
+}
+
 // ============================================================================
 // AgentLoop
 // ============================================================================
@@ -930,9 +939,23 @@ export class AgentLoop {
           message_count: messages.length,
         });
 
+        const currentToolSpecs = getToolSpecs();
+        const contextBreakdown = this._estimateContextBreakdown(
+          messages as LLMMessage[],
+          currentToolSpecs,
+          this.config.context.maxTokens!,
+        );
+        this._emit(events, turnId, 'context_usage_breakdown', contextBreakdown);
+
         // Model call with retry
         this._emit(events, turnId, 'model_call_started', { step });
-        const modelResp = await this._callModelWithRetry(events, turnId, step, messages as LLMMessage[], getToolSpecs());
+        const modelResp = await this._callModelWithRetry(
+          events,
+          turnId,
+          step,
+          messages as LLMMessage[],
+          currentToolSpecs,
+        );
         if (forceNoToolsNextStep) {
           forceNoToolsNextStep = false;
         }
@@ -1152,12 +1175,23 @@ export class AgentLoop {
 
           // skill.load dedup
           if (call.name === 'skill.load') {
-            const skillName = String(call.arguments['name'] ?? '').trim();
-            if (skillName && loadedSkills.includes(skillName)) {
-              this._emit(events, turnId, 'skill_already_loaded', { step, skill_name: skillName });
+            const rawSkillName = String(
+              call.arguments['name']
+              ?? call.arguments['skill']
+              ?? call.arguments['skill_name']
+              ?? '',
+            ).trim();
+            const wantedSkillName = normalizeSkillName(rawSkillName);
+            const alreadyLoaded = wantedSkillName
+              ? loadedSkills.some((loaded) => normalizeSkillName(loaded) === wantedSkillName)
+              : false;
+            if (alreadyLoaded) {
+              this._emit(events, turnId, 'skill_already_loaded', { step, skill_name: rawSkillName });
               messages.push({
                 role: 'user',
-                content: `Skill \`${skillName}\` is already loaded. Its instructions are in the context above. Do NOT call skill.load again — follow the skill instructions to complete the task.`,
+                content:
+                  `Skill \`${rawSkillName || 'this skill'}\` is already loaded in this turn. ` +
+                  'Do NOT call skill.load again. Continue executing the loaded skill instructions now and complete the task.',
               });
               failureTracker.recordSuccess(call.name);
               continue;
@@ -1654,6 +1688,76 @@ export class AgentLoop {
     payload: Record<string, unknown>,
   ): void {
     collector.push(AgentEventBus.createEvent(eventType, turnId, payload));
+    this.eventBus?.emit(eventType, { turnId, ...payload });
+  }
+
+  private _estimateTokensFromText(text: string | null | undefined): number {
+    if (!text) return 0;
+    return Math.ceil(text.length / 4);
+  }
+
+  private _estimateContextBreakdown(
+    messages: LLMMessage[],
+    toolSpecs: Record<string, unknown>[],
+    contextWindow: number,
+  ): Record<string, unknown> {
+    let systemPromptTokens = 0;
+    let projectContextTokens = 0;
+    let skillsTokens = 0;
+    let memoryTokens = 0;
+    let conversationTokens = 0;
+
+    for (const msg of messages) {
+      const role = String(msg.role ?? '');
+      const content = typeof msg.content === 'string' ? msg.content : '';
+      const tokens = this._estimateTokensFromText(content);
+      if (tokens <= 0) continue;
+
+      if (role === 'system') {
+        systemPromptTokens += tokens;
+        continue;
+      }
+
+      if (content.includes('<project-context>') || content.includes('<settings-update>')) {
+        projectContextTokens += tokens;
+      } else if (content.includes('<skills>') || content.includes('<skills_usage>')) {
+        skillsTokens += tokens;
+      } else if (content.includes('<memory-context>') || content.includes('<available-memory>')) {
+        memoryTokens += tokens;
+      } else {
+        conversationTokens += tokens;
+      }
+    }
+
+    const toolSchemasTokens = this._estimateTokensFromText(JSON.stringify(toolSpecs));
+    const mcpToolsTokens = this._estimateTokensFromText(
+      JSON.stringify(
+        toolSpecs.filter((spec) => {
+          const fn = (spec as { function?: { name?: string } }).function?.name ?? '';
+          return fn.toLowerCase().includes('mcp');
+        }),
+      ),
+    );
+
+    const estimatedTotalTokens =
+      systemPromptTokens
+      + projectContextTokens
+      + skillsTokens
+      + memoryTokens
+      + conversationTokens
+      + toolSchemasTokens;
+
+    return {
+      context_window: contextWindow,
+      system_prompt_tokens: systemPromptTokens,
+      project_context_tokens: projectContextTokens,
+      skills_tokens: skillsTokens,
+      memory_tokens: memoryTokens,
+      conversation_tokens: conversationTokens,
+      tool_schemas_tokens: toolSchemasTokens,
+      mcp_tools_tokens: mcpToolsTokens,
+      estimated_total_tokens: estimatedTotalTokens,
+    };
   }
 
   private _isSensitiveRequest(text: string): boolean {

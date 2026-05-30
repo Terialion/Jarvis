@@ -20,9 +20,16 @@ export type ContextPanelInput = {
   messageCount: number;
   uiMessageCount: number;
   contextWindow: number;
-  totalTokens: number;
+  estimatedTotalTokens: number;
+  providerReportedTokens?: number;
   systemPromptTokens: number;
   messageTokens: number;
+  projectContextTokens?: number;
+  systemToolsTokens?: number;
+  mcpToolsTokens?: number;
+  memoryTokens?: number;
+  skillsTokens?: number;
+  conversationTokens?: number;
   memoryEntries: MemoryTokenEntry[];
   skillEntries: SkillTokenEntry[];
   toolEntries: ToolTokenEntry[];
@@ -62,27 +69,42 @@ export function resolveContextMode(args: string[]): ContextMode {
 }
 
 export function buildContextPanelLines(input: ContextPanelInput): string[] {
-  const usedPct = input.contextWindow > 0 ? Math.round((input.totalTokens / input.contextWindow) * 100) : 0;
+  const usedPct = input.contextWindow > 0
+    ? Math.round((input.estimatedTotalTokens / input.contextWindow) * 100)
+    : 0;
   const leftPct = Math.max(0, 100 - usedPct);
   const bar = usageBar(usedPct);
-  const memoryTokens = input.memoryEntries.reduce((acc, item) => acc + item.tokens, 0);
-  const skillsTokens = input.skillEntries.reduce((acc, item) => acc + item.tokens, 0);
-  const toolTokens = input.toolEntries.reduce((acc, item) => acc + item.tokens, 0);
-  const mcpToolTokens = input.toolEntries.filter((item) => item.isMcp).reduce((acc, item) => acc + item.tokens, 0);
-  const freeTokens = Math.max(0, input.contextWindow - input.totalTokens);
+  const memoryTokens = input.memoryTokens ?? input.memoryEntries.reduce((acc, item) => acc + item.tokens, 0);
+  const skillsTokens = input.skillsTokens ?? input.skillEntries.reduce((acc, item) => acc + item.tokens, 0);
+  const toolTokens = input.systemToolsTokens ?? input.toolEntries.reduce((acc, item) => acc + item.tokens, 0);
+  const mcpToolTokens = input.mcpToolsTokens ?? input.toolEntries.filter((item) => item.isMcp).reduce((acc, item) => acc + item.tokens, 0);
+  const conversationTokens = input.conversationTokens ?? input.messageTokens;
+  const projectContextTokens = input.projectContextTokens ?? 0;
+  const freeTokens = Math.max(0, input.contextWindow - input.estimatedTotalTokens);
+  const providerReported = typeof input.providerReportedTokens === 'number'
+    ? input.providerReportedTokens
+    : null;
+  const providerPct = providerReported !== null && input.contextWindow > 0
+    ? ((providerReported / input.contextWindow) * 100).toFixed(1)
+    : '0.0';
+  const estimatedPct = input.contextWindow > 0
+    ? ((input.estimatedTotalTokens / input.contextWindow) * 100).toFixed(1)
+    : '0.0';
 
   const lines: string[] = [
     'Context Usage',
     `${bar}  ${input.modelName}`,
-    `${input.totalTokens.toLocaleString()}/${input.contextWindow.toLocaleString()} tokens (${usedPct}% used, ${leftPct}% left)`,
+    `Estimated: ${input.estimatedTotalTokens.toLocaleString()}/${input.contextWindow.toLocaleString()} tokens (${estimatedPct}% used, ${leftPct}% left)`,
+    `Provider-reported: ${(providerReported ?? 0).toLocaleString()}/${input.contextWindow.toLocaleString()} tokens (${providerPct}%)`,
     '',
     'Estimated usage by category',
     categoryLine('System prompt', input.systemPromptTokens, input.contextWindow),
+    categoryLine('Project context', projectContextTokens, input.contextWindow),
     categoryLine('System tools', toolTokens, input.contextWindow),
     categoryLine('MCP tools', mcpToolTokens, input.contextWindow),
     categoryLine('Memory files', memoryTokens, input.contextWindow),
     categoryLine('Skills', skillsTokens, input.contextWindow),
-    categoryLine('Messages', input.messageTokens, input.contextWindow),
+    categoryLine('Messages', conversationTokens, input.contextWindow),
     categoryLine('Free space', freeTokens, input.contextWindow),
     '',
     `Session: ${input.sessionId} · Messages: ${input.messageCount} · UI messages: ${input.uiMessageCount}`,
@@ -124,4 +146,3 @@ export function buildContextPanelLines(input: ContextPanelInput): string[] {
 
   return lines;
 }
-

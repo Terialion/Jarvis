@@ -1,5 +1,6 @@
 import { MCPClient } from './client.js';
 import { StdioMCPTransport } from './stdio-transport.js';
+import { execSync } from 'node:child_process';
 
 export type McpServerConfig = {
   command: string;
@@ -20,13 +21,23 @@ export type McpConnectionStatus = {
   error?: string;
 };
 
+function isPnpmLikeCommand(command: string): boolean {
+  const normalized = command.trim().toLowerCase().replace(/\\/g, '/');
+  return (
+    normalized === 'pnpm'
+    || normalized.endsWith('/pnpm')
+    || normalized.endsWith('/pnpm.cmd')
+    || normalized.endsWith('/pnpm.exe')
+  );
+}
+
 function shouldRetryWithNpxFallback(server: { config: McpServerConfig }, errorMessage: string): boolean {
-  const command = server.config.command.trim().toLowerCase();
+  const command = server.config.command.trim();
   const args = server.config.args ?? [];
   return (
-    command === 'pnpm' &&
+    isPnpmLikeCommand(command) &&
     args.length >= 2 &&
-    args[0] === 'dlx' &&
+    String(args[0]).toLowerCase() === 'dlx' &&
     errorMessage.includes('ENOENT')
   );
 }
@@ -40,6 +51,40 @@ function toNpxFallbackConfig(config: McpServerConfig): McpServerConfig {
     command: 'npx',
     args: ['-y', pkg, ...rest],
   };
+}
+
+function canResolveCommand(command: string): boolean {
+  try {
+    if (process.platform === 'win32') {
+      const escaped = command.replace(/"/g, '\\"');
+      const out = execSync(`where "${escaped}"`, { encoding: 'utf8' }).trim();
+      return out.length > 0;
+    }
+    const out = execSync(`command -v ${command}`, { encoding: 'utf8', shell: '/bin/sh' }).trim();
+    return out.length > 0;
+  } catch {
+    return false;
+  }
+}
+
+function normalizeConfigForPlatform(config: McpServerConfig): { config: McpServerConfig; normalized: boolean; note?: string } {
+  if (process.platform !== 'win32') {
+    return { config, normalized: false };
+  }
+  const args = config.args ?? [];
+  if (!isPnpmLikeCommand(config.command) || args.length < 2 || String(args[0]).toLowerCase() !== 'dlx') {
+    return { config, normalized: false };
+  }
+  // On Windows, plugin configs frequently reference pnpm paths that are missing.
+  // Prefer npx fallback up-front when pnpm cannot be resolved.
+  if (!canResolveCommand('pnpm')) {
+    return {
+      config: toNpxFallbackConfig(config),
+      normalized: true,
+      note: 'pnpm not found on PATH; switched to npx fallback',
+    };
+  }
+  return { config, normalized: false };
 }
 
 export async function connectMcpServers(
@@ -56,17 +101,21 @@ export async function connectMcpServers(
     statuses.push(status);
 
     try {
+      const normalized = normalizeConfigForPlatform(server.config);
       const transport = new StdioMCPTransport(
-        server.config.command,
-        server.config.args ?? [],
-        server.config.cwd,
-        server.config.env,
+        normalized.config.command,
+        normalized.config.args ?? [],
+        normalized.config.cwd,
+        normalized.config.env,
       );
       const conn = await client.connect(transport);
       status.state = conn.tools.length > 0 || conn.resources.length > 0 ? 'ready' : 'degraded';
       status.serverName = conn.serverInfo?.name ?? server.id;
       status.toolCount = conn.tools.length;
       status.resourceCount = conn.resources.length;
+      if (normalized.normalized && normalized.note) {
+        status.error = normalized.note;
+      }
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       if (shouldRetryWithNpxFallback(server, message)) {
