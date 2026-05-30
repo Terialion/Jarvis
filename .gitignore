@@ -121,6 +121,7 @@ tmp/
 *.tmp
 .workbuddy/
 .jarvis/
+.learnings/
 hermes-agent/
 openclaw/
 codex/

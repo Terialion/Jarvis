@@ -59,17 +59,21 @@ function DetailLine({
   backgroundColor,
   bold = false,
   dim = false,
+  prefix,
 }: {
   text: string;
   color?: string;
   backgroundColor?: string;
   bold?: boolean;
   dim?: boolean;
+  /** Custom prefix to replace the default "| " gutter. */
+  prefix?: string;
 }): React.ReactNode {
   const decoded = decodeHtmlEntities(text);
+  const gutter = prefix !== undefined ? prefix : '| ';
   return (
     <Box marginLeft={4}>
-      <Text color="#4B5563">{'| '}</Text>
+      <Text color="#4B5563">{gutter}</Text>
       <Text bold={bold} color={color} backgroundColor={backgroundColor} dimColor={dim}>{` ${decoded} `}</Text>
     </Box>
   );
@@ -223,6 +227,11 @@ function TimelineItemView({
           {(item.alwaysShowPreview || detailsExpanded) &&
             item.previewLines?.map((line, index) => {
               const style = getPreviewLineStyle(line);
+              const lines = item.previewLines ?? [];
+              const totalLines = lines.length + (item.previewOverflowCount ?? 0);
+              const pad = String(totalLines).length;
+              const lineNum = String(index + 1).padStart(pad);
+              const prefix = item.previewKind === 'code' ? `${lineNum} ` : undefined;
               return (
                 <DetailLine
                   key={`${item.id}-preview-${index}`}
@@ -231,6 +240,7 @@ function TimelineItemView({
                   backgroundColor={style.backgroundColor}
                   bold={style.bold}
                   dim={style.dim}
+                  prefix={prefix}
                 />
               );
             })}

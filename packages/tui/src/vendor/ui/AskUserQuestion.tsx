@@ -1,6 +1,6 @@
-import { Box, Text, useInput } from '../ink-renderer/index.js';
+import { Box, TerminalSizeContext, Text, useInput } from '../ink-renderer/index.js';
 import type React from 'react';
-import { useCallback, useState } from 'react';
+import { useCallback, useContext, useState } from 'react';
 import type { AskQuestionDef } from '@jarvis/tools';
 
 export type AskUserQuestionProps = {
@@ -14,15 +14,46 @@ function formatMultiAnswer(labels: string[]): string {
   return labels.join(', ');
 }
 
-/** Renders a single question with selectable options. */
+// ============================================================================
+// Shared header component (matches PermissionRequest style)
+// ============================================================================
+
+function QuestionHeader({ label, width }: { label: string; width: number }) {
+  const text = ` ${label} `;
+  const textLen = label.length + 2;
+  const leftLen = 3;
+  const rightLen = Math.max(0, width - leftLen - textLen);
+  return (
+    <Text>
+      <Text dimColor>{'─'.repeat(leftLen)}</Text>
+      <Text bold color="cyan">
+        {text}
+      </Text>
+      <Text dimColor>{'─'.repeat(rightLen)}</Text>
+    </Text>
+  );
+}
+
+function HorizontalRule({ width }: { width: number }) {
+  return <Text dimColor>{'─'.repeat(width)}</Text>;
+}
+
+// ============================================================================
+// Single question block (inline options, no sub-box)
+// ============================================================================
+
 function QuestionBlock({
   question,
   qIndex,
+  total,
   onSubmit,
+  terminalWidth,
 }: {
   question: AskQuestionDef;
   qIndex: number;
+  total: number;
   onSubmit: (answer: string) => void;
+  terminalWidth: number;
 }) {
   const [focusIndex, setFocusIndex] = useState(0);
   const [selected, setSelected] = useState<Set<number>>(new Set());
@@ -32,7 +63,7 @@ function QuestionBlock({
 
   const confirm = useCallback(() => {
     if (isMulti) {
-      const labels = [...selected].map((i) => options[i]!.label);
+      const labels = [...selected].sort().map((i) => options[i]!.label);
       if (labels.length === 0) return; // require at least one selection
       onSubmit(formatMultiAnswer(labels));
     } else {
@@ -46,11 +77,7 @@ function QuestionBlock({
     } else if (key.downArrow || input === 'j') {
       setFocusIndex((prev) => (prev + 1) % options.length);
     } else if (key.return) {
-      if (isMulti) {
-        confirm();
-      } else {
-        onSubmit(options[focusIndex]!.label);
-      }
+      confirm();
     } else if (input === ' ') {
       if (isMulti) {
         setSelected((prev) => {
@@ -66,55 +93,84 @@ function QuestionBlock({
     } else if (input === 'n' && !isMulti && options.length >= 2) {
       // Quick-select last option (usually "No" / cancel)
       onSubmit(options[options.length - 1]!.label);
+    } else if (input >= '1' && input <= '9' && !isMulti) {
+      const idx = parseInt(input, 10) - 1;
+      if (idx < options.length) {
+        onSubmit(options[idx]!.label);
+      }
     }
   });
 
-  const label = question.header ? `[${question.header}]` : `Q${qIndex + 1}`;
+  const headerText = question.header
+    ? `${question.header} (${qIndex + 1}/${total})`
+    : `Q${qIndex + 1}/${total}`;
 
   return (
-    <Box flexDirection="column" marginTop={qIndex > 0 ? 1 : 0}>
-      <Box>
-        <Text bold color="cyan">
-          {label}
-        </Text>
-        <Text> {question.question}</Text>
+    <Box flexDirection="column">
+      <QuestionHeader label={headerText} width={terminalWidth} />
+
+      <Box marginTop={1} marginLeft={2}>
+        <Text>{question.question}</Text>
       </Box>
+
+      <Box marginTop={1}>
+        <HorizontalRule width={terminalWidth} />
+      </Box>
+
       <Box marginTop={1} flexDirection="column">
         {options.map((opt, i) => {
           const isFocused = i === focusIndex;
           const isSelected = isMulti && selected.has(i);
-          const marker = isMulti
-            ? isSelected
-              ? '◉'
-              : '○'
-            : isFocused
-              ? '❯'
-              : ' ';
+
+          if (isMulti) {
+            const marker = isSelected ? '◉' : '○';
+            return (
+              <Box key={i}>
+                <Text color={isFocused ? 'cyan' : undefined}>
+                  {isFocused ? '❯' : ' '} {marker}{' '}
+                </Text>
+                <Text color={isFocused ? 'cyan' : undefined} bold={isFocused}>
+                  {i + 1}. {opt.label}
+                </Text>
+                {opt.description ? (
+                  <Text dimColor={!isFocused}> — {opt.description}</Text>
+                ) : null}
+              </Box>
+            );
+          }
+
           return (
             <Box key={i}>
               <Text color={isFocused ? 'cyan' : undefined}>
-                {marker}{' '}
+                {isFocused ? '❯' : ' '}{' '}
               </Text>
               <Text color={isFocused ? 'cyan' : undefined} bold={isFocused}>
-                {opt.label}
+                {i + 1}. {opt.label}
               </Text>
               {opt.description ? (
-                <Text dimColor> — {opt.description}</Text>
+                <Text dimColor={!isFocused}> — {opt.description}</Text>
               ) : null}
             </Box>
           );
         })}
       </Box>
-      {isMulti && (
-        <Box marginTop={1}>
+
+      <Box marginTop={1}>
+        {isMulti ? (
           <Text dimColor>
-            Space to toggle · Enter to confirm ({selected.size} selected)
+            Space to toggle · Enter to confirm ({selected.size} selected) · Esc to cancel
           </Text>
-        </Box>
-      )}
+        ) : (
+          <Text dimColor>Enter to confirm · Esc to cancel</Text>
+        )}
+      </Box>
     </Box>
   );
 }
+
+// ============================================================================
+// AskUserQuestion — multi-question flow with PermissionRequest-style UI
+// ============================================================================
 
 export function AskUserQuestion({
   questions,
@@ -123,6 +179,9 @@ export function AskUserQuestion({
 }: AskUserQuestionProps): React.ReactNode {
   const [currentQ, setCurrentQ] = useState(0);
   const [answers, setAnswers] = useState<Record<string, string>>({});
+
+  const terminalSize = useContext(TerminalSizeContext);
+  const terminalWidth = Math.min((terminalSize?.columns ?? 80) - 2, 80);
 
   const handleAnswer = useCallback(
     (answer: string) => {
@@ -148,23 +207,13 @@ export function AskUserQuestion({
 
   return (
     <Box flexDirection="column" marginLeft={2}>
-      <Box>
-        <Text dimColor>┌</Text>
-        <Text bold color="#DA7756">
-          {' AskUserQuestion '}
-        </Text>
-        <Text dimColor>
-          ({currentQ + 1}/{questions.length})
-        </Text>
-        <Text dimColor> Esc to cancel</Text>
-      </Box>
-      <Box marginLeft={2} flexDirection="column">
-        <QuestionBlock
-          question={question}
-          qIndex={currentQ}
-          onSubmit={handleAnswer}
-        />
-      </Box>
+      <QuestionBlock
+        question={question}
+        qIndex={currentQ}
+        total={questions.length}
+        onSubmit={handleAnswer}
+        terminalWidth={terminalWidth}
+      />
     </Box>
   );
 }

@@ -71,3 +71,13 @@ When you make a change:
 ---
 
 **These guidelines are working if:** fewer unnecessary changes in diffs, fewer rewrites due to overcomplication, and clarifying questions come before implementation rather than after mistakes.
+
+## 6. Self-Improvement
+
+Log corrections, errors, and feature requests to `.learnings/`. See `.claude/skills/self-improvement/SKILL.md` for full format.
+
+Triggers:
+- User corrects you → log to `LEARNINGS.md`
+- Command fails → log to `ERRORS.md`
+- User wants missing capability → log to `FEATURE_REQUESTS.md`
+- Found better approach → log to `LEARNINGS.md`
