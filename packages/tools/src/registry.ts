@@ -7,6 +7,8 @@ export interface ToolContext {
   taskId?: string;
   sessionId?: string;
   signal?: AbortSignal;
+  /** Conversation history ref (for fork context mode) */
+  historyRef?: { current: Array<{ role: string; content: string }> };
 }
 
 /** A tool handler function. Returns a JSON string (or Promise<string> for async). */

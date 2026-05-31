@@ -20,6 +20,11 @@ export interface SandboxSettings {
   extraAllowedPatterns?: string[];
 }
 
+export interface FallbackConfig {
+  /** Enable fallback to these models when primary fails. List of model names. */
+  models?: string[];
+}
+
 export interface JarvisConfig {
   /** @deprecated Use active_model */
   model?: string;
@@ -36,6 +41,10 @@ export interface JarvisConfig {
   permission_mode?: "workspace_write" | "accept_edits" | "bypass";
   max_turns?: number;
   system_prompt?: string;
+  /** Fallback model config — auto-switch on provider failure */
+  fallback?: FallbackConfig;
+  /** Maximum subagent nesting depth (default: 2) */
+  agent_max_depth?: number;
 }
 
 export const JARVIS_REASONING_EFFORTS = [

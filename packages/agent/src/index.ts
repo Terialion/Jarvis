@@ -20,6 +20,10 @@ export type {
 } from './model.js';
 export { MODEL_REASONING_EFFORTS } from './model.js';
 
+// model fallback
+export { FallbackLLMProvider } from './model-fallback.js';
+export type { FallbackProviderConfig } from './model-fallback.js';
+
 // model catalog
 export {
   KNOWN_MODELS,

@@ -14,6 +14,7 @@ import type { ToolRegistry, ToolRuntime } from '@jarvis/tools';
 import type { SkillRegistry, SkillExecutor } from '@jarvis/skills';
 import type { HookRegistry } from '@jarvis/hooks';
 import { LLMProvider, type ModelConfig, type LLMMessage, FakeModelClient } from './model.js';
+import type { FallbackLLMProvider } from './model-fallback.js';
 import { TokenTracker } from './token-tracker.js';
 import { AgentEventBus } from './events.js';
 import { ContextBuilder, estimateTokens, type ContextConfig, type TurnContext, type ContextPack, type SessionStoreLike, type MemoryStoreLike, type SkillRegistryLike } from './context.js';
@@ -38,7 +39,7 @@ export interface AgentLoopConfig {
   systemPrompt?: string;
   eventBus?: AgentEventBus;
   context?: ContextConfig;
-  provider?: LLMProvider;
+  provider?: LLMProvider | FallbackLLMProvider;
   skillRegistry?: SkillRegistry;
   skillExecutor?: SkillExecutor;
   hooks?: HookRegistry;
@@ -132,7 +133,7 @@ export class AgentLoop {
     tools?: ToolRegistry;
     toolRuntime?: ToolRuntime;
     eventBus?: AgentEventBus;
-    provider?: LLMProvider;
+    provider?: LLMProvider | FallbackLLMProvider;
     tokenTracker?: TokenTracker;
     onToken?: (token: string) => void;
     onReasoningDelta?: (delta: string) => void;
@@ -147,7 +148,7 @@ export class AgentLoop {
     contextStore?: { retrieveRecentContext(sessionId: string): Record<string, unknown> };
     mailbox?: AgentMailbox;
   };
-  private provider: LLMProvider | FakeModelClient;
+  private provider: LLMProvider | FakeModelClient | FallbackLLMProvider;
   private tools?: ToolRegistry;
   private toolRuntime?: ToolRuntime;
   private eventBus?: AgentEventBus;
@@ -1163,6 +1164,17 @@ export class AgentLoop {
         let anyOkThisStep = false;
         let requestForcedSynthesis = false;
         let newEvidenceThisStep = false;
+
+        // ── Phase 1: Pre-filter ──
+        // Run fast checks (failure tracker, dedup) to determine which calls need execution.
+        type PendingCall = {
+          call: typeof modelResp.toolCalls[number];
+          argsFrozen: string;
+          toolItemBase: ToolCallThreadItem;
+        };
+        const pending: PendingCall[] = [];
+        let earlyBreak = false;
+
         for (const call of modelResp.toolCalls) {
           const toolItemBase: ToolCallThreadItem = {
             id: call.callId,
@@ -1181,6 +1193,7 @@ export class AgentLoop {
             if (reject.kind === 'repeat') {
               if (failureTracker.isRepeatHardStop(call.name)) {
                 requestForcedSynthesis = enterFinalize('rejections');
+                earlyBreak = true;
                 break;
               }
               messages.push({
@@ -1241,183 +1254,168 @@ export class AgentLoop {
             continue;
           }
 
+          // Needs execution — add to pending
           toolCallsLog.push({ name: call.name, arguments: call.arguments, callId: call.callId });
-          this._emit(events, turnId, 'tool_call_started', { step, tool_call: { name: call.name, arguments: call.arguments } });
-          this.emitThreadEvent({
-            type: 'item.started',
-            turn_id: turnId,
-            item: toolItemBase,
-          });
-          this.config.onToolStart?.(call.callId, call.name, call.arguments);
+          pending.push({ call, argsFrozen, toolItemBase });
+        }
 
-          // Execute tool through shared helper (handles pre/post hooks + ToolRuntime)
-          const signal = this.beginToolDispatch();
-          let result: ToolResult;
-          try {
-            result = await this.executeToolCall(call.name, call.arguments, call.callId, {
-              sessionId,
-              turnId,
-              signal,
-            });
-          } finally {
-            this.endToolDispatch();
+        // ── Phase 2: Parallel execution ──
+        // Execute all pending tool calls concurrently.
+        if (!earlyBreak && pending.length > 0) {
+          // Emit start events for all pending calls
+          for (const p of pending) {
+            this._emit(events, turnId, 'tool_call_started', { step, tool_call: { name: p.call.name, arguments: p.call.arguments } });
+            this.emitThreadEvent({ type: 'item.started', turn_id: turnId, item: p.toolItemBase });
+            this.config.onToolStart?.(p.call.callId, p.call.name, p.call.arguments);
           }
 
-          // Handle blocked-by-hook result
-          if (!result.ok && result.error === 'denied') {
-            const blockedDict = { ...result, content: result.content };
-            toolResultsLog.push(blockedDict);
-            this._emit(events, turnId, 'tool_call_completed', { step, tool_result: { ...result, ok: false } });
+          // Dispatch all tools in parallel
+          const signal = this.beginToolDispatch();
+          const results = await Promise.all(
+            pending.map(async (p) => {
+              try {
+                const result = await this.executeToolCall(p.call.name, p.call.arguments, p.call.callId, {
+                  sessionId, turnId, signal,
+                });
+                return { pending: p, result };
+              } catch (error) {
+                // Synthesize error result
+                const errResult: ToolResult = {
+                  ok: false,
+                  name: p.call.name,
+                  callId: p.call.callId,
+                  content: error instanceof Error ? error.message : String(error),
+                  error: error instanceof Error ? error.message : String(error),
+                  durationMs: 0,
+                };
+                return { pending: p, result: errResult };
+              }
+            }),
+          );
+          this.endToolDispatch();
+
+          // ── Phase 3: Sequential post-processing ──
+          for (const { pending: p, result } of results) {
+            const { call, argsFrozen, toolItemBase } = p;
+
+            // Handle blocked-by-hook result
+            if (!result.ok && result.error === 'denied') {
+              const blockedDict = { ...result, content: result.content };
+              toolResultsLog.push(blockedDict);
+              this._emit(events, turnId, 'tool_call_completed', { step, tool_result: { ...result, ok: false } });
+              this.emitThreadEvent({
+                type: 'item.completed',
+                turn_id: turnId,
+                item: { ...toolItemBase, status: 'failed', result: result.content, error: result.error, duration_ms: result.durationMs },
+              });
+              messages.push({ role: 'tool', tool_call_id: call.callId, content: this._observationText(result) });
+              failureTracker.recordFailure(result.name, 'blocked', result.error ?? '', step);
+              continue;
+            }
+
+            const resultDict = { ...result, content: result.content };
+            toolResultsLog.push(resultDict);
+            newEvidenceThisStep = true;
+            const evidencePath = this._extractReadPathFromToolCall(call.name, call.arguments);
+            if (evidencePath) collectedReadPaths.add(evidencePath);
+            if (this._isDiffLikeToolCall(call.name, call.arguments)) sawDiffEvidence = true;
+
+            this._emit(events, turnId, 'tool_call_completed', { step, tool_result: resultDict });
             this.emitThreadEvent({
               type: 'item.completed',
               turn_id: turnId,
-              item: {
-                ...toolItemBase,
-                status: 'failed',
-                result: result.content,
-                error: result.error,
-                duration_ms: result.durationMs,
-              },
+              item: { ...toolItemBase, status: result.ok ? 'completed' : 'failed', result: result.content, error: result.error, duration_ms: result.durationMs },
             });
-            messages.push({
-              role: 'tool',
-              tool_call_id: call.callId,
-              content: this._observationText(result),
-            });
-            failureTracker.recordFailure(result.name, 'blocked', result.error ?? '', step);
-            continue;
-          }
+            this.config.onToolEnd?.(call.callId, call.name, result);
 
-          const resultDict = { ...result, content: result.content };
-          toolResultsLog.push(resultDict);
-          newEvidenceThisStep = true;
-          const evidencePath = this._extractReadPathFromToolCall(call.name, call.arguments);
-          if (evidencePath) {
-            collectedReadPaths.add(evidencePath);
-          }
-          if (this._isDiffLikeToolCall(call.name, call.arguments)) {
-            sawDiffEvidence = true;
-          }
-          this._emit(events, turnId, 'tool_call_completed', { step, tool_result: resultDict });
-          this.emitThreadEvent({
-            type: 'item.completed',
-            turn_id: turnId,
-            item: {
-              ...toolItemBase,
-              status: result.ok ? 'completed' : 'failed',
-              result: result.content,
-              error: result.error,
-              duration_ms: result.durationMs,
-            },
-          });
-          this.config.onToolEnd?.(call.callId, call.name, result);
-
-          // skill.load / Skill handling — both need <skill-context> wrapping
-          // and allowed-tools merging from the registry
-          if ((call.name === 'skill.load' || call.name === 'Skill') && result.ok) {
-            const resultMeta = (result as unknown as { metadata?: Record<string, unknown> }).metadata;
-            const skillName = String(resultMeta?.['skill_name'] || call.arguments['name'] || '').trim();
-            if (skillName && !loadedSkills.includes(skillName)) loadedSkills.push(skillName);
-            // Merge allowed-tools from the loaded skill
-            if (skillName && this.skillRegistry) {
-              const skillSpec = this.skillRegistry.get(skillName);
-              const skillAllowed = skillSpec?.allowedTools ?? [];
-              if (skillAllowed.length > 0) {
-                activeAllowedTools = activeAllowedTools === undefined
-                  ? [...skillAllowed]
-                  : [...new Set([...activeAllowedTools, ...skillAllowed])];
+            // skill.load / Skill handling
+            if ((call.name === 'skill.load' || call.name === 'Skill') && result.ok) {
+              const resultMeta = (result as unknown as { metadata?: Record<string, unknown> }).metadata;
+              const skillName = String(resultMeta?.['skill_name'] || call.arguments['name'] || '').trim();
+              if (skillName && !loadedSkills.includes(skillName)) loadedSkills.push(skillName);
+              if (skillName && this.skillRegistry) {
+                const skillSpec = this.skillRegistry.get(skillName);
+                const skillAllowed = skillSpec?.allowedTools ?? [];
+                if (skillAllowed.length > 0) {
+                  activeAllowedTools = activeAllowedTools === undefined
+                    ? [...skillAllowed]
+                    : [...new Set([...activeAllowedTools, ...skillAllowed])];
+                }
               }
-            }
-            const skillBody = this._observationText(result);
-            messages.push({
-              role: 'tool',
-              tool_call_id: call.callId,
-              content: `<skill-context name="${skillName}">\n${skillBody}\n</skill-context>\n\nThese are the complete instructions for the \`${skillName}\` skill. Call the tools described above NOW to complete the user's task. Do NOT describe what you plan to do — use the tool functions directly.`,
-            });
-            failureTracker.recordSuccess(result.name);
-            anyOkThisStep = true;
-            const entry = seenCalls.get(call.name) || [];
-            entry.push({ argsFrozen, result: resultDict });
-            seenCalls.set(call.name, entry);
-            continue;
-          }
-
-          if (result.ok) {
-            failureTracker.recordSuccess(result.name);
-            anyOkThisStep = true;
-            const entry = seenCalls.get(call.name) || [];
-            entry.push({ argsFrozen, result: resultDict });
-            seenCalls.set(call.name, entry);
-            messages.push({
-              role: 'tool',
-              tool_call_id: call.callId,
-              content: this._observationText(result),
-            });
-            continue;
-          }
-
-          // Tool failed
-          const classification = this.errorClassifier.classify(result);
-          failureTracker.recordFailure(result.name, classification.category, result.error ?? '', step);
-
-          const shouldStop = failureTracker.shouldStop();
-          if (shouldStop.stop) {
-            messages.push({
-              role: 'tool',
-              tool_call_id: call.callId,
-              content: this._observationText(result),
-            });
-            stopReason = 'consecutive_failures';
-            outputType = 'error';
-            finalAnswer = shouldStop.reason;
-            break;
-          }
-
-          // Retry transient errors
-          if (this.toolRetryPolicy.shouldRetry(
-            { name: call.name, arguments: call.arguments, callId: call.callId, source: 'model' },
-            classification,
-          ) && this.tools) {
-            this._emit(events, turnId, 'retry_started', { step, tool_name: result.name, reason: classification.reason });
-            const retryResult = await this.executeToolCall(call.name, call.arguments, call.callId, {
-              sessionId,
-              turnId,
-              signal: this.beginToolDispatch(),
-            });
-            this.endToolDispatch();
-            toolResultsLog.push({ ...retryResult, content: retryResult.content });
-            if (retryResult.ok) {
-              failureTracker.recordSuccess(retryResult.name);
-              anyOkThisStep = true;
-              newEvidenceThisStep = true;
+              const skillBody = this._observationText(result);
               messages.push({
                 role: 'tool',
                 tool_call_id: call.callId,
-                content: this._observationText(retryResult),
+                content: `<skill-context name="${skillName}">\n${skillBody}\n</skill-context>\n\nThese are the complete instructions for the \`${skillName}\` skill. Call the tools described above NOW to complete the user's task. Do NOT describe what you plan to do — use the tool functions directly.`,
               });
+              failureTracker.recordSuccess(result.name);
+              anyOkThisStep = true;
+              const entry = seenCalls.get(call.name) || [];
+              entry.push({ argsFrozen, result: resultDict });
+              seenCalls.set(call.name, entry);
               continue;
             }
-            const retryClass = this.errorClassifier.classify(retryResult);
-            failureTracker.recordFailure(retryResult.name, retryClass.category, retryResult.error ?? '', step);
-            const shouldStop2 = failureTracker.shouldStop();
-            if (shouldStop2.stop) {
-              messages.push({
-                role: 'tool',
-                tool_call_id: call.callId,
-                content: `${this._observationText(result)}\n\n[Retry also failed]\n${this._observationText(retryResult)}`,
-              });
+
+            if (result.ok) {
+              failureTracker.recordSuccess(result.name);
+              anyOkThisStep = true;
+              const entry = seenCalls.get(call.name) || [];
+              entry.push({ argsFrozen, result: resultDict });
+              seenCalls.set(call.name, entry);
+              messages.push({ role: 'tool', tool_call_id: call.callId, content: this._observationText(result) });
+              continue;
+            }
+
+            // Tool failed
+            const classification = this.errorClassifier.classify(result);
+            failureTracker.recordFailure(result.name, classification.category, result.error ?? '', step);
+
+            const shouldStop = failureTracker.shouldStop();
+            if (shouldStop.stop) {
+              messages.push({ role: 'tool', tool_call_id: call.callId, content: this._observationText(result) });
               stopReason = 'consecutive_failures';
               outputType = 'error';
-              finalAnswer = shouldStop2.reason;
+              finalAnswer = shouldStop.reason;
               break;
             }
-          }
 
-          messages.push({
-            role: 'tool',
-            tool_call_id: call.callId,
-            content: this._observationText(result),
-          });
+            // Retry transient errors
+            if (this.toolRetryPolicy.shouldRetry(
+              { name: call.name, arguments: call.arguments, callId: call.callId, source: 'model' },
+              classification,
+            ) && this.tools) {
+              this._emit(events, turnId, 'retry_started', { step, tool_name: result.name, reason: classification.reason });
+              const retrySignal = this.beginToolDispatch();
+              const retryResult = await this.executeToolCall(call.name, call.arguments, call.callId, {
+                sessionId, turnId, signal: retrySignal,
+              });
+              this.endToolDispatch();
+              toolResultsLog.push({ ...retryResult, content: retryResult.content });
+              if (retryResult.ok) {
+                failureTracker.recordSuccess(retryResult.name);
+                anyOkThisStep = true;
+                newEvidenceThisStep = true;
+                messages.push({ role: 'tool', tool_call_id: call.callId, content: this._observationText(retryResult) });
+                continue;
+              }
+              const retryClass = this.errorClassifier.classify(retryResult);
+              failureTracker.recordFailure(retryResult.name, retryClass.category, retryResult.error ?? '', step);
+              const shouldStop2 = failureTracker.shouldStop();
+              if (shouldStop2.stop) {
+                messages.push({
+                  role: 'tool',
+                  tool_call_id: call.callId,
+                  content: `${this._observationText(result)}\n\n[Retry also failed]\n${this._observationText(retryResult)}`,
+                });
+                stopReason = 'consecutive_failures';
+                outputType = 'error';
+                finalAnswer = shouldStop2.reason;
+                break;
+              }
+            }
+
+            messages.push({ role: 'tool', tool_call_id: call.callId, content: this._observationText(result) });
+          }
         }
 
         if (requestForcedSynthesis) {
@@ -2024,8 +2022,10 @@ export class AgentLoop {
           Boolean(this.config.onToken)
           || Boolean(this.config.onReasoningDelta);
 
+        // Use type-erased access to support both LLMProvider and FallbackLLMProvider
+        const prov = this.provider as { chat: typeof LLMProvider.prototype.chat; chatStream: typeof LLMProvider.prototype.chatStream };
         const chatResp = useStreaming
-          ? await (this.provider as LLMProvider).chatStream(
+          ? await prov.chatStream(
               messages,
               toolSpecs,
               {
@@ -2095,7 +2095,7 @@ export class AgentLoop {
                 },
               },
             )
-          : await (this.provider as LLMProvider).chat(
+          : await prov.chat(
               messages,
               toolSpecs,
             );

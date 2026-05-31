@@ -20,6 +20,9 @@ export class SubagentPool {
   /** Maximum concurrent subagents (default 4, matches Codex agent_max_threads). */
   readonly maxConcurrent: number;
 
+  /** Maximum nesting depth (default 2, configurable via agent_max_depth). */
+  maxDepth = 2;
+
   /** Default nesting depth for subagents. Set before submitting. */
   defaultDepth = 0;
 
@@ -72,6 +75,12 @@ export class SubagentPool {
 
     if (this.agents.has(config.agentId)) {
       throw new Error(`Subagent ${config.agentId} already exists`);
+    }
+
+    // Depth limit check (Codex agent_max_depth pattern)
+    const depth = config.depth ?? this.defaultDepth;
+    if (depth > this.maxDepth) {
+      throw new Error(`Agent depth ${depth} exceeds max_depth ${this.maxDepth}. Reduce nesting or increase agent_max_depth in config.`);
     }
 
     let resolveCompletion: (result: SubagentResult) => void;

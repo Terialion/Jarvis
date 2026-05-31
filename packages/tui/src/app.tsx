@@ -40,6 +40,7 @@ import { MarkdownMemoryStore } from '@jarvis/store';
 import { SubagentPool, toolWhitelistForType, type SubagentConfig } from '@jarvis/subagents';
 import { MCPClient, connectMcpServers, type McpConnectionStatus, type McpServerConfig } from '@jarvis/mcp';
 import { HookRegistry } from '@jarvis/hooks';
+import { ConfigWatcher } from '@jarvis/shared';
 import { LLMProvider } from '@jarvis/agent';
 import type { ModelReasoningEffort } from '@jarvis/agent';
 import type { TUIOptions, TUIDebugEvent } from './types.js';
@@ -1757,6 +1758,36 @@ export function App({ options }: { options: TUIOptions }): React.ReactNode {
 
       sessionReadyRef.current = true;
     });
+  }, []);
+
+  // ── Config hot-reload watcher ──
+  useEffect(() => {
+    const watcher = new ConfigWatcher(process.cwd());
+    watcher.onChange((event) => {
+      if (event.type === 'user') {
+        // Reload user config — update model/apiKey/baseURL refs
+        try {
+          const config = JSON.parse(event.content) as Record<string, unknown>;
+          const activeModel = (config['active_model'] as string) ?? (config['model'] as string);
+          if (activeModel && typeof activeModel === 'string') {
+            modelRef.current = activeModel;
+          }
+          const apiKey = config['api_key'] as string | undefined;
+          if (apiKey) apiKeyRef.current = apiKey;
+          const baseURL = config['base_url'] as string | undefined;
+          if (baseURL) baseURLRef.current = baseURL;
+        } catch { /* ignore parse errors */ }
+      }
+      if (event.type === 'mcp') {
+        // MCP config changed — disconnect and invalidate agent for reconnect
+        if (mcpRef.current) {
+          mcpRef.current.disconnectAll();
+        }
+        invalidateAgent();
+      }
+    });
+    watcher.start();
+    return () => watcher.stop();
   }, []);
 
   const getAgent = useCallback((): AgentLoop => {

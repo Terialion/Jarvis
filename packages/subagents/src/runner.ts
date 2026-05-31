@@ -66,24 +66,34 @@ export class SubagentRunner {
       };
     }
 
-    // Get tool whitelist
-    const allowedTools = toolWhitelistForType(config.agentType);
+    // Get tool whitelist: config.tools overrides type-based whitelist
+    const allowedTools = config.tools ?? toolWhitelistForType(config.agentType);
+
+    // Build task prompt: if fork mode, prepend parent context
+    let taskPrompt = config.task;
+    if (config.forkContext && config.parentMessages && config.parentMessages.length > 0) {
+      const contextSummary = config.parentMessages
+        .slice(-20)  // Last 20 messages
+        .map((m) => `[${m.role}]: ${m.content.slice(0, 500)}`)
+        .join('\n');
+      taskPrompt = `<parent-context>\nThe following is the conversation history from the parent agent. Use it for context but focus on the task below.\n\n${contextSummary}\n</parent-context>\n\n${config.task}`;
+    }
 
     try {
       const loop = this.deps.createAgentLoop({
         agentId: config.agentId,
-        task: config.task,
+        task: taskPrompt,
         allowedTools,
         maxSteps: budget,
         depth,
         mailbox,
-        systemPrompt: buildSubagentSystemPrompt({
-        task: config.task,
-        depth: config.depth ?? 0,
-      }),
+        systemPrompt: config.systemPrompt ?? buildSubagentSystemPrompt({
+          task: config.task,
+          depth,
+        }),
       });
 
-      const result: AgentRunResult = await loop.runTurn(config.task);
+      const result: AgentRunResult = await loop.runTurn(taskPrompt);
 
       return {
         agentId: config.agentId,
@@ -107,7 +117,7 @@ export class SubagentRunner {
 // ============================================================================
 
 export function toolWhitelistForType(
-  agentType: SubagentConfig['agentType'],
+  agentType: string,
 ): string[] | null {
   switch (agentType) {
     case 'explore':
@@ -116,6 +126,9 @@ export function toolWhitelistForType(
       return PLAN_TOOLS;
     case 'general':
       return GENERAL_TOOLS; // null = all tools
+    default:
+      // Custom agent types — tools are passed via SubagentConfig.tools
+      return null;
   }
 }
 

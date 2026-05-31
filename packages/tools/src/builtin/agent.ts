@@ -12,10 +12,18 @@ import { getBackgroundTaskRegistry } from './task.js';
 export interface AgentPool {
   submit(config: {
     agentId: string;
-    agentType: 'explore' | 'plan' | 'general';
+    agentType: string;
     task: string;
     budgetSteps?: number;
     depth?: number;
+    model?: string;
+    reasoningEffort?: string;
+    permissionMode?: string;
+    systemPrompt?: string;
+    tools?: string[] | null;
+    blockedTools?: string[];
+    forkContext?: boolean;
+    parentMessages?: Array<{ role: string; content: string }>;
   }): {
     agentId: string;
     status: string;
@@ -24,12 +32,25 @@ export interface AgentPool {
   };
 }
 
+/** Agent definition from .jarvis/agents/*.md */
+export interface AgentFileDefinition {
+  name: string;
+  description: string;
+  model?: string;
+  reasoningEffort?: string;
+  tools: string[] | null;
+  blockedTools: string[];
+  maxSteps?: number;
+  permissionMode?: string;
+  systemPrompt: string;
+}
+
 // ---- schema ----
 
 export const agentSchema = toOpenAITool({
   name: 'Agent',
   description:
-    'Launch a new agent to handle complex, multi-step tasks. Available agent types: explore (read-only search), plan (explore + task tools), general (all tools). Use for parallel independent work or isolating context-heavy research.',
+    'Launch a new agent to handle complex, multi-step tasks. Built-in types: explore (read-only search), plan (explore + task tools), general (all tools). Custom agent types from .jarvis/agents/*.md are also available.',
   parameters: {
     type: 'object',
     properties: {
@@ -43,14 +64,22 @@ export const agentSchema = toOpenAITool({
       },
       subagent_type: {
         type: 'string',
-        enum: ['explore', 'plan', 'general'],
         default: 'general',
-        description: 'Agent type: explore (read/search only), plan (explore + task tools), general (all tools)',
+        description: 'Agent type: explore, plan, general, or a custom agent name from .jarvis/agents/',
+      },
+      model: {
+        type: 'string',
+        description: 'Override the model for this agent (e.g. "deepseek-v3", "haiku")',
       },
       run_in_background: {
         type: 'boolean',
         default: false,
         description: 'Set to true to run in background. You will be notified when it completes.',
+      },
+      fork_context: {
+        type: 'boolean',
+        default: false,
+        description: 'Inherit parent conversation context (saves tokens, like Claude Code fork mode)',
       },
     },
     required: ['description', 'prompt'],
@@ -59,19 +88,29 @@ export const agentSchema = toOpenAITool({
 
 // ---- factory ----
 
-export function createAgentHandler(pool: AgentPool): ToolHandler {
+export function createAgentHandler(pool: AgentPool, agentDefs?: Map<string, AgentFileDefinition>): ToolHandler {
   const activeAgents = new Map<string, { cancel: () => void }>();
 
-  return async (args: Record<string, unknown>, _context: ToolContext): Promise<string> => {
+  return async (args: Record<string, unknown>, context: ToolContext): Promise<string> => {
     const description = String(args.description ?? '').trim();
     const prompt = String(args.prompt ?? '').trim();
-    const agentType = (['explore', 'plan', 'general'] as const).includes(args.subagent_type as never)
-      ? (args.subagent_type as 'explore' | 'plan' | 'general')
-      : 'general';
+    const agentTypeName = String(args.subagent_type ?? 'general').trim();
     const runInBackground = args.run_in_background === true;
+    const forkContext = args.fork_context === true;
+    const modelOverride = typeof args.model === 'string' ? args.model : undefined;
 
     if (!description || !prompt) {
       return JSON.stringify({ error: 'Missing required parameters: description and prompt' });
+    }
+
+    // Resolve agent type: built-in or custom definition
+    const builtins = ['explore', 'plan', 'general'];
+    const isBuiltin = builtins.includes(agentTypeName);
+    const agentDef = agentDefs?.get(agentTypeName);
+
+    if (!isBuiltin && !agentDef) {
+      const available = [...builtins, ...(agentDefs ? agentDefs.keys() : [])];
+      return JSON.stringify({ error: `Unknown agent type "${agentTypeName}". Available: ${available.join(', ')}` });
     }
 
     const agentId = `agent_${crypto.randomUUID().slice(0, 8)}`;
@@ -79,17 +118,38 @@ export function createAgentHandler(pool: AgentPool): ToolHandler {
     try {
       const depth = typeof args.depth === 'number' ? args.depth : 1;
 
-      const handle = pool.submit({
+      // Build submit config from agent definition
+      const submitConfig: Parameters<AgentPool['submit']>[0] = {
         agentId,
-        agentType,
+        agentType: agentTypeName,
         task: `## ${description}\n\n${prompt}`,
         depth,
-      });
+      };
+
+      // Apply agent definition overrides
+      if (agentDef) {
+        submitConfig.model = modelOverride ?? agentDef.model;
+        submitConfig.reasoningEffort = agentDef.reasoningEffort;
+        submitConfig.permissionMode = agentDef.permissionMode;
+        submitConfig.systemPrompt = agentDef.systemPrompt;
+        submitConfig.tools = agentDef.tools;
+        submitConfig.blockedTools = agentDef.blockedTools;
+      } else if (modelOverride) {
+        submitConfig.model = modelOverride;
+      }
+
+      // Fork context mode
+      if (forkContext && context.historyRef) {
+        submitConfig.forkContext = true;
+        submitConfig.parentMessages = context.historyRef.current.map((m) => ({
+          role: m.role,
+          content: m.content,
+        }));
+      }
+
+      const handle = pool.submit(submitConfig);
 
       activeAgents.set(agentId, { cancel: handle.cancel });
-
-      // Default: async spawn — return immediately, results arrive via mailbox
-      // When runInBackground=true, also register with background task tracker
 
       if (runInBackground) {
         const bgRegistry = getBackgroundTaskRegistry();
@@ -106,13 +166,15 @@ export function createAgentHandler(pool: AgentPool): ToolHandler {
         });
       }
 
-      // Always async — results flow back via mailbox at next turn
       handle.completion.then(() => activeAgents.delete(agentId)).catch(() => activeAgents.delete(agentId));
 
+      const agentLabel = agentDef ? agentDef.name : agentTypeName;
       return JSON.stringify({
         agentId,
         status: 'spawned',
-        message: `Agent "${agentId}" spawned asynchronously for: ${description}. Results will arrive in your mailbox when complete. Use list_agents to check status.`,
+        type: agentLabel,
+        model: submitConfig.model ?? 'inherit',
+        message: `Agent "${agentId}" (${agentLabel}) spawned for: ${description}. Results will arrive in mailbox when complete.`,
       });
     } catch (err) {
       activeAgents.delete(agentId);
@@ -122,12 +184,12 @@ export function createAgentHandler(pool: AgentPool): ToolHandler {
   };
 }
 
-export function createAgentTool(pool: AgentPool): ToolEntry {
+export function createAgentTool(pool: AgentPool, agentDefs?: Map<string, AgentFileDefinition>): ToolEntry {
   return {
     name: 'Agent',
     toolset: 'orchestration',
     schema: agentSchema,
-    handler: createAgentHandler(pool),
+    handler: createAgentHandler(pool, agentDefs),
     isAsync: true,
     emoji: '🤖',
     maxResultSizeChars: 50_000,

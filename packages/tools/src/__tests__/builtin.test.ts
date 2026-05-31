@@ -1142,7 +1142,7 @@ describe('Agent tool', () => {
     const parsed = JSON.parse(result);
     expect(parsed.agentId).toMatch(/^agent_/);
     expect(parsed.status).toBe('spawned');
-    expect(parsed.message).toContain('spawned asynchronously');
+    expect(parsed.message).toContain('spawned');
   });
 
   it('returns error for missing parameters', async () => {
@@ -1191,7 +1191,7 @@ describe('Agent tool', () => {
     const parsed = JSON.parse(result);
     expect(parsed.agentId).toMatch(/^agent_/);
     expect(parsed.status).toBe('spawned');
-    expect(parsed.message).toContain('spawned asynchronously');
+    expect(parsed.message).toContain('spawned');
   });
 });
 

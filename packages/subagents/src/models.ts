@@ -8,13 +8,29 @@ export interface SubagentConfig {
   /** Unique identifier for this subagent */
   agentId: string;
   /** Agent type — determines tool whitelist */
-  agentType: 'explore' | 'plan' | 'general';
+  agentType: string;
   /** Task description to execute */
   task: string;
   /** Maximum conversation turns */
   budgetSteps?: number;
   /** Nesting depth (0 = top-level) */
   depth?: number;
+  /** Model override for this subagent */
+  model?: string;
+  /** Reasoning effort override */
+  reasoningEffort?: string;
+  /** Permission mode override */
+  permissionMode?: string;
+  /** Custom system prompt (from agent definition) */
+  systemPrompt?: string;
+  /** Tool whitelist override (null = all tools) */
+  tools?: string[] | null;
+  /** Blocked tools (always blocked) */
+  blockedTools?: string[];
+  /** Fork parent context (inherit message history) */
+  forkContext?: boolean;
+  /** Parent agent's messages for fork mode */
+  parentMessages?: Array<{ role: string; content: string }>;
 }
 
 export interface SubagentHandle {

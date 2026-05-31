@@ -21,3 +21,4 @@ export type {
   AgentLifecycleStatus,
 } from './models.js';
 export { AgentRegistry } from './registry.js';
+export { discoverAgents, mergeAgentDirectories, type AgentDefinition } from './agent-registry.js';
