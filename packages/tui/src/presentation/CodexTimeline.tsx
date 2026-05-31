@@ -101,19 +101,24 @@ function SummaryCard({
   );
 }
 
-function getPreviewLineStyle(line: string, meta?: '-' | '+'): {
+function getPreviewLineStyle(line: string): {
   color?: string;
   backgroundColor?: string;
   bold?: boolean;
   dim?: boolean;
 } {
-  if (meta === '-' || line.startsWith('- ')) {
-    return { color: '#FFD7DB', backgroundColor: '#5A1F24', bold: true, dim: false };
+  // Match diff lines with line numbers: "  42 - content" or "  42 + content"
+  const trimmed = line.trimStart();
+  if (trimmed.includes(' - ') || trimmed.startsWith('- ')) {
+    // Softer red/purple lane, closer to muted status accents.
+    return { color: '#D39AC1', backgroundColor: '#3A2A36', bold: false, dim: false };
   }
-  if (meta === '+' || line.startsWith('+ ')) {
-    return { color: '#D9FFE0', backgroundColor: '#1F4D2C', bold: true, dim: false };
+  if (trimmed.includes(' + ') || trimmed.startsWith('+ ')) {
+    // Softer green lane, close to "state Ready" family.
+    return { color: '#80C99A', backgroundColor: '#20362B', bold: false, dim: false };
   }
-  return { color: '#D7E3F4', backgroundColor: '#1E2532', dim: false };
+  // Neutral code lane.
+  return { color: '#C8D3E8', backgroundColor: '#2A313E', dim: false };
 }
 
 function getCollapsedDetailStyle(item: Extract<CodexTimelineItemView, { kind: 'tool_call' }>): {
@@ -127,7 +132,12 @@ function getCollapsedDetailStyle(item: Extract<CodexTimelineItemView, { kind: 't
     return { color: 'red', bold: true, dim: false };
   }
   if (item.label.startsWith('Update(') || item.label.startsWith('Write(')) {
-    return { dim: true };
+    return {
+      color: '#C8D3E8',
+      backgroundColor: '#2A313E',
+      bold: false,
+      dim: false,
+    };
   }
   return { dim: true };
 }
@@ -201,19 +211,9 @@ function TimelineItemView({
             active={active}
           />
           <SearchHit excerpt={excerpt} marginLeft={4} />
-          <ExpandHint expanded={detailsExpanded} />
+          {!item.alwaysShowPreview && <ExpandHint expanded={detailsExpanded} />}
           {item.collapsedDetail ? (() => {
             const style = getCollapsedDetailStyle(item);
-            if (style.borderColor && style.backgroundColor && style.color) {
-              return (
-                <SummaryCard
-                  text={item.collapsedDetail}
-                  color={style.color}
-                  backgroundColor={style.backgroundColor}
-                  borderColor={style.borderColor}
-                />
-              );
-            }
             return (
               <DetailLine
                 text={item.collapsedDetail}
@@ -226,8 +226,7 @@ function TimelineItemView({
           })() : null}
           {(item.alwaysShowPreview || detailsExpanded) &&
             item.previewLines?.map((line, index) => {
-              const meta = item.lineMeta?.[index];
-              const style = getPreviewLineStyle(line, meta);
+              const style = getPreviewLineStyle(line);
               const lines = item.previewLines ?? [];
               const totalLines = lines.length + (item.previewOverflowCount ?? 0);
               const pad = String(totalLines).length;
@@ -236,7 +235,7 @@ function TimelineItemView({
               if (item.previewKind === 'code') {
                 prefix = `${lineNum} `;
               } else if (item.previewKind === 'diff') {
-                prefix = `${lineNum}${meta ?? ' '} `;
+                prefix = '';  // No gutter for diff — line numbers are in the text
               }
               return (
                 <DetailLine
@@ -253,7 +252,7 @@ function TimelineItemView({
           {(item.alwaysShowPreview || detailsExpanded) && (item.previewOverflowCount ?? 0) > 0 ? (
             <DetailLine
               text={
-                detailsExpanded
+                detailsExpanded || item.alwaysShowPreview
                   ? `... +${item.previewOverflowCount} more lines`
                   : `... +${item.previewOverflowCount} lines (Ctrl+O to expand)`
               }

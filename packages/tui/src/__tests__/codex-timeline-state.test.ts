@@ -91,7 +91,7 @@ describe('codex timeline tool card polish', () => {
     const tool = state.turns[0]?.items.find((item) => item.kind === 'tool_call');
     expect(tool?.kind).toBe('tool_call');
     if (tool?.kind === 'tool_call') {
-      expect(tool.label).toBe('Update(packages\\cli\\src\\main.ts)');
+      expect(tool.label).toBe('Write(packages\\cli\\src\\main.ts)');
       expect(tool.collapsedDetail).toBe('Replaced 3 lines');
     }
   });
@@ -140,9 +140,47 @@ describe('codex timeline tool card polish', () => {
       expect(tool.collapsedDetail).toBe('Added 3 lines, removed 3 lines');
       expect(tool.argumentsText).toBe('README.md | -3 +3');
       expect(tool.alwaysShowPreview).toBe(true);
-      expect(tool.lineMeta?.[0]).toBe('-');
-      expect(tool.lineMeta?.at(-1)).toBe('+');
-      expect(tool.previewLines?.[0]).not.toMatch(/^[+-] /);
+      // New format: "     1  - content" (line number + marker + content)
+      expect(tool.previewLines?.[0]).toMatch(/\d+\s+- /);
+      expect(tool.previewLines?.at(-1)).toMatch(/\d+\s+\+ /);
+    }
+  });
+
+  it('edit_file preview shows -/+ prefixes for diff styling', () => {
+    const state = buildCodexTimelineState({
+      events: [
+        { type: 'turn.started', turn_id: 'turn1' },
+        {
+          type: 'item.completed',
+          turn_id: 'turn1',
+          item: {
+            id: 'item1',
+            type: 'tool_call',
+            tool_name: 'edit_file',
+            status: 'completed',
+            arguments: {
+              path: 'test.txt',
+              old_string: 'line1\nline2\nline3',
+              new_string: 'line1\nchanged\nline3',
+            },
+            result: JSON.stringify({ ok: true, replacements: 1 }),
+          },
+        },
+      ],
+      liveStatus: { isLoading: false },
+      messages: [],
+    });
+    const tool = state.turns[0]?.items[0];
+    expect(tool?.kind).toBe('tool_call');
+    if (tool?.kind === 'tool_call') {
+      expect(tool.previewKind).toBe('diff');
+      // Format: "     N  - content" or "     N  + content" (line number + marker)
+      expect(tool.previewLines?.[0]).toMatch(/1\s+- line1/);
+      expect(tool.previewLines?.[1]).toMatch(/2\s+- line2/);
+      expect(tool.previewLines?.[2]).toMatch(/3\s+- line3/);
+      expect(tool.previewLines?.[3]).toMatch(/1\s+\+ line1/);
+      expect(tool.previewLines?.[4]).toMatch(/2\s+\+ changed/);
+      expect(tool.previewLines?.[5]).toMatch(/3\s+\+ line3/);
     }
   });
 

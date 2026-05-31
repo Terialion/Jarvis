@@ -72,6 +72,10 @@ export type REPLProps = {
   permissionRequest?: PermissionRequestState;
   askUserQuestion?: AskUserQuestionState;
 
+  // Permission mode cycling (Shift+Tab)
+  permissionMode?: string;
+  onPermissionModeCycle?: () => void;
+
   commands?: REPLCommand[];
   model?: string;
   statusSegments?: StatusLineSegment[];
@@ -129,6 +133,8 @@ export function REPL({
   welcome,
   permissionRequest,
   askUserQuestion,
+  permissionMode,
+  onPermissionModeCycle,
   commands = [],
   model,
   statusSegments,
@@ -280,6 +286,10 @@ export function REPL({
       }
       if (key.ctrl && _input === "o") {
         setToolResultsExpanded((prev) => !prev);
+      }
+      // Shift+Tab: cycle permission modes (suggest → auto-edit → full-auto → suggest)
+      if (key.tab && key.shift) {
+        onPermissionModeCycle?.();
       }
     },
     // Deactivate when search, model, or effort selector overlays are open

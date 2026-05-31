@@ -1,4 +1,5 @@
 import { basename } from "node:path";
+import type { Color } from "./vendor/ink-renderer/index.js";
 import type { StatusLineSegment } from "./vendor/ui/StatusLine.js";
 
 export interface TaskCounts {
@@ -58,20 +59,29 @@ const MODE_LABELS: Record<string, string> = {
   'workspace_write': 'suggest',
   'accept_edits': 'auto-edit',
   'bypass': 'full-auto',
+  'plan': 'plan',
+};
+
+const MODE_COLORS: Record<string, Color> = {
+  'workspace_write': 'yellow',
+  'accept_edits': 'blue',
+  'bypass': 'red',
+  'plan': 'cyan',
 };
 
 export function buildStatusSegments(input: StatusSegmentInput): StatusLineSegment[] {
   const modeLabel = input.permissionMode ? (MODE_LABELS[input.permissionMode] ?? input.permissionMode) : undefined;
+  const modeColor = input.permissionMode ? (MODE_COLORS[input.permissionMode] ?? 'blue') : 'blue';
   const segments: StatusLineSegment[] = [
     { content: `project ${getProjectLabel(input.cwd)}`, color: "cyan" },
-    { content: `model ${input.model}` },
-    ...(input.effort && input.effort !== "auto" ? [{ content: `effort ${input.effort}`, color: "magenta" as const }] : []),
-    ...(modeLabel ? [{ content: `mode ${modeLabel}`, color: "blue" as const }] : []),
+    { content: `model ${input.model}`, color: "white" },
+    ...(input.effort && input.effort !== "auto" ? [{ content: `effort ${input.effort}`, color: "cyan" as const }] : []),
+    ...(modeLabel ? [{ content: `mode ${modeLabel}`, color: modeColor }] : []),
     { content: `state ${formatRunState(input)}`, color: input.isLoading ? "yellow" : "green" },
   ];
 
   if (input.gitBranch) {
-    segments.splice(1, 0, { content: `branch ${input.gitBranch}`, color: "magenta" });
+    segments.splice(1, 0, { content: `branch ${input.gitBranch}`, color: "cyan" });
   }
 
   if (

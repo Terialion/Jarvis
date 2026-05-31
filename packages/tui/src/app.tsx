@@ -10,6 +10,7 @@ import type { StatusDetailLine } from './vendor/ui/REPL.js';
 import type { Message, MessageContent } from './vendor/ui/MessageList.js';
 import type { StatusLineSegment } from './vendor/ui/StatusLine.js';
 import { WelcomeScreen } from './vendor/ui/WelcomeScreen.js';
+import { decodeHtmlEntities } from './vendor/ui/utils/markdown.js';
 import { loadSettings, saveSettings, type UserSettings } from './settings-store.js';
 import { AgentLoop, AgentEventBus, ConversationSummarizer, TokenTracker, formatTokensCompact, estimateTokens, validateContextWindow, getAllModels, addUserModel, removeUserModel, parseModelName, findModel, buildSystemPrompt, createMemorySearchHandler, createMemoryGetHandler, type ThreadEvent, type ModelInfo } from '@jarvis/agent';
 import {
@@ -1432,6 +1433,8 @@ export function App({ options }: { options: TUIOptions }): React.ReactNode {
   const elapsedTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const taskCountRef = useRef<{ pending: number; in_progress: number; completed: number }>({ pending: 0, in_progress: 0, completed: 0 });
   const abortRef = useRef<AbortController | null>(null);
+  const permManagerRef = useRef<import('@jarvis/tools').PermissionManager | null>(null);
+  const [modeVersion, setModeVersion] = useState(0);
 
   // Model selector state
   const [modelSelectorOpen, setModelSelectorOpen] = useState(false);
@@ -1555,6 +1558,64 @@ export function App({ options }: { options: TUIOptions }): React.ReactNode {
   const handleEffortSelectorCancel = useCallback(() => {
     setEffortSelectorOpen(false);
   }, []);
+
+  // Permission approval bridge — when PermissionManager blocks a tool, show UI and wait
+  type PermissionRequestState = {
+    toolName: string;
+    description: string;
+    details?: string;
+    patternLabel?: string;
+    onDecision: (action: 'allow' | 'always_allow' | 'deny') => void;
+  };
+  const [permissionRequest, setPermissionRequest] = useState<PermissionRequestState | undefined>();
+  const permissionResolveRef = useRef<((approved: boolean) => void) | null>(null);
+
+  const handleApprovalNeeded = useCallback(async (request: import('@jarvis/tools').ApprovalRequest): Promise<boolean> => {
+    return new Promise<boolean>((resolve) => {
+      permissionResolveRef.current = resolve;
+      const toolName = request.toolName;
+      const description = request.reason;
+      const details = request.risk === 'command' ? String(request.args?.command ?? '') : undefined;
+      const patternLabel = request.argsKey || undefined;
+      setPermissionRequest({
+        toolName,
+        description,
+        details,
+        patternLabel,
+        onDecision: (action) => {
+          setPermissionRequest(undefined);
+          permissionResolveRef.current = null;
+          if (action === 'always_allow') {
+            // Approve this specific tool+args pattern for this session
+            const pm = permManagerRef.current;
+            if (pm) pm.approveToolPattern(toolName, request.argsKey);
+            resolve(true);
+          } else {
+            resolve(action === 'allow');
+          }
+        },
+      });
+    });
+  }, []);
+
+  // Permission mode cycling (Shift+Tab) — suggest → auto-edit → full-auto → suggest
+  const PERMISSION_CYCLE = ['workspace_write', 'accept_edits', 'bypass', 'plan'] as const;
+  const PERMISSION_LABELS: Record<string, string> = {
+    'workspace_write': 'suggest',
+    'accept_edits': 'auto-edit',
+    'bypass': 'full-auto',
+    'plan': 'plan',
+  };
+  const handlePermissionModeCycle = useCallback(() => {
+    const current = permissionModeRef.current;
+    const idx = PERMISSION_CYCLE.indexOf(current as typeof PERMISSION_CYCLE[number]);
+    const nextIdx = (idx + 1) % PERMISSION_CYCLE.length;
+    const next = PERMISSION_CYCLE[nextIdx];
+    permissionModeRef.current = next;
+    saveSettings({ permission_mode: next as UserSettings['permission_mode'] });
+    setModeVersion((v) => v + 1);
+    invalidateAgent();
+  }, [invalidateAgent]);
 
   const pushSpinnerDetail = useCallback((line: string | null) => {
     if (!line) return;
@@ -1953,8 +2014,10 @@ export function App({ options }: { options: TUIOptions }): React.ReactNode {
           }
           // Skip DSML tool call tags leaked into visible text
           if (token.includes('｜')) return;
+          // Decode HTML entities that models emit (e.g. &quot; &amp; &#39;)
+          const decoded = decodeHtmlEntities(token);
           // Buffer tokens and flush periodically (append mode)
-          streamAccumRef.current += token;
+          streamAccumRef.current += decoded;
           if (!streamFlushRef.current) {
             streamFlushRef.current = setTimeout(() => {
               const chunk = streamAccumRef.current;
@@ -2047,11 +2110,16 @@ export function App({ options }: { options: TUIOptions }): React.ReactNode {
           }));
         },
         sessionStore: sessionStoreRef.current ?? undefined,
-        toolRuntime: createToolRuntime(tools, {
-          permissionMode: permissionModeRef.current,
-          sandbox: loadJarvisConfig().sandbox,
-          projectRoot: process.cwd(),
-        }),
+        toolRuntime: (() => {
+          const runtime = createToolRuntime(tools, {
+            permissionMode: permissionModeRef.current,
+            sandbox: loadJarvisConfig().sandbox,
+            projectRoot: process.cwd(),
+            onApprovalNeeded: handleApprovalNeeded,
+          });
+          permManagerRef.current = runtime.getPermissionManager() ?? null;
+          return runtime;
+        })(),
       });
     }
     return agentRef.current;
@@ -2409,7 +2477,7 @@ export function App({ options }: { options: TUIOptions }): React.ReactNode {
       elapsedMs,
       sessionId: sessionIdRef.current,
     });
-  }, [askQuestions, contextUsageVersion, cwd, elapsedMs, gitBranch, isLoading, messages.length, modelRef.current]);
+  }, [askQuestions, contextUsageVersion, cwd, elapsedMs, gitBranch, isLoading, messages.length, modeVersion, modelRef.current]);
 
   const statusDetailLines = useMemo(() => {
     const lines: StatusDetailLine[] = [];
@@ -2550,6 +2618,9 @@ export function App({ options }: { options: TUIOptions }): React.ReactNode {
       effortSelectorLevels={JARVIS_REASONING_EFFORTS}
       onEffortSelect={handleEffortSelect}
       onEffortSelectorCancel={handleEffortSelectorCancel}
+      permissionMode={permissionModeRef.current}
+      onPermissionModeCycle={handlePermissionModeCycle}
+      permissionRequest={permissionRequest}
       welcome={<WelcomeScreen appName="Jarvis" subtitle="AI Coding Assistant" model={parseModelName(modelRef.current).cleanName} color="#00BFFF" tips={['Send a prompt to begin', '/help for commands', 'Ctrl+C twice exits']} />}
     />
   );

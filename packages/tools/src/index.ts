@@ -23,6 +23,7 @@ export {
   type PermissionMode,
   type UserPermissionMode,
   type PermissionCheckResult,
+  type ApprovalRequest,
 } from './runtime.js';
 
 // Sandbox policy

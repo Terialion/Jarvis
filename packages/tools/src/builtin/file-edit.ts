@@ -94,7 +94,22 @@ const editFileHandler: ToolHandler = async (args, _context) => {
     const updated =
       content.slice(0, firstIdx) + newString + content.slice(firstIdx + oldString.length);
     await writeFile(resolved.path, updated, 'utf-8');
-    return JSON.stringify({ ok: true, path: resolved.path, replacements: 1 });
+    // Compute line number and context lines for diff display
+    const beforeEdit = content.slice(0, firstIdx);
+    const lineNum = beforeEdit.split('\n').length;
+    const allLines = content.split('\n');
+    const oldLineCount = oldString.replace(/\n$/, '').split('\n').length;
+    const contextBefore = allLines.slice(Math.max(0, lineNum - 3), lineNum - 1);
+    const contextAfter = allLines.slice(lineNum - 1 + oldLineCount, lineNum - 1 + oldLineCount + 2);
+    return JSON.stringify({
+      ok: true,
+      path: resolved.path,
+      replacements: 1,
+      line: lineNum,
+      contextBefore,
+      contextAfter,
+      oldLineCount,
+    });
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     return JSON.stringify({ error: `Failed to edit file: ${message}` });

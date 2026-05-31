@@ -10,7 +10,7 @@ import { checkCommand, createSandboxPolicy, type SandboxPolicyConfig, type Sandb
 // PermissionManager — per-tool approval mode gating
 // ============================================================================
 
-export type PermissionMode = 'bypass' | 'accept_edits' | 'default';
+export type PermissionMode = 'bypass' | 'accept_edits' | 'default' | 'plan' | string;
 
 /** User-facing permission modes from config (product layer). */
 export type UserPermissionMode = 'workspace_write' | 'accept_edits' | 'bypass';
@@ -20,11 +20,28 @@ export type UserPermissionMode = 'workspace_write' | 'accept_edits' | 'bypass';
  * workspace_write → default (compat alias)
  * accept_edits   → accept_edits
  * bypass         → bypass
+ * plan           → plan (read-only)
  */
+
+/** Generate a stable key from tool args for pattern matching. */
+export function toolArgsKey(toolName: string, args: Record<string, unknown>): string {
+  switch (toolName) {
+    case 'write_file':
+    case 'edit_file':
+    case 'read_file':
+      return String(args.path ?? args.file_path ?? '');
+    case 'bash':
+      return String(args.command ?? '');
+    default:
+      return '';
+  }
+}
+
 export function mapUserPermissionMode(userMode: string): PermissionMode {
   if (userMode === 'workspace_write') return 'default';
   if (userMode === 'accept_edits') return 'accept_edits';
   if (userMode === 'bypass') return 'bypass';
+  if (userMode === 'plan') return 'plan';
   return 'default';
 }
 
@@ -42,6 +59,7 @@ interface PermissionConfig {
   approveAll: boolean;
   approvedTools: Set<string>;
   deniedTools: Set<string>;
+  approvedPatterns: Array<{ toolName: string; argsKey: string }>;
 }
 
 const DEFAULT_RISK_MAP: Record<string, ToolRiskLevel> = {
@@ -87,12 +105,14 @@ export class PermissionManager {
     approveAll: false,
     approvedTools: new Set(),
     deniedTools: new Set(),
+    approvedPatterns: [],
   };
 
   private riskMap: Record<string, ToolRiskLevel>;
 
   constructor(riskMap?: Record<string, ToolRiskLevel>) {
     this.riskMap = riskMap ?? DEFAULT_RISK_MAP;
+    this.config.approvedPatterns = [];
   }
 
   /** Set the permission mode. */
@@ -111,6 +131,19 @@ export class PermissionManager {
     this.config.deniedTools.delete(toolName);
   }
 
+  /** Approve a specific tool+args pattern for the remainder of the session. */
+  approveToolPattern(toolName: string, argsKey: string): void {
+    this.config.approvedPatterns.push({ toolName, argsKey });
+    this.config.deniedTools.delete(toolName);
+  }
+
+  /** Check if a specific tool+args pattern has been approved. */
+  isPatternApproved(toolName: string, argsKey: string): boolean {
+    return this.config.approvedPatterns.some(
+      (p) => p.toolName === toolName && p.argsKey === argsKey,
+    );
+  }
+
   /** Deny a specific tool for the remainder of the session. */
   denyTool(toolName: string): void {
     this.config.deniedTools.add(toolName);
@@ -120,6 +153,11 @@ export class PermissionManager {
   /** Approve all tools (one-time bypass). */
   approveAll(): void {
     this.config.approveAll = true;
+  }
+
+  /** Get the risk level for a tool name. */
+  getRiskLevel(toolName: string): string {
+    return this.riskMap[toolName] ?? 'write_approval_required';
   }
 
   /** Reset approvals (keep mode). */
@@ -133,7 +171,7 @@ export class PermissionManager {
    * Check whether a tool can execute without approval.
    * Returns { allowed, needsApproval, reason }.
    */
-  check(toolName: string): PermissionCheckResult {
+  check(toolName: string, argsKey?: string): PermissionCheckResult {
     // Bypass mode: everything auto-approved
     if (this.config.mode === 'bypass') {
       return { allowed: true };
@@ -144,8 +182,13 @@ export class PermissionManager {
       return { allowed: true };
     }
 
-    // Explicitly approved
+    // Explicitly approved (all instances of this tool)
     if (this.config.approvedTools.has(toolName)) {
+      return { allowed: true };
+    }
+
+    // Pattern-approved (specific tool+args combination)
+    if (argsKey && this.isPatternApproved(toolName, argsKey)) {
       return { allowed: true };
     }
 
@@ -157,24 +200,33 @@ export class PermissionManager {
     const risk = this.riskMap[toolName] ?? 'write_approval_required';
 
     switch (this.config.mode) {
-      case 'default': {
-        // In default mode: read_only auto-approved, everything else needs approval
+      case 'plan': {
+        // Plan mode: only read-only tools allowed — block all writes, bash, network
         if (risk === 'read_only') return { allowed: true };
         return {
-          allowed: true,
+          allowed: false,
+          reason: `Tool "${toolName}" (${risk}) blocked in plan mode. Exit plan mode to make changes.`,
+        };
+      }
+      case 'default': {
+        // In default mode (suggest): read_only auto-approved, everything else needs approval
+        if (risk === 'read_only') return { allowed: true };
+        return {
+          allowed: false,
           needsApproval: true,
-          reason: `Tool "${toolName}" (${risk}) requires approval. Use /permissions to adjust.`,
+          reason: `Tool "${toolName}" (${risk}) requires approval.`,
         };
       }
       case 'accept_edits': {
-        // accept_edits: auto-approve read_only + write, prompt for bash/network/credentialed
+        // accept_edits (auto-edit): auto-approve read_only + write, prompt for bash/network/credentialed
         if (risk === 'read_only' || risk === 'write_approval_required') return { allowed: true };
         return {
-          allowed: true,
+          allowed: false,
           needsApproval: true,
-          reason: `Tool "${toolName}" (${risk}) requires approval in accept_edits mode.`,
+          reason: `Tool "${toolName}" (${risk}) requires approval in auto-edit mode.`,
         };
       }
+      case 'bypass':
       default:
         return { allowed: true };
     }
@@ -185,6 +237,14 @@ export class PermissionManager {
 // ToolRuntime
 // ============================================================================
 
+export interface ApprovalRequest {
+  toolName: string;
+  args: Record<string, unknown>;
+  reason: string;
+  risk: string;
+  argsKey: string;
+}
+
 export interface ToolRuntimeOptions {
   /** Default max result characters before truncation (per-tool caps override) */
   defaultMaxResultSize?: number;
@@ -192,6 +252,8 @@ export interface ToolRuntimeOptions {
   permissionManager?: PermissionManager;
   /** Optional approval gate for bash command safety checks */
   approvalGate?: ApprovalGate;
+  /** Callback when a tool needs user approval. Returns true to allow, false to deny. */
+  onApprovalNeeded?: (request: ApprovalRequest) => Promise<boolean>;
 }
 
 /**
@@ -203,12 +265,14 @@ export class ToolRuntime {
   private defaultMaxResultSize: number;
   private permissionManager?: PermissionManager;
   private approvalGate?: ApprovalGate;
+  private onApprovalNeeded?: ToolRuntimeOptions['onApprovalNeeded'];
 
   constructor(registry: ToolRegistry, options: ToolRuntimeOptions = {}) {
     this.registry = registry;
     this.defaultMaxResultSize = options.defaultMaxResultSize ?? 100_000;
     this.permissionManager = options.permissionManager;
     this.approvalGate = options.approvalGate;
+    this.onApprovalNeeded = options.onApprovalNeeded;
   }
 
   /** Get the permission manager (for external configuration). */
@@ -235,22 +299,43 @@ export class ToolRuntime {
 
     // Permission check
     if (this.permissionManager) {
-      const check = this.permissionManager.check(name);
+      const argsKey = toolArgsKey(name, args);
+      const check = this.permissionManager.check(name, argsKey);
       if (!check.allowed) {
-        return {
-          callId,
-          name,
-          ok: false,
-          content: JSON.stringify({ error: check.reason ?? 'Tool execution blocked by permission policy.' }),
-          error: check.reason ?? 'Permission denied',
-          errorType: 'permission_denied',
-          durationMs: 0,
-        };
-      }
-      if (check.needsApproval) {
-        // Tool requires approval but no interactive bridge is available —
-        // the caller (TUI/CLI) should handle this via a pre-tool hook.
-        // We proceed with a flag that the caller can intercept.
+        // If needsApproval is set, try the interactive callback
+        if (check.needsApproval && this.onApprovalNeeded) {
+          const risk = this.permissionManager.getRiskLevel(name);
+          const approved = await this.onApprovalNeeded({
+            toolName: name,
+            args,
+            reason: check.reason ?? 'Approval required',
+            risk,
+            argsKey,
+          });
+          if (!approved) {
+            return {
+              callId,
+              name,
+              ok: false,
+              content: JSON.stringify({ error: `Tool "${name}" denied by user.` }),
+              error: 'User denied',
+              errorType: 'permission_denied',
+              durationMs: 0,
+            };
+          }
+          // Approved — continue execution
+        } else {
+          // Hard block (plan mode or no callback)
+          return {
+            callId,
+            name,
+            ok: false,
+            content: JSON.stringify({ error: check.reason ?? 'Tool execution blocked by permission policy.' }),
+            error: check.reason ?? 'Permission denied',
+            errorType: 'permission_denied',
+            durationMs: 0,
+          };
+        }
       }
     }
 
@@ -414,7 +499,7 @@ export class ApprovalGate {
 // ============================================================================
 
 export interface CreateToolRuntimeOptions {
-  /** User-facing permission mode (workspace_write | accept_edits | bypass) */
+  /** User-facing permission mode (workspace_write | accept_edits | bypass | plan) */
   permissionMode?: string;
   /** Max result size in chars before truncation */
   defaultMaxResultSize?: number;
@@ -424,6 +509,8 @@ export interface CreateToolRuntimeOptions {
   sandbox?: SandboxConfig;
   /** Project root for sandbox path boundary checks */
   projectRoot?: string;
+  /** Callback when a tool needs user approval */
+  onApprovalNeeded?: (request: ApprovalRequest) => Promise<boolean>;
 }
 
 /**
@@ -455,6 +542,7 @@ export function createToolRuntime(
     defaultMaxResultSize: options.defaultMaxResultSize,
     permissionManager: permManager,
     approvalGate,
+    onApprovalNeeded: options.onApprovalNeeded,
   });
 }
 

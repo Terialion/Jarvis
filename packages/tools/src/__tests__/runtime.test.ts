@@ -329,4 +329,116 @@ describe('PermissionManager', () => {
       expect(customPm.check('safe_tool').allowed).toBe(true);
     });
   });
+
+  describe('pattern approval (always_allow with args)', () => {
+    it('approves specific tool+args pattern', () => {
+      const pm = new PermissionManager();
+      pm.setMode('default');
+      // Before: write_file needs approval
+      expect(pm.check('write_file').allowed).toBe(false);
+      expect(pm.check('write_file', '/tmp/hello.txt').allowed).toBe(false);
+      // Approve specific path
+      pm.approveToolPattern('write_file', '/tmp/hello.txt');
+      // Same path: auto-approved
+      expect(pm.check('write_file', '/tmp/hello.txt').allowed).toBe(true);
+      // Different path: still needs approval
+      expect(pm.check('write_file', '/tmp/other.txt').allowed).toBe(false);
+      expect(pm.check('write_file', '/etc/passwd').allowed).toBe(false);
+    });
+
+    it('approves specific bash command', () => {
+      const pm = new PermissionManager();
+      pm.setMode('default');
+      pm.approveToolPattern('bash', 'ls -la');
+      expect(pm.check('bash', 'ls -la').allowed).toBe(true);
+      expect(pm.check('bash', 'rm -rf /').allowed).toBe(false);
+    });
+
+    it('approveToolPattern does not affect other tools', () => {
+      const pm = new PermissionManager();
+      pm.setMode('default');
+      pm.approveToolPattern('write_file', '/tmp/hello.txt');
+      // edit_file still needs approval
+      expect(pm.check('edit_file', '/tmp/hello.txt').allowed).toBe(false);
+      // bash still needs approval
+      expect(pm.check('bash').allowed).toBe(false);
+    });
+  });
+
+  describe('permission modes (CC/Codex aligned)', () => {
+    function checkAll(mode: string) {
+      const pm = new PermissionManager();
+      pm.setMode(mode as any);
+      return {
+        read_file:    pm.check('read_file'),
+        write_file:   pm.check('write_file'),
+        edit_file:    pm.check('edit_file'),
+        bash:         pm.check('bash'),
+        web_search:   pm.check('web_search'),
+        glob:         pm.check('glob'),
+      };
+    }
+
+    it('suggest (default): read auto, write/bash/network need approval', () => {
+      const r = checkAll('default');
+      // Read-only: auto-approved
+      expect(r.read_file.allowed).toBe(true);
+      expect(r.read_file.needsApproval).toBeFalsy();
+      expect(r.glob.allowed).toBe(true);
+      expect(r.glob.needsApproval).toBeFalsy();
+      // Write: needs approval → blocked (needs callback)
+      expect(r.write_file.allowed).toBe(false);
+      expect(r.write_file.needsApproval).toBe(true);
+      expect(r.edit_file.allowed).toBe(false);
+      expect(r.edit_file.needsApproval).toBe(true);
+      // Bash: needs approval
+      expect(r.bash.allowed).toBe(false);
+      expect(r.bash.needsApproval).toBe(true);
+      // Network: needs approval
+      expect(r.web_search.allowed).toBe(false);
+      expect(r.web_search.needsApproval).toBe(true);
+    });
+
+    it('auto-edit (accept_edits): read+write auto, bash/network need approval', () => {
+      const r = checkAll('accept_edits');
+      // Read-only: auto-approved
+      expect(r.read_file.allowed).toBe(true);
+      expect(r.glob.allowed).toBe(true);
+      // Write: auto-approved
+      expect(r.write_file.allowed).toBe(true);
+      expect(r.edit_file.allowed).toBe(true);
+      // Bash: needs approval
+      expect(r.bash.allowed).toBe(false);
+      expect(r.bash.needsApproval).toBe(true);
+      // Network: needs approval
+      expect(r.web_search.allowed).toBe(false);
+      expect(r.web_search.needsApproval).toBe(true);
+    });
+
+    it('full-auto (bypass): everything auto-approved', () => {
+      const r = checkAll('bypass');
+      expect(r.read_file.allowed).toBe(true);
+      expect(r.write_file.allowed).toBe(true);
+      expect(r.bash.allowed).toBe(true);
+      expect(r.web_search.allowed).toBe(true);
+    });
+
+    it('plan: only read-only allowed, everything else hard-blocked', () => {
+      const r = checkAll('plan');
+      // Read-only: allowed
+      expect(r.read_file.allowed).toBe(true);
+      expect(r.glob.allowed).toBe(true);
+      // Write: hard-blocked (no needsApproval)
+      expect(r.write_file.allowed).toBe(false);
+      expect(r.write_file.needsApproval).toBeFalsy();
+      expect(r.write_file.reason).toContain('plan mode');
+      // Bash: hard-blocked
+      expect(r.bash.allowed).toBe(false);
+      expect(r.bash.needsApproval).toBeFalsy();
+      expect(r.bash.reason).toContain('plan mode');
+      // Network: hard-blocked
+      expect(r.web_search.allowed).toBe(false);
+      expect(r.web_search.needsApproval).toBeFalsy();
+    });
+  });
 });

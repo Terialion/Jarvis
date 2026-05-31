@@ -79,8 +79,6 @@ export type CodexTimelineItemView =
       previewOverflowCount?: number;
       alwaysShowPreview?: boolean;
       previewKind?: 'code' | 'diff';
-      /** Per-line marker for diff previews: '-' for removed, '+' for added. */
-      lineMeta?: Array<'-' | '+'>;
     }
   | {
       id: string;
@@ -313,8 +311,7 @@ function buildToolTitle(
     }
     case 'write_file': {
       const pathLabel = getPathLabel(args.path);
-      const verb = wasOverwriteWrite(resultText) ? 'Update' : 'Write';
-      return pathLabel ? `${verb}(${pathLabel})` : verb;
+      return pathLabel ? `Write(${pathLabel})` : 'Write';
     }
     case 'edit_file': {
       const pathLabel = getPathLabel(args.path);
@@ -452,12 +449,11 @@ function buildPreviewLines(lines: string[], limit = 10): { previewLines?: string
   };
 }
 
-function buildToolPreview(toolName: string, args: Record<string, unknown>): {
+function buildToolPreview(toolName: string, args: Record<string, unknown>, resultText?: string): {
   previewLines?: string[];
   previewOverflowCount?: number;
   alwaysShowPreview?: boolean;
   previewKind?: 'code' | 'diff';
-  lineMeta?: Array<'-' | '+'>;
 } {
   if (toolName === 'write_file' && typeof args.content === 'string') {
     return { ...buildPreviewLines(getLineArray(args.content), 10), alwaysShowPreview: true, previewKind: 'code' };
@@ -466,12 +462,41 @@ function buildToolPreview(toolName: string, args: Record<string, unknown>): {
   if (toolName === 'edit_file') {
     const oldString = typeof args.old_string === 'string' ? args.old_string : '';
     const newString = typeof args.new_string === 'string' ? args.new_string : '';
+    const parsed = parseJsonObject(resultText);
+    const startLine = parsed && typeof parsed.line === 'number' ? parsed.line : 1;
+    const contextBefore: string[] = Array.isArray(parsed?.contextBefore) ? parsed.contextBefore : [];
+    const contextAfter: string[] = Array.isArray(parsed?.contextAfter) ? parsed.contextAfter : [];
+    const oldLines = getLineArray(oldString).filter(l => l !== '');
+    const newLines = getLineArray(newString).filter(l => l !== '');
     const preview: string[] = [];
-    const meta: Array<'-' | '+'> = [];
-    for (const line of getLineArray(oldString).slice(0, 5)) { preview.push(line); meta.push('-'); }
-    for (const line of getLineArray(newString).slice(0, 5)) { preview.push(line); meta.push('+'); }
-    const result = buildPreviewLines(preview, 10);
-    return { ...result, alwaysShowPreview: true, previewKind: 'diff', lineMeta: meta.slice(0, (result.previewLines?.length ?? 0)) };
+    let lineNum = startLine - contextBefore.length;
+    for (const line of contextBefore) {
+      preview.push(`${String(lineNum).padStart(6)}    ${line}`);
+      lineNum += 1;
+    }
+
+    // Show remove/add as interleaved pairs so replacements read like a compact patch.
+    const changeRows = Math.min(10, Math.max(oldLines.length, newLines.length));
+    for (let i = 0; i < changeRows; i += 1) {
+      const currentLineNum = startLine + i;
+      const oldLine = oldLines[i];
+      const newLine = newLines[i];
+      if (typeof oldLine === 'string') {
+        preview.push(`${String(currentLineNum).padStart(6)}  - ${oldLine}`);
+      }
+      if (typeof newLine === 'string') {
+        preview.push(`${String(currentLineNum).padStart(6)}  + ${newLine}`);
+      }
+    }
+
+    const oldCount = parsed && typeof parsed.oldLineCount === 'number' ? parsed.oldLineCount : oldLines.length;
+    lineNum = startLine + oldCount;
+    for (const line of contextAfter) {
+      preview.push(`${String(lineNum).padStart(6)}    ${line}`);
+      lineNum += 1;
+    }
+
+    return { ...buildPreviewLines(preview, 15), alwaysShowPreview: true, previewKind: 'diff' };
   }
 
   return {};
@@ -632,7 +657,7 @@ function buildItemView(
       const formattedLine = formatToolLine(item.tool_name, item.arguments);
       const headline = splitToolHeadline(formattedLine, item.tool_name);
       const resultSummary = buildToolResultSummary(item.tool_name, item.arguments, item.result);
-      const preview = buildToolPreview(item.tool_name, item.arguments);
+      const preview = buildToolPreview(item.tool_name, item.arguments, item.result);
       return {
         id: item.id,
         kind: 'tool_call',
@@ -655,7 +680,6 @@ function buildItemView(
         previewOverflowCount: preview.previewOverflowCount,
         alwaysShowPreview: preview.alwaysShowPreview,
         previewKind: preview.previewKind,
-        lineMeta: preview.lineMeta,
       };
     }
     case 'todo_list':

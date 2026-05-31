@@ -9,6 +9,8 @@ export type PermissionRequestProps = {
   description: string;
   /** Optional details (command, file path, diff, etc.) */
   details?: string;
+  /** Specific pattern label for "always allow" (e.g., file path or command) */
+  patternLabel?: string;
   /** Whether to show "Always Allow" option (default true) */
   showAlwaysAllow?: boolean;
   /** Callback when user makes a decision */
@@ -95,6 +97,7 @@ export function PermissionRequest({
   toolName,
   description,
   details,
+  patternLabel,
   showAlwaysAllow = true,
   onDecision,
   children,
@@ -106,11 +109,12 @@ export function PermissionRequest({
   const options = useMemo<OptionDef[]>(() => {
     const opts: OptionDef[] = [{ value: "allow", label: "Yes, allow this action" }];
     if (showAlwaysAllow) {
-      opts.push({ value: "always_allow", label: `Yes, and always allow ${toolName}` });
+      const target = patternLabel ? `${toolName} (${patternLabel})` : toolName;
+      opts.push({ value: "always_allow", label: `Yes, and always allow ${target}` });
     }
     opts.push({ value: "deny", label: "No, deny" });
     return opts;
-  }, [showAlwaysAllow, toolName]);
+  }, [showAlwaysAllow, toolName, patternLabel]);
 
   const [focusIndex, setFocusIndex] = React.useState(0);
   const focusRef = React.useRef(focusIndex);
