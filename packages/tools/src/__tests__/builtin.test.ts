@@ -1134,16 +1134,15 @@ describe('Agent tool', () => {
     expect(agentTool.schema.type).toBe('function');
     expect(agentTool.isAsync).toBe(true);
 
-    // Test foreground execution
+    // Test foreground execution — handler now always returns 'spawned' immediately
     const result = await agentTool.handler(
       { description: 'Test task', prompt: 'Do something useful', subagent_type: 'explore' },
       ctx,
     );
     const parsed = JSON.parse(result);
     expect(parsed.agentId).toMatch(/^agent_/);
-    expect(parsed.status).toBe('completed');
-    expect(parsed.answer).toContain('Do something useful');
-    expect(parsed.turnsUsed).toBe(3);
+    expect(parsed.status).toBe('spawned');
+    expect(parsed.message).toContain('spawned asynchronously');
   });
 
   it('returns error for missing parameters', async () => {
@@ -1191,7 +1190,8 @@ describe('Agent tool', () => {
     );
     const parsed = JSON.parse(result);
     expect(parsed.agentId).toMatch(/^agent_/);
-    expect(parsed.message).toContain('started in background');
+    expect(parsed.status).toBe('spawned');
+    expect(parsed.message).toContain('spawned asynchronously');
   });
 });
 
