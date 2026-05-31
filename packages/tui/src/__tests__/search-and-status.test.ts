@@ -187,7 +187,7 @@ describe("buildCodexTimelineState", () => {
     const progress = state.turns[0]?.items.at(-1);
     expect(progress?.kind).toBe("progress");
     if (progress?.kind === "progress") {
-      expect(progress.label).toBe("Concocting…");
+      expect(progress.label).toBe("Concocting...");
     }
   });
 

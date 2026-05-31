@@ -18,6 +18,7 @@ export interface StatusSegmentInput {
   taskCounts: TaskCounts;
   elapsedMs: number;
   effort?: string;
+  permissionMode?: string;
   sessionId?: string | null;
 }
 
@@ -53,11 +54,19 @@ export function getProjectLabel(cwd: string): string {
   return basename(cwd) || cwd;
 }
 
+const MODE_LABELS: Record<string, string> = {
+  'workspace_write': 'suggest',
+  'accept_edits': 'auto-edit',
+  'bypass': 'full-auto',
+};
+
 export function buildStatusSegments(input: StatusSegmentInput): StatusLineSegment[] {
+  const modeLabel = input.permissionMode ? (MODE_LABELS[input.permissionMode] ?? input.permissionMode) : undefined;
   const segments: StatusLineSegment[] = [
     { content: `project ${getProjectLabel(input.cwd)}`, color: "cyan" },
     { content: `model ${input.model}` },
     ...(input.effort && input.effort !== "auto" ? [{ content: `effort ${input.effort}`, color: "magenta" as const }] : []),
+    ...(modeLabel ? [{ content: `mode ${modeLabel}`, color: "blue" as const }] : []),
     { content: `state ${formatRunState(input)}`, color: input.isLoading ? "yellow" : "green" },
   ];
 

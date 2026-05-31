@@ -861,6 +861,59 @@ const SLASH_COMMANDS: SlashCommandDef[] = [
     },
   },
   {
+    name: 'mode',
+    description: 'Show or switch permission mode (like CC/Codex)',
+    usage: '/mode [suggest|auto-edit|full-auto|plan]',
+    handler: (args, ctx) => {
+      const MODE_MAP: Record<string, { perm: string; label: string; description: string }> = {
+        'suggest':     { perm: 'workspace_write', label: 'suggest',     description: 'All changes require approval (default)' },
+        'auto-edit':   { perm: 'accept_edits',    label: 'auto-edit',   description: 'File edits auto-approved, bash needs approval' },
+        'full-auto':   { perm: 'bypass',          label: 'full-auto',   description: 'Everything auto-approved (use with caution)' },
+        'plan':        { perm: 'workspace_write',  label: 'plan',        description: 'Read-only exploration, no writes allowed' },
+        // CC-compatible aliases
+        'workspace_write': { perm: 'workspace_write', label: 'suggest',   description: 'All changes require approval' },
+        'accept_edits':    { perm: 'accept_edits',    label: 'auto-edit', description: 'File edits auto-approved' },
+        'bypass':          { perm: 'bypass',          label: 'full-auto', description: 'Everything auto-approved' },
+      };
+
+      // Reverse lookup: current perm → mode name
+      const reverseMap: Record<string, string> = {
+        'workspace_write': 'suggest',
+        'accept_edits': 'auto-edit',
+        'bypass': 'full-auto',
+      };
+
+      if (args.length === 0) {
+        const current = reverseMap[ctx.permissionModeRef.current] ?? ctx.permissionModeRef.current;
+        const lines = [
+          `Current mode: ${current}`,
+          '',
+          'Available modes:',
+          '  suggest     — All changes require approval (default)',
+          '  auto-edit   — File edits auto-approved, bash needs approval',
+          '  full-auto   — Everything auto-approved (use with caution)',
+          '  plan        — Read-only exploration, no writes allowed',
+          '',
+          'Usage: /mode <name>',
+          'Also: /mode <name> to switch. CC aliases (workspace_write, accept_edits, bypass) also work.',
+        ];
+        return lines.join('\n');
+      }
+
+      const input = args[0].toLowerCase();
+      const entry = MODE_MAP[input];
+      if (!entry) {
+        return `Unknown mode "${input}". Options: suggest, auto-edit, full-auto, plan`;
+      }
+
+      ctx.permissionModeRef.current = entry.perm;
+      saveSettings({ permission_mode: entry.perm as UserSettings['permission_mode'] });
+      ctx.invalidateAgent();
+
+      return `Mode: ${entry.label} — ${entry.description}`;
+    },
+  },
+  {
     name: 'effort',
     description: 'Show or set reasoning effort',
     usage: '/effort [auto|minimal|low|medium|high|xhigh|max]',
@@ -2347,6 +2400,7 @@ export function App({ options }: { options: TUIOptions }): React.ReactNode {
       model: parseModelName(modelRef.current).cleanName,
       gitBranch,
       effort: reasoningEffortRef.current,
+      permissionMode: permissionModeRef.current,
       isLoading,
       hasQuestion: askQuestions !== null,
       totalTokens: tracker?.turnCount ? tracker.totalBlended : undefined,
