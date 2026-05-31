@@ -2212,9 +2212,35 @@ export function App({ options }: { options: TUIOptions }): React.ReactNode {
         cwd: process.cwd(),
       });
 
-      // Persist final answer to session store
-      if (store && sid && result.finalAnswer) {
-        await store.saveFinalAnswer(sid, result.turnId, result.finalAnswer);
+      // Persist tool calls + results to session store (for accurate history token counting)
+      if (store && sid) {
+        // Save assistant message with tool_calls metadata
+        if (result.toolCalls.length > 0) {
+          const toolCallsMeta = result.toolCalls.map(tc => ({
+            id: tc.callId,
+            type: 'function' as const,
+            function: { name: tc.name, arguments: JSON.stringify(tc.arguments) },
+          }));
+          await store.appendMessage(sid, 'assistant', '', {
+            turnId: result.turnId,
+            metadata: { tool_calls: toolCallsMeta },
+          });
+          // Save each tool result
+          for (let i = 0; i < result.toolResults.length; i++) {
+            const tr = result.toolResults[i];
+            const callId = result.toolCalls[i]?.callId ?? `call_${i}`;
+            const toolName = (tr['name'] as string) ?? result.toolCalls[i]?.name ?? 'unknown';
+            await store.appendMessage(sid, 'tool', String(tr['content'] ?? ''), {
+              turnId: result.turnId,
+              toolCallId: callId,
+              metadata: { tool_name: toolName },
+            });
+          }
+        }
+        // Persist final answer
+        if (result.finalAnswer) {
+          await store.saveFinalAnswer(sid, result.turnId, result.finalAnswer);
+        }
       }
 
       // Track files modified by this turn

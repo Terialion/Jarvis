@@ -159,9 +159,10 @@ export class PromptBuilder {
     for (const msg of recent) {
       const role = (msg.role ?? '').trim();
       const content = String(msg.content ?? '');
-      if (!role || !content) continue;
+      if (!role) continue;
 
       if (role === 'tool') {
+        if (!content) continue;
         const toolName =
           ((msg.metadata as Record<string, unknown> | undefined)?.['tool_name'] as string) ??
           (msg.tool_call_id as string) ??
@@ -172,7 +173,13 @@ export class PromptBuilder {
           content: `[Previous tool result — ${toolName}]: ${content.slice(0, 3000)}`,
         });
       } else {
-        messages.push({ role, content });
+        const entry: { role: string; content: string; tool_calls?: Array<{ id: string; type: 'function'; function: { name: string; arguments: string } }> } = { role, content };
+        // Restore tool_calls from metadata for assistant messages (stored by loop.ts)
+        const meta = msg.metadata as Record<string, unknown> | undefined;
+        if (role === 'assistant' && Array.isArray(meta?.['tool_calls'])) {
+          entry.tool_calls = meta['tool_calls'] as Array<{ id: string; type: 'function'; function: { name: string; arguments: string } }>;
+        }
+        messages.push(entry);
       }
     }
 

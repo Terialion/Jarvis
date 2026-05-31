@@ -76,9 +76,9 @@ async function fetchModels(baseURL: string, apiKey: string): Promise<string[]> {
       headers: { Authorization: `Bearer ${apiKey}` },
     });
     if (!res.ok) return [];
-    const data = await res.json();
+    const data = (await res.json()) as { data?: Array<{ id: string }> };
     return (
-      data.data?.map((m: { id: string }) => m.id).filter(Boolean) ?? []
+      data.data?.map((m) => m.id).filter(Boolean) ?? []
     );
   } catch {
     return [];

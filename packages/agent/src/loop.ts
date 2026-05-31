@@ -1769,7 +1769,18 @@ export class AgentLoop {
     for (const msg of messages) {
       const role = String(msg.role ?? '');
       const content = typeof msg.content === 'string' ? msg.content : '';
-      const tokens = this._estimateTokensFromText(content);
+      let tokens = this._estimateTokensFromText(content);
+
+      // Include tool_calls tokens (assistant messages with tool calls store
+      // function name + arguments in tool_calls, not in content)
+      if (Array.isArray(msg.tool_calls) && msg.tool_calls.length > 0) {
+        for (const tc of msg.tool_calls) {
+          tokens += this._estimateTokensFromText(tc.function?.name ?? '');
+          tokens += this._estimateTokensFromText(tc.function?.arguments ?? '');
+          tokens += 10; // overhead for id, type, structure
+        }
+      }
+
       if (tokens <= 0) continue;
 
       if (role === 'system') {
