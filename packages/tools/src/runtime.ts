@@ -4,6 +4,7 @@
 
 import type { ToolResult } from '@jarvis/shared';
 import { ToolRegistry, type ToolContext } from './registry.js';
+import { checkCommand, createSandboxPolicy, type SandboxPolicyConfig, type SandboxConfig } from './sandbox-policy.js';
 
 // ============================================================================
 // PermissionManager — per-tool approval mode gating
@@ -350,14 +351,22 @@ const BLOCKED_PATTERNS: [RegExp, string][] = [
  *
  * - DANGEROUS: require human approval before execution.
  * - BLOCKED: always denied.
+ * - With sandbox policy: path boundary and network awareness.
  *
  * Container environments can be configured to skip checks entirely.
  */
 export class ApprovalGate {
   private skipChecks: boolean;
+  private sandboxPolicy?: SandboxPolicyConfig;
 
-  constructor(options: { skipChecks?: boolean } = {}) {
+  constructor(options: { skipChecks?: boolean; sandboxPolicy?: SandboxPolicyConfig } = {}) {
     this.skipChecks = options.skipChecks ?? false;
+    this.sandboxPolicy = options.sandboxPolicy;
+  }
+
+  /** Update sandbox policy at runtime (e.g. after config change). */
+  setSandboxPolicy(policy: SandboxPolicyConfig | undefined): void {
+    this.sandboxPolicy = policy;
   }
 
   /**
@@ -370,14 +379,26 @@ export class ApprovalGate {
       return { safe: true };
     }
 
-    // Check blocked patterns first (always denied)
+    // Enhanced sandbox policy check (if configured)
+    if (this.sandboxPolicy) {
+      const result = checkCommand(command, this.sandboxPolicy);
+      if (result.risk === 'blocked') {
+        return { safe: false, reason: `BLOCKED: ${result.reason}` };
+      }
+      if (result.risk === 'dangerous') {
+        return { safe: false, reason: `Requires approval: ${result.reason}` };
+      }
+      // 'caution' and 'safe' pass through — caution is logged but not blocked
+      return { safe: true };
+    }
+
+    // Fallback: legacy pattern matching (no sandbox policy)
     for (const [pattern, reason] of BLOCKED_PATTERNS) {
       if (pattern.test(command)) {
         return { safe: false, reason: `BLOCKED: ${reason}` };
       }
     }
 
-    // Check dangerous patterns (require approval)
     for (const [pattern, reason] of DANGEROUS_PATTERNS) {
       if (patternSpaceAware(pattern, command)) {
         return { safe: false, reason: `Requires approval: ${reason}` };
@@ -399,6 +420,10 @@ export interface CreateToolRuntimeOptions {
   defaultMaxResultSize?: number;
   /** Skip ApprovalGate safety checks (e.g. in containers) */
   skipApprovalChecks?: boolean;
+  /** Sandbox configuration for restricted local mode */
+  sandbox?: SandboxConfig;
+  /** Project root for sandbox path boundary checks */
+  projectRoot?: string;
 }
 
 /**
@@ -417,7 +442,14 @@ export function createToolRuntime(
   const permManager = new PermissionManager();
   permManager.setMode(internalMode);
 
-  const approvalGate = new ApprovalGate({ skipChecks: options.skipApprovalChecks ?? false });
+  const sandboxPolicy = options.projectRoot
+    ? createSandboxPolicy(options.projectRoot, options.sandbox) ?? undefined
+    : undefined;
+
+  const approvalGate = new ApprovalGate({
+    skipChecks: options.skipApprovalChecks ?? false,
+    sandboxPolicy,
+  });
 
   return new ToolRuntime(registry, {
     defaultMaxResultSize: options.defaultMaxResultSize,

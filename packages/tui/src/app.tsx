@@ -1996,6 +1996,8 @@ export function App({ options }: { options: TUIOptions }): React.ReactNode {
         sessionStore: sessionStoreRef.current ?? undefined,
         toolRuntime: createToolRuntime(tools, {
           permissionMode: permissionModeRef.current,
+          sandbox: loadJarvisConfig().sandbox,
+          projectRoot: process.cwd(),
         }),
       });
     }

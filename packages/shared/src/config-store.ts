@@ -7,6 +7,19 @@ export interface ProviderConfig {
   api_key?: string;
 }
 
+export interface SandboxSettings {
+  /** Enable restricted local sandbox. Default: true */
+  enabled?: boolean;
+  /** Allow network commands (curl, wget, git push). Default: true */
+  allowNetwork?: boolean;
+  /** Allow file operations outside project root. Default: false */
+  allowOutsideProject?: boolean;
+  /** Extra blocked command patterns (regex strings) */
+  extraBlockedPatterns?: string[];
+  /** Extra allowed command patterns that bypass caution checks */
+  extraAllowedPatterns?: string[];
+}
+
 export interface JarvisConfig {
   /** @deprecated Use active_model */
   model?: string;
@@ -16,6 +29,8 @@ export interface JarvisConfig {
   base_url?: string;
   /** Per-provider credentials. Keyed by provider name (e.g. "deepseek", "xiaomi"). */
   providers?: Record<string, ProviderConfig>;
+  /** Sandbox settings for restricted local mode */
+  sandbox?: SandboxSettings;
   reasoning_effort?: JarvisReasoningEffort;
   output_style?: "default" | "concise" | "verbose";
   permission_mode?: "workspace_write" | "accept_edits" | "bypass";

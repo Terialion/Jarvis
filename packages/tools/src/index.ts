@@ -25,6 +25,16 @@ export {
   type PermissionCheckResult,
 } from './runtime.js';
 
+// Sandbox policy
+export {
+  checkCommand,
+  createSandboxPolicy,
+  type SandboxPolicyConfig,
+  type SandboxConfig,
+  type CommandRisk,
+  type CommandCheckResult,
+} from './sandbox-policy.js';
+
 // Builtin tools (individual entries + schemas)
 export { bashTool, bashSchema } from './builtin/bash.js';
 export { readFileTool, readFileSchema } from './builtin/file-read.js';

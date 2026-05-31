@@ -26,6 +26,7 @@ import {
   type JarvisReasoningEffort,
   type JarvisConfig,
   type ProviderConfig,
+  type SandboxSettings,
 } from '@jarvis/shared';
 import { findModel } from '@jarvis/agent';
 
@@ -348,6 +349,8 @@ function registerWebTools(tools: ToolRegistry): void {
 // ============================================================================
 
 export function bootstrap(options: CLIOptions): CLIContext {
+  const userConfig = loadJarvisConfig();
+
   // LLM Provider
   const provider = new LLMProvider({
     model: options.model,
@@ -664,6 +667,8 @@ export async function runOneShot(options: CLIOptions): Promise<string> {
 
   const runtime = createToolRuntime(tools, {
     permissionMode: 'workspace_write',
+    sandbox: userConfig.sandbox,
+    projectRoot: process.cwd(),
   });
 
   const loop = new AgentLoop({
