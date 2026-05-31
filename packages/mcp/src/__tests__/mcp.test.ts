@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, beforeEach } from 'vitest';
 import { MCPServer } from '../server.js';
 import { MCPClient } from '../client.js';
 import type { JsonRpcRequest, MCPTransport } from '../models.js';

@@ -19,7 +19,7 @@ describe('E2E: MCP', () => {
           required: ['a', 'b'],
         },
       },
-      async (args) => ({ result: Number(args.a) + Number(args.b) }),
+      async (args) => ({ content: [{ type: 'text', text: String(Number(args.a) + Number(args.b)) }] }),
     );
 
     server.registerTool(
@@ -31,7 +31,7 @@ describe('E2E: MCP', () => {
           properties: { message: { type: 'string' } },
         },
       },
-      async (args) => ({ echoed: args.message }),
+      async (args) => ({ content: [{ type: 'text', text: String(args.message) }] }),
     );
 
     // Verify via JSON-RPC
@@ -59,7 +59,7 @@ describe('E2E: MCP', () => {
           properties: { a: { type: 'number' }, b: { type: 'number' } },
         },
       },
-      async (args) => ({ result: Number(args.a) + Number(args.b) }),
+      async (args) => ({ content: [{ type: 'text', text: String(Number(args.a) + Number(args.b)) }] }),
     );
 
     const callReq: JsonRpcRequest = {
@@ -70,7 +70,7 @@ describe('E2E: MCP', () => {
     };
 
     const response: JsonRpcResponse = await server.processRequest(callReq);
-    expect(response.result).toEqual({ result: 8 });
+    expect(response.result).toEqual({ content: [{ type: 'text', text: '8' }] });
     expect(response.error).toBeUndefined();
   });
 

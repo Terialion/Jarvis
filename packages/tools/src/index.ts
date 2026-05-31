@@ -58,7 +58,7 @@ export { enterWorktreeTool, exitWorktreeTool } from './builtin/worktree.js';
 export { createSkillLoadTool, createSkillLoadHandler, createSkillTool, createSkillHandler, type SkillSupplier } from './builtin/skill-load.js';
 export { createAgentTool, createAgentHandler, type AgentPool } from './builtin/agent.js';
 export { createListMcpResourcesTool, createReadMcpResourceTool, createMcpStatusTool, createMcpHealthcheckTool, type McpResourceClient } from './builtin/mcp-resource.js';
-export { createMcpToolEntries, type McpToolClient } from './builtin/mcp-tools.js';
+export { createMcpToolEntries, type McpToolClient, type McpToolFilterConfig } from './builtin/mcp-tools.js';
 export { mcpBootstrapTool, mcpBootstrapSchema } from './builtin/mcp-setup.js';
 export { pluginBootstrapTool, pluginBootstrapSchema } from './builtin/plugin-setup.js';
 export { TavilySearchBackend, TavilyFetchBackend, tryCreateTavilySearch, tryCreateTavilyFetch, type TavilyOptions } from './builtin/tavily-backend.js';

@@ -46,7 +46,7 @@ export function mapUserPermissionMode(userMode: string): PermissionMode {
 }
 
 /** Risk levels for tool categorization */
-export type ToolRiskLevel = 'read_only' | 'write_approval_required' | 'command' | 'network' | 'credentialed';
+export type ToolRiskLevel = 'read_only' | 'write_approval_required' | 'caution' | 'command' | 'network' | 'credentialed';
 
 export interface PermissionCheckResult {
   allowed: boolean;
@@ -157,7 +157,8 @@ export class PermissionManager {
 
   /** Get the risk level for a tool name. */
   getRiskLevel(toolName: string): string {
-    return this.riskMap[toolName] ?? 'write_approval_required';
+    return this.riskMap[toolName]
+      ?? (toolName.startsWith('mcp__') ? 'caution' : 'write_approval_required');
   }
 
   /** Reset approvals (keep mode). */
@@ -197,7 +198,8 @@ export class PermissionManager {
       return { allowed: false, reason: `Tool "${toolName}" has been denied for this session.` };
     }
 
-    const risk = this.riskMap[toolName] ?? 'write_approval_required';
+    const risk = this.riskMap[toolName]
+      ?? (toolName.startsWith('mcp__') ? 'caution' : 'write_approval_required');
 
     switch (this.config.mode) {
       case 'plan': {
@@ -218,8 +220,8 @@ export class PermissionManager {
         };
       }
       case 'accept_edits': {
-        // accept_edits (auto-edit): auto-approve read_only + write, prompt for bash/network/credentialed
-        if (risk === 'read_only' || risk === 'write_approval_required') return { allowed: true };
+        // accept_edits (auto-edit): auto-approve read_only + write + caution, prompt for bash/network/credentialed
+        if (risk === 'read_only' || risk === 'write_approval_required' || risk === 'caution') return { allowed: true };
         return {
           allowed: false,
           needsApproval: true,

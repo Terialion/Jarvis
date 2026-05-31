@@ -17,6 +17,16 @@ import type {
 // MCPClient
 // ============================================================================
 
+function withTimeout<T>(promise: Promise<T>, ms: number, msg: string): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error(msg)), ms);
+    promise.then(
+      (val) => { clearTimeout(timer); resolve(val); },
+      (err) => { clearTimeout(timer); reject(err); },
+    );
+  });
+}
+
 export class MCPClient {
   private _connections: MCPConnection[] = [];
   private nextId = 1;
@@ -116,12 +126,17 @@ export class MCPClient {
     toolName: string,
     args: Record<string, unknown> = {},
   ): Promise<unknown> {
-    const response = await connection.transport.send({
+    const timeoutMs = connection.requestTimeoutMs;
+    const sendPromise = connection.transport.send({
       jsonrpc: '2.0',
       id: this.nextId++,
       method: 'tools/call',
       params: { name: toolName, arguments: args },
     });
+
+    const response = timeoutMs
+      ? await withTimeout(sendPromise, timeoutMs, `MCP tool call timed out after ${timeoutMs}ms: ${toolName}`)
+      : await sendPromise;
 
     if (response.error) {
       throw new Error(`MCP tool call failed: ${response.error.message}`);

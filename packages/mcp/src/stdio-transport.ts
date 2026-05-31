@@ -1,12 +1,49 @@
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
-import { existsSync } from 'node:fs';
-import { delimiter } from 'node:path';
+import { existsSync, mkdirSync, appendFileSync } from 'node:fs';
+import { delimiter, join } from 'node:path';
 import type { JsonRpcRequest, JsonRpcResponse, MCPTransport } from './models.js';
 
 type Pending = {
   resolve: (value: JsonRpcResponse) => void;
   reject: (error: Error) => void;
 };
+
+// ---- Global process tracking for cleanup on exit ----
+const allChildren = new Set<{ pid: number; kill: () => void }>();
+
+function registerChild(child: ChildProcessWithoutNullStreams): void {
+  const entry = { pid: child.pid ?? 0, kill: () => { try { child.kill(); } catch {} } };
+  allChildren.add(entry);
+  child.on('close', () => allChildren.delete(entry));
+}
+
+// Cleanup all MCP child processes on process exit
+function cleanupAll(): void {
+  for (const entry of allChildren) {
+    try { entry.kill(); } catch {}
+  }
+}
+process.on('exit', cleanupAll);
+process.on('SIGINT', () => { cleanupAll(); process.exit(130); });
+process.on('SIGTERM', () => { cleanupAll(); process.exit(143); });
+
+// ---- stderr logging ----
+function getLogDir(): string {
+  const home = process.env['HOME'] ?? process.env['USERPROFILE'] ?? '/tmp';
+  return join(home, '.jarvis', 'logs');
+}
+
+function logStderr(serverId: string, data: string): void {
+  try {
+    const dir = getLogDir();
+    mkdirSync(dir, { recursive: true });
+    const logFile = join(dir, 'mcp-stderr.log');
+    const timestamp = new Date().toISOString();
+    appendFileSync(logFile, `[${timestamp}] [${serverId}] ${data}\n`, 'utf8');
+  } catch {
+    // best-effort logging
+  }
+}
 
 /**
  * Minimal newline-delimited JSON-RPC stdio transport for common MCP servers.
@@ -17,20 +54,32 @@ export class StdioMCPTransport implements MCPTransport {
   private pending = new Map<string | number, Pending>();
   private buffer = '';
   private closed = false;
+  private serverId: string;
 
-  constructor(command: string, args: string[] = [], cwd?: string, env?: Record<string, string>) {
+  constructor(command: string, args: string[] = [], cwd?: string, env?: Record<string, string>, serverId?: string) {
+    this.serverId = serverId ?? command;
     const launch = this.resolveSpawnTarget(command, args, env);
     this.child = spawn(launch.command, launch.args, {
       cwd,
-      env: env ? { ...process.env, ...env } : process.env,
+      env: env ?? process.env,
       stdio: ['pipe', 'pipe', 'pipe'],
       shell: false,
+      // Windows: create new process group for clean termination
+      ...(process.platform === 'win32' ? { windowsHide: true } : {}),
     });
+
+    registerChild(this.child);
 
     this.child.stdout.setEncoding('utf8');
     this.child.stdout.on('data', (chunk: string) => {
       this.buffer += chunk;
       this.drainLines();
+    });
+
+    // Redirect stderr to log file (not TUI)
+    this.child.stderr.setEncoding('utf8');
+    this.child.stderr.on('data', (chunk: string) => {
+      logStderr(this.serverId, chunk);
     });
 
     this.child.on('error', (error) => {
@@ -57,6 +106,14 @@ export class StdioMCPTransport implements MCPTransport {
       return {
         command: 'powershell.exe',
         args: ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', resolved, ...args],
+      };
+    }
+
+    // Windows .cmd/.bat files cannot be spawned directly — wrap with cmd.exe /c
+    if (resolved.toLowerCase().endsWith('.cmd') || resolved.toLowerCase().endsWith('.bat')) {
+      return {
+        command: 'cmd.exe',
+        args: ['/d', '/c', resolved, ...args],
       };
     }
 
@@ -87,8 +144,10 @@ export class StdioMCPTransport implements MCPTransport {
       const mergedEnv = env ? { ...process.env, ...env } : process.env;
       const pathValue = mergedEnv.PATH ?? mergedEnv.Path ?? '';
       const pathDirs = pathValue.split(delimiter).filter(Boolean);
+      // On Windows, spawn needs .cmd/.exe — prefer those over extensionless binaries
+      const searchExts = hasExt ? [''] : ['.cmd', '.exe', '.bat', '.ps1', ''];
       for (const dir of pathDirs) {
-        for (const ext of hasExt ? [''] : candidateExts) {
+        for (const ext of searchExts) {
           const suffix = ext || '';
           const found = check(`${dir}\\${command}${suffix}`);
           if (found) return found;
@@ -120,11 +179,44 @@ export class StdioMCPTransport implements MCPTransport {
   close(): void {
     if (this.closed) return;
     this.closed = true;
-    try {
-      this.child.kill();
-    } catch {
-      // ignore close failures
+
+    const pid = this.child.pid;
+
+    if (process.platform === 'win32') {
+      // Windows: use taskkill to kill process tree
+      try {
+        if (pid) {
+          const { execSync } = require('node:child_process');
+          execSync(`taskkill /PID ${pid} /T /F`, { stdio: 'ignore' });
+        }
+      } catch {
+        // fallback: direct kill
+        try { this.child.kill(); } catch {}
+      }
+    } else {
+      // Unix: SIGTERM first, then SIGKILL after 2s grace period
+      try {
+        if (pid) {
+          process.kill(-pid, 'SIGTERM'); // kill process group
+        }
+      } catch {
+        try { this.child.kill('SIGTERM'); } catch {}
+      }
+
+      const forceTimer = setTimeout(() => {
+        try {
+          if (pid) {
+            process.kill(-pid, 'SIGKILL');
+          }
+        } catch {
+          try { this.child.kill('SIGKILL'); } catch {}
+        }
+      }, 2000);
+
+      // Don't keep the event loop alive just for the force-kill timer
+      if (forceTimer.unref) forceTimer.unref();
     }
+
     this.failAll(new Error('MCP transport closed'));
   }
 

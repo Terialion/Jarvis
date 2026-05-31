@@ -224,6 +224,33 @@ function discoverUserMcpServers(projectRoot: string): Array<{ id: string; plugin
   }
 }
 
+/** Discover project-level MCP config (.jarvis/mcp.json in project root) */
+function discoverProjectMcpServers(projectRoot: string): Array<{ id: string; plugin?: string; config: McpServerConfig }> {
+  const configPath = join(projectRoot, '.jarvis', 'mcp.json');
+  if (!existsSync(configPath)) return [];
+  try {
+    const raw = JSON.parse(readFileSync(configPath, 'utf8')) as {
+      mcpServers?: Record<string, McpServerConfig>;
+      servers?: Record<string, McpServerConfig>;
+    };
+    const serverMap = raw.mcpServers ?? raw.servers ?? {};
+    const out: Array<{ id: string; plugin?: string; config: McpServerConfig }> = [];
+    for (const [id, cfg] of Object.entries(serverMap)) {
+      if (!cfg || typeof cfg.command !== 'string' || !cfg.command.trim()) continue;
+      out.push({
+        id,
+        config: {
+          ...cfg,
+          cwd: cfg.cwd ?? projectRoot,
+        },
+      });
+    }
+    return out;
+  } catch {
+    return [];
+  }
+}
+
 function getGitBranch(cwd: string): string | null {
   try {
     return execSync('git rev-parse --abbrev-ref HEAD', {
@@ -704,6 +731,16 @@ const SLASH_COMMANDS: SlashCommandDef[] = [
         // best-effort init
       }
       const mode = (args[0] ?? '').toLowerCase();
+
+      // /mcp reload — disconnect all and reconnect
+      if (mode === 'reload') {
+        const client = ctx.mcpClientRef?.current;
+        if (client) {
+          client.disconnectAll();
+        }
+        ctx.invalidateAgent();
+        return 'MCP connections reset. Reconnect on next prompt.';
+      }
       let statuses = ctx.mcpStatusesRef.current;
       if (statuses.length === 0 || statuses.every((status) => status.state === 'connecting' || status.state === 'retrying')) {
         statuses = await refreshMcpStatuses(ctx);
@@ -1881,16 +1918,32 @@ export function App({ options }: { options: TUIOptions }): React.ReactNode {
       tools.register(createReadMcpResourceTool(mcpRef.current));
       tools.register(createMcpStatusTool(mcpRef.current));
       tools.register(createMcpHealthcheckTool(mcpRef.current));
-      const mcpServers = [
-        ...discoverUserMcpServers(process.cwd()),
-        ...discoverPluginMcpServers(process.cwd()),
-      ];
+      // User-level + project-level (project overrides same-id) + plugin
+      const userServers = discoverUserMcpServers(process.cwd());
+      const projectServers = discoverProjectMcpServers(process.cwd());
+      const pluginServers = discoverPluginMcpServers(process.cwd());
+      // Merge: project overrides user (same id), then add plugins
+      const mergedIds = new Set<string>();
+      const mcpServers: Array<{ id: string; plugin?: string; config: McpServerConfig }> = [];
+      for (const s of projectServers) { mergedIds.add(s.id); mcpServers.push(s); }
+      for (const s of userServers) { if (!mergedIds.has(s.id)) { mergedIds.add(s.id); mcpServers.push(s); } }
+      for (const s of pluginServers) { if (!mergedIds.has(s.id)) { mcpServers.push(s); } }
       mcpConfiguredRef.current = mcpServers;
       if (mcpServers.length > 0) {
+        // Build tool filter map from config
+        const toolFilters = new Map<string, { include?: string[]; exclude?: string[] }>();
+        for (const s of mcpServers) {
+          if (s.config.tools_include || s.config.tools_exclude) {
+            toolFilters.set(s.id, {
+              include: s.config.tools_include,
+              exclude: s.config.tools_exclude,
+            });
+          }
+        }
         void connectMcpServers(mcpRef.current, mcpServers).then((statuses) => {
           mcpStatusesRef.current = statuses;
           setMcpStatusVersion((v) => v + 1);
-          for (const mcpTool of createMcpToolEntries(mcpRef.current!)) {
+          for (const mcpTool of createMcpToolEntries(mcpRef.current!, toolFilters)) {
             try {
               tools.register(mcpTool);
             } catch {

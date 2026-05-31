@@ -69,6 +69,10 @@ export interface MCPConnection {
   tools: MCPToolDefinition[];
   resources: MCPResourceDefinition[];
   prompts: MCPPromptDefinition[];
+  /** Server name (from config id) for provenance tracking */
+  serverName?: string;
+  /** Request timeout in ms for tool calls on this connection */
+  requestTimeoutMs?: number;
 }
 
 // ============================================================================
