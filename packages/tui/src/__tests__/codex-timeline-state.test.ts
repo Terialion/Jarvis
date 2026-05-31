@@ -140,8 +140,9 @@ describe('codex timeline tool card polish', () => {
       expect(tool.collapsedDetail).toBe('Added 3 lines, removed 3 lines');
       expect(tool.argumentsText).toBe('README.md | -3 +3');
       expect(tool.alwaysShowPreview).toBe(true);
-      expect(tool.previewLines?.[0]).toMatch(/^- /);
-      expect(tool.previewLines?.at(-1)).toMatch(/^\+ /);
+      expect(tool.lineMeta?.[0]).toBe('-');
+      expect(tool.lineMeta?.at(-1)).toBe('+');
+      expect(tool.previewLines?.[0]).not.toMatch(/^[+-] /);
     }
   });
 

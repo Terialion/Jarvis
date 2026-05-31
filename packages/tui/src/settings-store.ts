@@ -12,6 +12,7 @@ import {
 
 export interface UserSettings {
   model?: string;
+  active_model?: string;
   reasoning_effort?: JarvisConfig['reasoning_effort'];
   output_style?: 'default' | 'concise' | 'verbose';
   permission_mode?: 'workspace_write' | 'accept_edits' | 'bypass';
@@ -21,6 +22,7 @@ export interface UserSettings {
 function toUserSettings(config: JarvisConfig): UserSettings {
   return {
     model: config.model,
+    active_model: config.active_model,
     reasoning_effort: config.reasoning_effort,
     output_style: config.output_style,
     permission_mode: config.permission_mode,

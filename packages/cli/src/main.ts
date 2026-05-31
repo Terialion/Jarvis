@@ -24,7 +24,10 @@ import {
   normalizeJarvisReasoningEffort,
   resolveJarvisConfigDefaults,
   type JarvisReasoningEffort,
+  type JarvisConfig,
+  type ProviderConfig,
 } from '@jarvis/shared';
+import { findModel } from '@jarvis/agent';
 
 // ============================================================================
 // Types
@@ -52,27 +55,61 @@ export interface CLIContext {
 }
 
 // ============================================================================
+// Provider resolution
+// ============================================================================
+
+/**
+ * Resolve API credentials for a model by looking up its provider in the
+ * config's `providers` map. Falls back to top-level api_key/base_url.
+ */
+export function resolveProviderForModel(
+  modelName: string,
+  config: JarvisConfig,
+): ProviderConfig {
+  const catalogEntry = findModel(modelName);
+  const providerName = catalogEntry?.provider;
+
+  // Try providers map first
+  if (providerName && config.providers?.[providerName]) {
+    const p = config.providers[providerName];
+    return {
+      api_key: p.api_key ?? config.api_key ?? process.env['JARVIS_LLM_API_KEY'] ?? process.env['OPENAI_API_KEY'],
+      base_url: p.base_url ?? config.base_url ?? process.env['JARVIS_LLM_BASE_URL'] ?? process.env['JARVIS_BASE_URL'],
+    };
+  }
+
+  // Fallback to flat config / env
+  return {
+    api_key: config.api_key ?? process.env['JARVIS_LLM_API_KEY'] ?? process.env['OPENAI_API_KEY'],
+    base_url: config.base_url ?? process.env['JARVIS_LLM_BASE_URL'] ?? process.env['JARVIS_BASE_URL'] ?? 'https://api.deepseek.com/v1',
+  };
+}
+
+// ============================================================================
 // Argument parsing
 // ============================================================================
 
 export function parseCLIArgs(argv: string[] = process.argv): CLIOptions {
   const userConfig = loadJarvisConfig();
   const resolvedDefaults = resolveJarvisConfigDefaults(userConfig);
+  const activeModel = userConfig.active_model ?? userConfig.model ?? process.env['JARVIS_LLM_MODEL'] ?? process.env['JARVIS_MODEL'] ?? 'deepseek-chat';
+  const resolved = resolveProviderForModel(activeModel, userConfig);
+
   const { values } = parseArgs({
     args: argv,
     options: {
       model: {
         type: 'string',
         short: 'm',
-        default: userConfig.model ?? process.env['JARVIS_LLM_MODEL'] ?? process.env['JARVIS_MODEL'] ?? 'deepseek-chat',
+        default: activeModel,
       },
       'api-key': {
         type: 'string',
-        default: userConfig.api_key ?? process.env['JARVIS_LLM_API_KEY'] ?? process.env['OPENAI_API_KEY'],
+        default: resolved.api_key,
       },
       'base-url': {
         type: 'string',
-        default: userConfig.base_url ?? process.env['JARVIS_LLM_BASE_URL'] ?? process.env['JARVIS_BASE_URL'] ?? 'https://api.deepseek.com/v1',
+        default: resolved.base_url,
       },
       effort: {
         type: 'string',

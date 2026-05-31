@@ -101,16 +101,16 @@ function SummaryCard({
   );
 }
 
-function getPreviewLineStyle(line: string): {
+function getPreviewLineStyle(line: string, meta?: '-' | '+'): {
   color?: string;
   backgroundColor?: string;
   bold?: boolean;
   dim?: boolean;
 } {
-  if (line.startsWith('- ')) {
+  if (meta === '-' || line.startsWith('- ')) {
     return { color: '#FFD7DB', backgroundColor: '#5A1F24', bold: true, dim: false };
   }
-  if (line.startsWith('+ ')) {
+  if (meta === '+' || line.startsWith('+ ')) {
     return { color: '#D9FFE0', backgroundColor: '#1F4D2C', bold: true, dim: false };
   }
   return { color: '#D7E3F4', backgroundColor: '#1E2532', dim: false };
@@ -226,12 +226,18 @@ function TimelineItemView({
           })() : null}
           {(item.alwaysShowPreview || detailsExpanded) &&
             item.previewLines?.map((line, index) => {
-              const style = getPreviewLineStyle(line);
+              const meta = item.lineMeta?.[index];
+              const style = getPreviewLineStyle(line, meta);
               const lines = item.previewLines ?? [];
               const totalLines = lines.length + (item.previewOverflowCount ?? 0);
               const pad = String(totalLines).length;
               const lineNum = String(index + 1).padStart(pad);
-              const prefix = item.previewKind === 'code' ? `${lineNum} ` : undefined;
+              let prefix: string | undefined;
+              if (item.previewKind === 'code') {
+                prefix = `${lineNum} `;
+              } else if (item.previewKind === 'diff') {
+                prefix = `${lineNum}${meta ?? ' '} `;
+              }
               return (
                 <DetailLine
                   key={`${item.id}-preview-${index}`}

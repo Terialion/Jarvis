@@ -54,6 +54,10 @@ export const KNOWN_MODELS: ModelInfo[] = [
   { slug: 'gemini-2.5-pro', displayName: 'Gemini 2.5 Pro', provider: 'google', contextWindow: 1_000_000, maxContextWindow: 2_000_000 },
   { slug: 'gemini-2.5-flash', displayName: 'Gemini 2.5 Flash', provider: 'google', contextWindow: 1_000_000, maxContextWindow: 1_000_000 },
 
+  // Xiaomi MiMo
+  { slug: 'mimo-v2.5-pro', displayName: 'MiMo V2.5 Pro', provider: 'xiaomi', contextWindow: 1_000_000, maxContextWindow: 1_000_000 },
+  { slug: 'mimo-v2.5', displayName: 'MiMo V2.5', provider: 'xiaomi', contextWindow: 1_000_000, maxContextWindow: 1_000_000 },
+
   // OpenRouter common
   { slug: 'openai/gpt-5.4', displayName: 'GPT-5.4 (OpenRouter)', provider: 'openrouter', contextWindow: 272_000, maxContextWindow: 1_000_000 },
   { slug: 'anthropic/claude-opus-4-7', displayName: 'Claude Opus 4.7 (OpenRouter)', provider: 'openrouter', contextWindow: 200_000, maxContextWindow: 200_000 },

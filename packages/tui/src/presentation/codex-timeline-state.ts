@@ -79,6 +79,8 @@ export type CodexTimelineItemView =
       previewOverflowCount?: number;
       alwaysShowPreview?: boolean;
       previewKind?: 'code' | 'diff';
+      /** Per-line marker for diff previews: '-' for removed, '+' for added. */
+      lineMeta?: Array<'-' | '+'>;
     }
   | {
       id: string;
@@ -455,6 +457,7 @@ function buildToolPreview(toolName: string, args: Record<string, unknown>): {
   previewOverflowCount?: number;
   alwaysShowPreview?: boolean;
   previewKind?: 'code' | 'diff';
+  lineMeta?: Array<'-' | '+'>;
 } {
   if (toolName === 'write_file' && typeof args.content === 'string') {
     return { ...buildPreviewLines(getLineArray(args.content), 10), alwaysShowPreview: true, previewKind: 'code' };
@@ -464,9 +467,11 @@ function buildToolPreview(toolName: string, args: Record<string, unknown>): {
     const oldString = typeof args.old_string === 'string' ? args.old_string : '';
     const newString = typeof args.new_string === 'string' ? args.new_string : '';
     const preview: string[] = [];
-    for (const line of getLineArray(oldString).slice(0, 5)) preview.push(`- ${line}`);
-    for (const line of getLineArray(newString).slice(0, 5)) preview.push(`+ ${line}`);
-    return { ...buildPreviewLines(preview, 10), alwaysShowPreview: true, previewKind: 'diff' };
+    const meta: Array<'-' | '+'> = [];
+    for (const line of getLineArray(oldString).slice(0, 5)) { preview.push(line); meta.push('-'); }
+    for (const line of getLineArray(newString).slice(0, 5)) { preview.push(line); meta.push('+'); }
+    const result = buildPreviewLines(preview, 10);
+    return { ...result, alwaysShowPreview: true, previewKind: 'diff', lineMeta: meta.slice(0, (result.previewLines?.length ?? 0)) };
   }
 
   return {};
@@ -650,6 +655,7 @@ function buildItemView(
         previewOverflowCount: preview.previewOverflowCount,
         alwaysShowPreview: preview.alwaysShowPreview,
         previewKind: preview.previewKind,
+        lineMeta: preview.lineMeta,
       };
     }
     case 'todo_list':

@@ -738,7 +738,8 @@ const SLASH_COMMANDS: SlashCommandDef[] = [
         const modelName = ctx.modelRef.current;
         const outputStyle = ctx.outputStyleRef.current;
         const sid = (ctx.sid ?? 'none').slice(-16);
-        return [
+        const providerKeys = userConfig.providers ? Object.keys(userConfig.providers) : [];
+        const lines = [
           'Current configuration:\n',
           `  config-path  = ${configPath}`,
           `  model       = ${modelName}`,
@@ -751,9 +752,17 @@ const SLASH_COMMANDS: SlashCommandDef[] = [
           `  system-prompt = ${ctx.systemPromptRef.current ? '(configured)' : '(not set)'}`,
           `  session     = ${sid}`,
           `  cwd         = ${ctx.cwd}`,
+        ];
+        if (providerKeys.length > 0) {
+          lines.push('', `Providers (${providerKeys.join(', ')}):`);
+          for (const [name, p] of Object.entries(userConfig.providers ?? {})) {
+            lines.push(`  ${name}: base-url=${p.base_url ?? '(inherit)'}, api-key=${maskSecret(p.api_key)}`);
+          }
+        }
+        lines.push(
           '',
           'Stored user config:',
-          `  model       = ${userConfig.model ?? '(not set)'}`,
+          `  active-model = ${userConfig.active_model ?? userConfig.model ?? '(not set)'}`,
           `  base-url    = ${userConfig.base_url ?? '(not set)'}`,
           `  api-key     = ${maskSecret(userConfig.api_key)}`,
           `  effort      = ${userConfig.reasoning_effort ?? '(not set)'}`,
@@ -761,7 +770,8 @@ const SLASH_COMMANDS: SlashCommandDef[] = [
           `  output-style = ${userConfig.output_style ?? '(not set)'}`,
           `  permissions = ${userConfig.permission_mode ?? '(not set)'}`,
           `  system-prompt = ${userConfig.system_prompt ? '(configured)' : '(not set)'}`,
-        ].join('\n');
+        );
+        return lines.join('\n');
       }
 
       const key = args[0].toLowerCase();
@@ -770,7 +780,17 @@ const SLASH_COMMANDS: SlashCommandDef[] = [
       if (key === 'model') {
         if (!value) return `model = ${ctx.modelRef.current}`;
         ctx.modelRef.current = value;
-        saveSettings({ model: value });
+        saveJarvisConfig({ active_model: value });
+        // Auto-resolve provider credentials for the new model
+        const catalogEntry = findModel(value);
+        const providerName = catalogEntry?.provider;
+        const config = loadJarvisConfig();
+        if (providerName && config.providers?.[providerName]) {
+          const p = config.providers[providerName];
+          if (p.api_key) ctx.apiKeyRef.current = p.api_key;
+          if (p.base_url) ctx.baseURLRef.current = p.base_url;
+          return `model = ${value} (provider: ${providerName}, auto-resolved credentials)`;
+        }
         return `model = ${value} (effective next turn)`;
       }
 
@@ -1341,7 +1361,7 @@ export function App({ options }: { options: TUIOptions }): React.ReactNode {
   const sessionIdRef = useRef<string | null>(null);
   const sessionReadyRef = useRef(false);
   const savedSettings = loadSettings();
-  const modelRef = useRef<string>(savedSettings.model || options.model);
+  const modelRef = useRef<string>(savedSettings.active_model || savedSettings.model || options.model);
   const apiKeyRef = useRef<string | undefined>(options.apiKey);
   const baseURLRef = useRef<string | undefined>(options.baseURL);
   const reasoningEffortRef = useRef<string>(savedSettings.reasoning_effort || options.reasoningEffort || 'high');

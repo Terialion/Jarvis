@@ -82,7 +82,7 @@ export function SetupScreen({ onComplete }: SetupScreenProps): React.ReactNode {
   const existing = useMemo(() => loadJarvisConfig(), []);
   const defaults = useMemo(() => resolveJarvisConfigDefaults(existing), [existing]);
   const [draft, setDraft] = useState<Record<FieldKey, string>>({
-    model: defaults.model,
+    model: defaults.active_model ?? defaults.model ?? '',
     base_url: defaults.base_url,
     api_key: defaults.api_key ?? '',
     reasoning_effort: defaults.reasoning_effort,

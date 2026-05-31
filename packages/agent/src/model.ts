@@ -261,10 +261,11 @@ export class LLMProvider {
       model: this.parsedModel.cleanName,
     };
 
-    const apiKey =
+    const apiKey = (
       this.config.apiKey ??
       process.env['JARVIS_LLM_API_KEY'] ??
-      process.env['OPENAI_API_KEY'];
+      process.env['OPENAI_API_KEY']
+    )?.replace(/\r$/, '').trim();
 
     if (!apiKey) {
       throw new Error(
@@ -273,7 +274,7 @@ export class LLMProvider {
     }
 
     this.client = new OpenAI({
-      baseURL: this.config.baseURL,
+      baseURL: this.config.baseURL?.replace(/\r$/, '').trim(),
       apiKey,
       timeout: this.config.timeout,
       maxRetries: this.config.maxRetries,

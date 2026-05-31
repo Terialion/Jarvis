@@ -2,10 +2,20 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 
+export interface ProviderConfig {
+  base_url?: string;
+  api_key?: string;
+}
+
 export interface JarvisConfig {
+  /** @deprecated Use active_model */
   model?: string;
+  /** Active model name. Takes precedence over `model`. */
+  active_model?: string;
   api_key?: string;
   base_url?: string;
+  /** Per-provider credentials. Keyed by provider name (e.g. "deepseek", "xiaomi"). */
+  providers?: Record<string, ProviderConfig>;
   reasoning_effort?: JarvisReasoningEffort;
   output_style?: "default" | "concise" | "verbose";
   permission_mode?: "workspace_write" | "accept_edits" | "bypass";
@@ -62,11 +72,13 @@ export function loadJarvisConfig(): JarvisConfig {
 
 export function resolveJarvisConfigDefaults(config: JarvisConfig = loadJarvisConfig()): Required<Pick<
   JarvisConfig,
-  "model" | "base_url" | "reasoning_effort" | "max_turns" | "permission_mode" | "output_style"
+  "base_url" | "reasoning_effort" | "max_turns" | "permission_mode" | "output_style"
 >> &
-  Pick<JarvisConfig, "api_key" | "system_prompt"> {
+  Pick<JarvisConfig, "model" | "active_model" | "api_key" | "system_prompt"> {
+  const activeModel = config.active_model ?? config.model;
   return {
-    model: config.model ?? process.env["JARVIS_LLM_MODEL"] ?? process.env["JARVIS_MODEL"] ?? DEFAULT_MODEL,
+    model: config.model,
+    active_model: activeModel ?? process.env["JARVIS_LLM_MODEL"] ?? process.env["JARVIS_MODEL"] ?? DEFAULT_MODEL,
     api_key: config.api_key ?? process.env["JARVIS_LLM_API_KEY"] ?? process.env["OPENAI_API_KEY"],
     base_url: config.base_url ?? process.env["JARVIS_LLM_BASE_URL"] ?? process.env["JARVIS_BASE_URL"] ?? DEFAULT_BASE_URL,
     reasoning_effort:
