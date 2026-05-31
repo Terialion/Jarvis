@@ -291,11 +291,11 @@ function classifyCommand(command: string): string {
 // ============================================================================
 
 export interface SandboxConfig {
-  enabled: boolean;
-  allowNetwork: boolean;
-  allowOutsideProject: boolean;
-  extraBlockedPatterns: string[];
-  extraAllowedPatterns: string[];
+  enabled?: boolean;
+  allowNetwork?: boolean;
+  allowOutsideProject?: boolean;
+  extraBlockedPatterns?: string[];
+  extraAllowedPatterns?: string[];
 }
 
 const DEFAULT_SANDBOX_CONFIG: SandboxConfig = {
