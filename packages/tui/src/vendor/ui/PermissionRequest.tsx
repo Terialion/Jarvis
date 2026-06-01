@@ -109,7 +109,11 @@ export function PermissionRequest({
   const options = useMemo<OptionDef[]>(() => {
     const opts: OptionDef[] = [{ value: "allow", label: "Yes, allow this action" }];
     if (showAlwaysAllow) {
-      const target = patternLabel ? `${toolName} (${patternLabel})` : toolName;
+      // Truncate long patterns (e.g., bash commands) for readability
+      const truncated = patternLabel && patternLabel.length > 60
+        ? patternLabel.slice(0, 57) + '...'
+        : patternLabel;
+      const target = truncated ? `${toolName} (${truncated})` : toolName;
       opts.push({ value: "always_allow", label: `Yes, and always allow ${target}` });
     }
     opts.push({ value: "deny", label: "No, deny" });

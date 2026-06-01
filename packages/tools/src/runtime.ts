@@ -135,6 +135,58 @@ export class PermissionManager {
   approveToolPattern(toolName: string, argsKey: string): void {
     this.config.approvedPatterns.push({ toolName, argsKey });
     this.config.deniedTools.delete(toolName);
+    // Persist to disk for cross-session persistence
+    this.persistPattern(toolName, argsKey);
+  }
+
+  /** Persist an approved pattern to .jarvis/settings.local.json */
+  private persistPattern(toolName: string, argsKey: string): void {
+    try {
+      const { existsSync, readFileSync, writeFileSync, mkdirSync } = require('node:fs');
+      const { join } = require('node:path');
+      const home = process.env['HOME'] ?? process.env['USERPROFILE'] ?? '';
+      const dir = join(home, '.jarvis');
+      const settingsPath = join(dir, 'settings.local.json');
+
+      mkdirSync(dir, { recursive: true });
+
+      let settings: Record<string, unknown> = {};
+      if (existsSync(settingsPath)) {
+        settings = JSON.parse(readFileSync(settingsPath, 'utf-8'));
+      }
+
+      const approved = (settings['approved_patterns'] as Array<{ tool: string; pattern: string }>) ?? [];
+      const exists = approved.some((p) => p.tool === toolName && p.pattern === argsKey);
+      if (!exists) {
+        approved.push({ tool: toolName, pattern: argsKey });
+        settings['approved_patterns'] = approved;
+        writeFileSync(settingsPath, JSON.stringify(settings, null, 2), 'utf-8');
+      }
+    } catch {
+      // best-effort persistence
+    }
+  }
+
+  /** Load persisted patterns from .jarvis/settings.local.json */
+  loadPersistedPatterns(): void {
+    try {
+      const { existsSync, readFileSync } = require('node:fs');
+      const { join } = require('node:path');
+      const home = process.env['HOME'] ?? process.env['USERPROFILE'] ?? '';
+      const settingsPath = join(home, '.jarvis', 'settings.local.json');
+
+      if (!existsSync(settingsPath)) return;
+
+      const settings = JSON.parse(readFileSync(settingsPath, 'utf-8'));
+      const approved = (settings['approved_patterns'] as Array<{ tool: string; pattern: string }>) ?? [];
+      for (const p of approved) {
+        if (p.tool && p.pattern && !this.isPatternApproved(p.tool, p.pattern)) {
+          this.config.approvedPatterns.push({ toolName: p.tool, argsKey: p.pattern });
+        }
+      }
+    } catch {
+      // best-effort loading
+    }
   }
 
   /** Check if a specific tool+args pattern has been approved. */

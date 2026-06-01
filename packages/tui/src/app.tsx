@@ -2202,6 +2202,8 @@ export function App({ options }: { options: TUIOptions }): React.ReactNode {
             onApprovalNeeded: handleApprovalNeeded,
           });
           permManagerRef.current = runtime.getPermissionManager() ?? null;
+          // Load persisted approval patterns from .jarvis/settings.local.json
+          permManagerRef.current?.loadPersistedPatterns();
           return runtime;
         })(),
       });
