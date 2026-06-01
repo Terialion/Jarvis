@@ -2,7 +2,7 @@
  * Snapshot test for AskUserQuestion component.
  * Renders with vitest's JSX transform and captures terminal output.
  */
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import React from 'react';
 import { Writable } from 'node:stream';
 import { renderSync } from '../vendor/ink-renderer/root.js';
@@ -73,6 +73,16 @@ const multiQuestion: AskQuestionDef[] = [
     ],
   },
 ];
+
+// Suppress React 19 key warning from ink-renderer's custom reconciler (known limitation)
+const originalError = console.error;
+beforeEach(() => {
+  console.error = (...args: unknown[]) => {
+    if (typeof args[0] === 'string' && args[0].includes('Encountered two children with the same key')) return;
+    originalError(...args);
+  };
+});
+afterEach(() => { console.error = originalError; });
 
 describe('AskUserQuestion snapshot', () => {
   it('renders single-select question', () => {

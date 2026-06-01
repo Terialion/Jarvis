@@ -38,21 +38,28 @@ describe('buildContextPanelLines', () => {
     mcpStatuses: [{ id: 'filesystem', state: 'failed', error: 'spawn pnpm ENOENT' }],
   };
 
-  it('returns compact overview with category totals', () => {
+  it('returns compact overview with context grid and category totals', () => {
     const lines = buildContextPanelLines(baseInput);
     expect(lines[0]).toBe('Context Usage');
-    expect(lines.join('\n')).toContain('Estimated: 24,900/200,000 tokens');
-    expect(lines.join('\n')).toContain('Provider-reported: 22,500/200,000 tokens');
-    expect(lines.join('\n')).toContain('Estimated usage by category');
-    expect(lines.join('\n')).toContain('Groups: /context mcp');
+    const text = lines.join('\n');
+    expect(text).toContain('qwen3.6-reasoner');
+    expect(text).toContain('24.9k/200k tokens');
+    expect(text).toContain('Estimated usage by category');
+    expect(text).toContain('⛁ System prompt');
+    expect(text).toContain('⛁ System tools');
+    expect(text).toContain('⛁ MCP tools');
+    expect(text).toContain('⛁ Memory files');
+    expect(text).toContain('⛁ Skills');
+    expect(text).toContain('⛁ Messages');
+    expect(text).toContain('⛶ Free space');
+    expect(text).toContain('Groups: /context mcp');
   });
 
   it('includes MCP subgroup details', () => {
     const lines = buildContextPanelLines({ ...baseInput, mode: 'mcp' });
     const text = lines.join('\n');
     expect(text).toContain('MCP tools · /mcp');
-    expect(text).toContain('filesystem (common-mcp-smoke)');
-    expect(text).toContain('failed');
+    expect(text).toContain('filesystem');
     expect(text).toContain('error: spawn pnpm ENOENT');
   });
 

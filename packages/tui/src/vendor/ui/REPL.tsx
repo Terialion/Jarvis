@@ -6,6 +6,7 @@ import { AskUserQuestion } from "./AskUserQuestion";
 import type { AskQuestionDef } from "@jarvis/tools";
 import type { ThreadEvent, ModelInfo } from "@jarvis/agent";
 import { CodexTimeline } from "../../presentation/CodexTimeline.js";
+import { HelpPopup, type HelpCommandEntry } from "./HelpPopup";
 import {
   buildCodexTimelineState,
   buildSearchExcerpt,
@@ -98,6 +99,11 @@ export type REPLProps = {
   onEffortSelectorCancel?: () => void;
   onEffortSelectorChange?: (effort: string) => void;
 
+  // Help popup
+  helpPopupOpen?: boolean;
+  helpPopupCommands?: HelpCommandEntry[];
+  onHelpPopupClose?: () => void;
+
   prefix?: string;
   placeholder?: string;
   history?: string[];
@@ -167,6 +173,10 @@ export function REPL({
   onEffortSelect,
   onEffortSelectorCancel,
   onEffortSelectorChange,
+  // Help popup
+  helpPopupOpen = false,
+  helpPopupCommands = [],
+  onHelpPopupClose,
 }: REPLProps): React.ReactNode {
   const { exit } = useApp();
   const [inputValue, setInputValue] = useState("");
@@ -420,6 +430,7 @@ export function REPL({
           <ModelSelector
             currentModel={modelSelectorCurrentModel}
             currentEffort={modelSelectorCurrentEffort}
+            effortLevels={effortSelectorLevels}
             knownModels={modelSelectorKnownModels}
             onSelect={(result: ModelSelectionResult) => onModelSelect?.(result)}
             onCancel={() => onModelSelectorCancel?.()}
@@ -438,6 +449,13 @@ export function REPL({
             onChange={(effort: string) => onEffortSelectorChange?.(effort)}
           />
         </Box>
+      )}
+
+      {helpPopupOpen && helpPopupCommands.length > 0 && (
+        <HelpPopup
+          commands={helpPopupCommands}
+          onClose={() => onHelpPopupClose?.()}
+        />
       )}
 
       <Divider />

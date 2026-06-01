@@ -19,6 +19,8 @@ export type ModelSelectorProps = {
   currentModel: string;
   /** Current reasoning effort */
   currentEffort: string;
+  /** Available effort levels */
+  effortLevels?: readonly string[];
   /** All known models from the catalog */
   knownModels: ModelInfo[];
   /** Called when user confirms selection */
@@ -47,12 +49,16 @@ interface ModelDisplayEntry {
 // Effort levels
 // ============================================================================
 
-const EFFORT_LEVELS = ["high", "medium", "low"] as const;
+const DEFAULT_EFFORT_LEVELS = ["high", "medium", "low"] as const;
 
 const EFFORT_LABELS: Record<string, string> = {
-  high: "High effort (default)",
-  medium: "Medium effort",
+  auto: "Auto",
+  minimal: "Minimal effort",
   low: "Low effort",
+  medium: "Medium effort",
+  high: "High effort (default)",
+  xhigh: "X-High effort",
+  max: "Max effort",
 };
 
 function formatContextWindow(tokens: number): string {
@@ -83,15 +89,17 @@ function providerLabel(provider: string): string {
 export function ModelSelector({
   currentModel,
   currentEffort,
+  effortLevels,
   knownModels,
   onSelect,
   onCancel,
   onEffortChange,
 }: ModelSelectorProps): React.ReactNode {
+  const levels = effortLevels ?? DEFAULT_EFFORT_LEVELS;
   const parsed = parseModelName(currentModel);
   const currentSlug = parsed.cleanName;
   const [effortIndex, setEffortIndex] = useState(
-    Math.max(0, EFFORT_LEVELS.indexOf(currentEffort as typeof EFFORT_LEVELS[number])),
+    Math.max(0, levels.indexOf(currentEffort)),
   );
   const selectCalledRef = useRef(false);
 
@@ -145,11 +153,11 @@ export function ModelSelector({
     effortIndexRef.current = clamp(
       effortIndexRef.current + delta,
       0,
-      EFFORT_LEVELS.length - 1,
+      levels.length - 1,
     );
     setEffortIndex(effortIndexRef.current);
-    onEffortChange?.(EFFORT_LEVELS[effortIndexRef.current]!);
-  }, [clamp, onEffortChange]);
+    onEffortChange?.(levels[effortIndexRef.current]!);
+  }, [clamp, levels, onEffortChange]);
 
   useInput((_input: string, key: Key) => {
     if (selectCalledRef.current) return;
@@ -187,16 +195,16 @@ export function ModelSelector({
       return;
     }
     if (key.leftArrow || (_input === "h" && !key.ctrl && !key.meta)) {
-      changeEffort(-1);
+      changeEffort(1);
       return;
     }
     if (key.rightArrow || (_input === "l" && !key.ctrl && !key.meta)) {
-      changeEffort(1);
+      changeEffort(-1);
       return;
     }
   }, { isActive: true });
 
-  const effortLabel = EFFORT_LABELS[EFFORT_LEVELS[effortIndex]!] ?? "High effort";
+  const effortLabel = EFFORT_LABELS[levels[effortIndex]!] ?? levels[effortIndex] ?? "High effort";
 
   return (
     <Box flexDirection="column" paddingX={2} paddingY={1}>

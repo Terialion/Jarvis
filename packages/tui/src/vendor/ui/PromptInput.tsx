@@ -50,6 +50,7 @@ export function PromptInput({
   const [historyIndex, setHistoryIndex] = useState(-1);
   const [suggestionIndex, setSuggestionIndex] = useState(0);
   const [showSuggestions, setShowSuggestions] = useState(false);
+  const [selectedCommand, setSelectedCommand] = useState<string | null>(null);
   const MAX_VISIBLE_SUGGESTIONS = 8;
   const [vim, setVim] = useState<VimMode>("INSERT");
   const [pendingD, setPendingD] = useState(false);
@@ -66,6 +67,7 @@ export function PromptInput({
   useEffect(() => {
     setCursor((prev) => Math.min(prev, value.length));
     setShowSuggestions(value.startsWith("/"));
+    setSelectedCommand(null);
     setSuggestionIndex((prev) => {
       if (!value.startsWith("/")) return 0;
       return suggestions.length === 0 ? 0 : Math.min(prev, suggestions.length - 1);
@@ -79,6 +81,7 @@ export function PromptInput({
       setHistoryIndex(-1);
       setShowSuggestions(nv.startsWith("/"));
       setSuggestionIndex(0);
+      setSelectedCommand(null);
     },
     [onChange],
   );
@@ -207,12 +210,15 @@ export function PromptInput({
 
       if (key.return) {
         if (hasSuggestions) {
-          const cmd = suggestions[suggestionIndex]!;
-          const cv = `/${cmd.name}`;
-          onCommandSelect?.(cmd.name);
-          onChange(cv);
-          setCursor(cv.length);
-          setShowSuggestions(false);
+          const name = selectedCommand ?? suggestions[suggestionIndex]?.name;
+          if (name) {
+            const cv = `/${name}`;
+            onCommandSelect?.(name);
+            onChange(cv);
+            setCursor(cv.length);
+            setShowSuggestions(false);
+            setSelectedCommand(null);
+          }
           return;
         }
         if (multiline && key.shift) {
@@ -247,7 +253,11 @@ export function PromptInput({
       }
       if (key.upArrow) {
         if (hasSuggestions) {
-          setSuggestionIndex((i) => (i > 0 ? i - 1 : suggestions.length - 1));
+          setSuggestionIndex((i) => {
+            const next = i > 0 ? i - 1 : suggestions.length - 1;
+            setSelectedCommand(suggestions[next]?.name ?? null);
+            return next;
+          });
           return;
         }
         if (!moveLine(-1)) historyUp();
@@ -255,7 +265,11 @@ export function PromptInput({
       }
       if (key.downArrow) {
         if (hasSuggestions) {
-          setSuggestionIndex((i) => (i < suggestions.length - 1 ? i + 1 : 0));
+          setSuggestionIndex((i) => {
+            const next = i < suggestions.length - 1 ? i + 1 : 0;
+            setSelectedCommand(suggestions[next]?.name ?? null);
+            return next;
+          });
           return;
         }
         if (!moveLine(1)) historyDown();

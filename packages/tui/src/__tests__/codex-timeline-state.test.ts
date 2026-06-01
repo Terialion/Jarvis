@@ -174,12 +174,12 @@ describe('codex timeline tool card polish', () => {
     expect(tool?.kind).toBe('tool_call');
     if (tool?.kind === 'tool_call') {
       expect(tool.previewKind).toBe('diff');
-      // Format: "     N  - content" or "     N  + content" (line number + marker)
+      // Interleaved pairs: - old / + new per line
       expect(tool.previewLines?.[0]).toMatch(/1\s+- line1/);
-      expect(tool.previewLines?.[1]).toMatch(/2\s+- line2/);
-      expect(tool.previewLines?.[2]).toMatch(/3\s+- line3/);
-      expect(tool.previewLines?.[3]).toMatch(/1\s+\+ line1/);
-      expect(tool.previewLines?.[4]).toMatch(/2\s+\+ changed/);
+      expect(tool.previewLines?.[1]).toMatch(/1\s+\+ line1/);
+      expect(tool.previewLines?.[2]).toMatch(/2\s+- line2/);
+      expect(tool.previewLines?.[3]).toMatch(/2\s+\+ changed/);
+      expect(tool.previewLines?.[4]).toMatch(/3\s+- line3/);
       expect(tool.previewLines?.[5]).toMatch(/3\s+\+ line3/);
     }
   });
