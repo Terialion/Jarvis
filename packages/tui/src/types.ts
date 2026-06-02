@@ -67,16 +67,17 @@ export type TUIDebugEvent =
       type: "run_failed";
       prompt: string;
       elapsedMs: number;
-      tokenEvents: number;
-      tokenChars: number;
-      reasoningEvents: number;
-      reasoningChars: number;
-      toolStarts: number;
-      toolEnds: number;
-      hadStreamingContent: boolean;
-      hadStreamingThinking: boolean;
+      tokenEvents?: number;
+      tokenChars?: number;
+      reasoningEvents?: number;
+      reasoningChars?: number;
+      toolStarts?: number;
+      toolEnds?: number;
+      hadStreamingContent?: boolean;
+      hadStreamingThinking?: boolean;
       error: string;
-      isAbort: boolean;
+      stopReason?: string;
+      isAbort?: boolean;
       timestamp: number;
     };
 

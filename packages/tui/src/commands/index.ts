@@ -19,6 +19,7 @@ import { estimateTokensFromText, estimateMemoryEntries } from '../utils/token-es
 import { formatMcpDiagnostics, refreshMcpStatuses } from '../utils/mcp-diagnostics.js';
 import { REVIEW_PROMPT, SECURITY_REVIEW_PROMPT, INIT_CLAUDE_MD_TEMPLATE } from '../system-prompt.js';
 import { makeSysMsg, type SlashCommandDef, type SlashCommandCtx, type REPLCommandDef, type LiveContextUsage } from './types.js';
+import { resolveModelCredentials } from '../utils/credentials.js';
 
 export { makeSysMsg };
 export type { SlashCommandDef, SlashCommandCtx, REPLCommandDef, LiveContextUsage };
@@ -200,9 +201,19 @@ export const SLASH_COMMANDS: SlashCommandDef[] = [
       }
       if (args.length > 0) {
         ctx.modelRef.current = args[0];
-        saveSettings({ model: args[0] });
+        // Save both model and active_model to ensure it takes effect
+        saveSettings({ model: args[0], active_model: args[0] });
+
+        // Resolve provider credentials for the new model
+        const creds = resolveModelCredentials(args[0]);
+        ctx.apiKeyRef.current = creds.apiKey;
+        ctx.baseURLRef.current = creds.baseURL;
+
+        const providerName = findModel(args[0])?.provider;
+
         ctx.invalidateAgent();
-        return `Model set to: ${args[0]} (effective on next turn)`;
+        ctx.onModelChange?.(); // Trigger re-render for status bar
+        return `Model set to: ${args[0]} (provider: ${providerName ?? 'default'}, effective on next turn)`;
       }
       return `Current model: ${parseModelName(ctx.modelRef.current).cleanName}`;
     },
@@ -357,16 +368,15 @@ export const SLASH_COMMANDS: SlashCommandDef[] = [
       if (key === 'model') {
         if (!value) return `model = ${ctx.modelRef.current}`;
         ctx.modelRef.current = value; saveJarvisConfig({ active_model: value });
-        const catalogEntry = findModel(value);
-        const providerName = catalogEntry?.provider;
-        const config = loadJarvisConfig();
-        if (providerName && config.providers?.[providerName]) {
-          const p = config.providers[providerName];
-          if (p.api_key) ctx.apiKeyRef.current = p.api_key;
-          if (p.base_url) ctx.baseURLRef.current = p.base_url;
-          return `model = ${value} (provider: ${providerName}, auto-resolved credentials)`;
-        }
-        return `model = ${value} (effective next turn)`;
+
+        const creds = resolveModelCredentials(value);
+        ctx.apiKeyRef.current = creds.apiKey;
+        ctx.baseURLRef.current = creds.baseURL;
+
+        const providerName = findModel(value)?.provider;
+        ctx.invalidateAgent();
+        ctx.onModelChange?.();
+        return `model = ${value} (provider: ${providerName ?? 'default'}, effective next turn)`;
       }
       if (key === 'base-url') { if (!value) return `base-url = ${ctx.baseURLRef.current ?? '(not set)'}`; ctx.baseURLRef.current = value; saveJarvisConfig({ base_url: value }); return `base-url = ${value} (effective next launch)`; }
       if (key === 'api-key') { if (!value) return `api-key = ${maskSecret(ctx.apiKeyRef.current)}`; ctx.apiKeyRef.current = value; saveJarvisConfig({ api_key: value }); return 'api-key saved (effective next launch)'; }
@@ -429,7 +439,7 @@ export const SLASH_COMMANDS: SlashCommandDef[] = [
   {
     name: 'effort',
     description: 'Show or set reasoning effort',
-    usage: '/effort [auto|minimal|low|medium|high|xhigh|max]',
+    usage: '/effort [auto|low|medium|high|xhigh|max]',
     handler: (args, ctx) => {
       if (args.length === 0) return `Reasoning effort: ${ctx.reasoningEffortRef.current} (available: ${JARVIS_REASONING_EFFORTS.join(', ')})`;
       const normalized = normalizeJarvisReasoningEffort(args[0]);

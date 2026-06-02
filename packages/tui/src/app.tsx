@@ -2,13 +2,14 @@ import type React from 'react';
 import { useState, useCallback, useRef, useEffect, useMemo } from 'react';
 import { readFileSync, existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { scanFiles, type FileEntry } from './vendor/ui/utils/fileScanner.js';
 import { REPL } from './vendor/ui/REPL.js';
 import type { StatusDetailLine } from './vendor/ui/REPL.js';
 import type { Message, MessageContent } from './vendor/ui/MessageList.js';
 import type { StatusLineSegment } from './vendor/ui/StatusLine.js';
 import { WelcomeScreen } from './vendor/ui/WelcomeScreen.js';
 import { loadSettings, saveSettings, type UserSettings } from './settings-store.js';
-import { AgentLoop, AgentEventBus, TokenTracker, formatTokensCompact, estimateTokens, validateContextWindow, getAllModels, parseModelName, buildSystemPrompt, createMemorySearchHandler, createMemoryGetHandler, type ThreadEvent, type ModelInfo } from '@jarvis/agent';
+import { AgentLoop, AgentEventBus, TokenTracker, formatTokensCompact, estimateTokens, validateContextWindow, getAllModels, parseModelName, findModel, buildSystemPrompt, createMemorySearchHandler, createMemoryGetHandler, type ThreadEvent, type ModelInfo } from '@jarvis/agent';
 import {
   ToolRegistry,
   allBuiltinTools,
@@ -51,6 +52,7 @@ import { formatMcpDiagnostics, refreshMcpStatuses } from './utils/mcp-diagnostic
 import { estimateTokensFromText, estimateMemoryEntries, buildContextProgressBar, estimateTurnTokenCount, buildMcpFooterLines } from './utils/token-estimation.js';
 import { decodeHtmlEntities } from './vendor/ui/utils/markdown.js';
 import { loadJarvisConfig } from '@jarvis/shared';
+import { resolveModelCredentials } from './utils/credentials.js';
 import { connectMcpServers } from '@jarvis/mcp';
 
 export function App({ options }: { options: TUIOptions }): React.ReactNode {
@@ -71,6 +73,12 @@ export function App({ options }: { options: TUIOptions }): React.ReactNode {
   const modelRef = useRef<string>(savedSettings.active_model || savedSettings.model || options.model);
   const apiKeyRef = useRef<string | undefined>(options.apiKey);
   const baseURLRef = useRef<string | undefined>(options.baseURL);
+
+  // Resolve provider credentials for the initial model
+  // This ensures the correct API key and base URL are used based on the model's provider
+  const initialCreds = resolveModelCredentials(modelRef.current);
+  if (!apiKeyRef.current) apiKeyRef.current = initialCreds.apiKey;
+  if (!baseURLRef.current) baseURLRef.current = initialCreds.baseURL;
   const reasoningEffortRef = useRef<string>(savedSettings.reasoning_effort || options.reasoningEffort || 'high');
   const systemPromptRef = useRef<string | undefined>(options.systemPrompt);
   const modifiedFilesRef = useRef<Set<string>>(new Set());
@@ -88,6 +96,7 @@ export function App({ options }: { options: TUIOptions }): React.ReactNode {
   const abortRef = useRef<AbortController | null>(null);
   const permManagerRef = useRef<import('@jarvis/tools').PermissionManager | null>(null);
   const [modeVersion, setModeVersion] = useState(0);
+  const [modelVersion, setModelVersion] = useState(0);
 
   // Model selector state
   const [modelSelectorOpen, setModelSelectorOpen] = useState(false);
@@ -134,6 +143,23 @@ export function App({ options }: { options: TUIOptions }): React.ReactNode {
   const [contextUsageVersion, setContextUsageVersion] = useState(0);
   const [mcpStatusVersion, setMcpStatusVersion] = useState(0);
   const [agentEntries, setAgentEntries] = useState<import('./vendor/ui/AgentsPanel.js').AgentStatusEntry[]>([]);
+
+  // @ file reference state
+  const [fileEntries, setFileEntries] = useState<FileEntry[]>([]);
+  const fileSearchTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const handleFileSearch = useCallback((query: string) => {
+    // Debounce file scanning to avoid excessive filesystem reads
+    if (fileSearchTimerRef.current) clearTimeout(fileSearchTimerRef.current);
+    fileSearchTimerRef.current = setTimeout(async () => {
+      try {
+        const entries = await scanFiles(process.cwd(), query);
+        setFileEntries(entries);
+      } catch {
+        setFileEntries([]);
+      }
+    }, 150);
+  }, []);
+
   const cwd = process.cwd();
   const gitBranch = useMemo(() => getGitBranch(cwd), [cwd, messages.length]);
 
@@ -175,6 +201,8 @@ export function App({ options }: { options: TUIOptions }): React.ReactNode {
     agentRef.current = null;
     tokenTrackerRef.current = null;
     liveContextUsageRef.current = null;
+    poolRef.current = null;
+    eventBusRef.current = null;
   }, []);
 
   // Model selector handlers
@@ -182,13 +210,22 @@ export function App({ options }: { options: TUIOptions }): React.ReactNode {
     const { model, mode } = result;
     modelRef.current = model;
     if (mode === 'default') {
-      saveSettings({ model });
+      saveSettings({ model, active_model: model });
     }
+
+    // Resolve provider credentials for the new model
+    const creds = resolveModelCredentials(model);
+    apiKeyRef.current = creds.apiKey;
+    baseURLRef.current = creds.baseURL;
+
+    const providerName = findModel(model)?.provider;
+
     invalidateAgent();
     setModelSelectorOpen(false);
+    setModelVersion((v) => v + 1); // Trigger status bar update
     setMessages((prev) => [
       ...prev,
-      makeSysMsg(`Model set to: ${model}${mode === 'session' ? ' (this session only)' : ''}`),
+      makeSysMsg(`Model set to: ${model} (provider: ${providerName ?? 'default'})${mode === 'session' ? ' (this session only)' : ''}`),
     ]);
   }, [invalidateAgent, setMessages]);
 
@@ -383,17 +420,18 @@ export function App({ options }: { options: TUIOptions }): React.ReactNode {
     const watcher = new ConfigWatcher(process.cwd());
     watcher.onChange((event) => {
       if (event.type === 'user') {
-        // Reload user config — update model/apiKey/baseURL refs
+        // Reload user config — resolve credentials per the new active model
         try {
           const config = JSON.parse(event.content) as Record<string, unknown>;
           const activeModel = (config['active_model'] as string) ?? (config['model'] as string);
-          if (activeModel && typeof activeModel === 'string') {
+          if (activeModel && typeof activeModel === 'string' && activeModel !== modelRef.current) {
             modelRef.current = activeModel;
+            // Resolve provider credentials for the new model instead of
+            // blindly applying top-level base_url/api_key overrides
+            const creds = resolveModelCredentials(activeModel);
+            if (creds.apiKey) apiKeyRef.current = creds.apiKey;
+            if (creds.baseURL) baseURLRef.current = creds.baseURL;
           }
-          const apiKey = config['api_key'] as string | undefined;
-          if (apiKey) apiKeyRef.current = apiKey;
-          const baseURL = config['base_url'] as string | undefined;
-          if (baseURL) baseURLRef.current = baseURL;
         } catch { /* ignore parse errors */ }
       }
       if (event.type === 'mcp') {
@@ -964,6 +1002,34 @@ export function App({ options }: { options: TUIOptions }): React.ReactNode {
       const normalizedCommittedText = committedStreamingText?.trim() ?? '';
       const finalAnswer = typeof result.finalAnswer === 'string' ? result.finalAnswer.trim() : '';
 
+      // Check if the result is a failure (e.g., model call failed)
+      if (!result.ok || result.status === 'failed') {
+        const errorContent: MessageContent = {
+          type: 'error',
+          message: finalAnswer || 'Model call failed',
+        };
+        const errMsg: Message = {
+          id: `msg_${Date.now()}`,
+          role: 'assistant',
+          content: [errorContent],
+          timestamp: Date.now(),
+        };
+        setMessages((prev) => [...prev, errMsg]);
+
+        // Emit debug event for failure
+        emitDebugEvent({
+          type: 'run_failed',
+          prompt,
+          elapsedMs: Date.now() - turnStartedAt,
+          error: finalAnswer,
+          stopReason: result.stopReason,
+          timestamp: Date.now(),
+        });
+
+        // Skip normal message processing
+        return;
+      }
+
       const content: MessageContent[] = [];
       let taskSnapshot: CodexTaskSnapshot | null = null;
 
@@ -1156,6 +1222,7 @@ export function App({ options }: { options: TUIOptions }): React.ReactNode {
           modifiedFilesRef,
           getAgent,
           invalidateAgent,
+          onModelChange: () => setModelVersion((v) => v + 1),
           maxTurns: options.maxTurns,
           outputStyleRef,
           permissionModeRef,
@@ -1208,7 +1275,7 @@ export function App({ options }: { options: TUIOptions }): React.ReactNode {
       elapsedMs,
       sessionId: sessionIdRef.current,
     });
-  }, [askQuestions, contextUsageVersion, cwd, elapsedMs, gitBranch, isLoading, messages.length, modeVersion, modelRef.current]);
+  }, [askQuestions, contextUsageVersion, cwd, elapsedMs, gitBranch, isLoading, messages.length, modeVersion, modelVersion]);
 
   const statusDetailLines = useMemo(() => {
     const lines: StatusDetailLine[] = [];
@@ -1355,6 +1422,8 @@ export function App({ options }: { options: TUIOptions }): React.ReactNode {
       permissionMode={permissionModeRef.current}
       onPermissionModeCycle={handlePermissionModeCycle}
       permissionRequest={permissionRequest}
+      fileEntries={fileEntries}
+      onFileSearch={handleFileSearch}
       welcome={<WelcomeScreen appName="Jarvis" subtitle="AI Coding Assistant" model={parseModelName(modelRef.current).cleanName} color="#00BFFF" tips={['Send a prompt to begin', '/help for commands', 'Ctrl+C twice exits']} />}
     />
   );

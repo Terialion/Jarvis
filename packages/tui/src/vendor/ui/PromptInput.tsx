@@ -1,6 +1,6 @@
 import { Box, type Key, Text, useInput } from "../ink-renderer/index.js";
 import type React from "react";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   lineOffset as computeLineOffset,
   cursorLineIndex,
@@ -8,6 +8,7 @@ import {
   wordBwd,
   wordFwd,
 } from "./utils/promptInputLogic";
+import type { FileEntry } from "./utils/fileScanner";
 
 type Command = { name: string; description: string };
 type VimMode = "NORMAL" | "INSERT";
@@ -28,7 +29,13 @@ type PromptInputProps = {
   history?: string[];
   vimMode?: boolean;
   multiline?: boolean;
+  /** File entries for @ file reference */
+  fileEntries?: FileEntry[];
+  /** Called when @ is triggered or query changes — parent should call scanFiles */
+  onFileSearch?: (query: string) => void;
 };
+
+const MAX_VISIBLE_FILE_ENTRIES = 15;
 
 export function PromptInput({
   value,
@@ -45,19 +52,31 @@ export function PromptInput({
   history = [],
   vimMode = false,
   multiline = false,
+  fileEntries = [],
+  onFileSearch,
 }: PromptInputProps): React.ReactNode {
   const [cursor, setCursor] = useState(0);
   const [historyIndex, setHistoryIndex] = useState(-1);
   const [suggestionIndex, setSuggestionIndex] = useState(0);
   const [showSuggestions, setShowSuggestions] = useState(false);
   const [selectedCommand, setSelectedCommand] = useState<string | null>(null);
+  const suppressSuggestionsRef = useRef(false);
   const MAX_VISIBLE_SUGGESTIONS = 8;
   const [vim, setVim] = useState<VimMode>("INSERT");
   const [pendingD, setPendingD] = useState(false);
   const isVimNormal = vimMode && vim === "NORMAL";
 
+  // @ file reference state
+  const [showFilePicker, setShowFilePicker] = useState(false);
+  const [filePickerIndex, setFilePickerIndex] = useState(0);
+  const [atPosition, setAtPosition] = useState(-1); // position of @ in input
+
   const suggestions = commands.length > 0 ? filterCommands(commands, value) : [];
   const hasSuggestions = showSuggestions && suggestions.length > 0;
+
+  // Compute @ file reference state
+  const atQuery = atPosition >= 0 ? value.slice(atPosition + 1, cursor) : "";
+  const hasFilePicker = showFilePicker && atPosition >= 0;
 
   const lines = multiline ? value.split("\n") : [value];
   const cursorLine = multiline ? cursorLineIndex(lines, cursor) : 0;
@@ -66,13 +85,38 @@ export function PromptInput({
 
   useEffect(() => {
     setCursor((prev) => Math.min(prev, value.length));
+    if (suppressSuggestionsRef.current) {
+      suppressSuggestionsRef.current = false;
+      return;
+    }
     setShowSuggestions(value.startsWith("/"));
     setSelectedCommand(null);
     setSuggestionIndex((prev) => {
       if (!value.startsWith("/")) return 0;
       return suggestions.length === 0 ? 0 : Math.min(prev, suggestions.length - 1);
     });
-  }, [suggestions.length, value]);
+
+    // Detect @ file reference: find the last @ before cursor that's not inside a word
+    const textBeforeCursor = value.slice(0, cursor);
+    const lastAtIndex = textBeforeCursor.lastIndexOf("@");
+    if (lastAtIndex >= 0) {
+      // @ should be at start or preceded by whitespace
+      const charBefore = lastAtIndex > 0 ? textBeforeCursor[lastAtIndex - 1] : " ";
+      if (lastAtIndex === 0 || charBefore === " " || charBefore === "\n") {
+        const query = textBeforeCursor.slice(lastAtIndex + 1);
+        // Don't trigger if there's a space right after @ with no query
+        if (!query.includes(" ") || query.trim().length > 0) {
+          setAtPosition(lastAtIndex);
+          setShowFilePicker(true);
+          setFilePickerIndex(0);
+          onFileSearch?.(query);
+          return;
+        }
+      }
+    }
+    setShowFilePicker(false);
+    setAtPosition(-1);
+  }, [suggestions.length, value, cursor, onFileSearch]);
 
   const updateValue = useCallback(
     (nv: string, nc?: number) => {
@@ -82,6 +126,7 @@ export function PromptInput({
       setShowSuggestions(nv.startsWith("/"));
       setSuggestionIndex(0);
       setSelectedCommand(null);
+      // Note: file picker state is managed by useEffect based on @ detection
     },
     [onChange],
   );
@@ -105,6 +150,7 @@ export function PromptInput({
       const ni = historyIndex + 1;
       setHistoryIndex(ni);
       const hv = history[ni]!;
+      suppressSuggestionsRef.current = true;
       onChange(hv);
       setCursor(hv.length);
     }
@@ -114,6 +160,7 @@ export function PromptInput({
       const ni = historyIndex - 1;
       setHistoryIndex(ni);
       const hv = history[ni]!;
+      suppressSuggestionsRef.current = true;
       onChange(hv);
       setCursor(hv.length);
     } else if (historyIndex === 0) {
@@ -122,6 +169,18 @@ export function PromptInput({
       setCursor(0);
     }
   };
+
+  // Filter file entries based on @ query
+  const filteredFileEntries = hasFilePicker
+    ? fileEntries.filter((entry) => {
+        const q = atQuery.toLowerCase();
+        if (!q) return true;
+        return (
+          entry.path.toLowerCase().includes(q) ||
+          entry.path.split("/").pop()!.toLowerCase().includes(q)
+        );
+      })
+    : [];
 
   useInput(
     (input: string, key: Key) => {
@@ -214,10 +273,26 @@ export function PromptInput({
           if (name) {
             const cv = `/${name}`;
             onCommandSelect?.(name);
+            suppressSuggestionsRef.current = true;
             onChange(cv);
             setCursor(cv.length);
             setShowSuggestions(false);
+            setSuggestionIndex(0);
             setSelectedCommand(null);
+          }
+          return;
+        }
+        // File picker: insert selected file path
+        if (hasFilePicker && filteredFileEntries.length > 0) {
+          const entry = filteredFileEntries[filePickerIndex];
+          if (entry) {
+            const beforeAt = value.slice(0, atPosition);
+            const afterCursor = value.slice(cursor);
+            const newValue = `${beforeAt}@${entry.path} ${afterCursor}`;
+            onChange(newValue);
+            setCursor(atPosition + 1 + entry.path.length + 1);
+            setShowFilePicker(false);
+            setAtPosition(-1);
           }
           return;
         }
@@ -235,6 +310,11 @@ export function PromptInput({
           setShowSuggestions(false);
           return;
         }
+        if (hasFilePicker) {
+          setShowFilePicker(false);
+          setAtPosition(-1);
+          return;
+        }
         if (vimMode) {
           setVim("NORMAL");
           return;
@@ -248,6 +328,20 @@ export function PromptInput({
       if (key.tab) {
         if (hasSuggestions) {
           updateValue(`/${suggestions[suggestionIndex]!.name} `);
+          return;
+        }
+        if (hasFilePicker && filteredFileEntries.length > 0) {
+          const entry = filteredFileEntries[filePickerIndex];
+          if (entry) {
+            const beforeAt = value.slice(0, atPosition);
+            const afterCursor = value.slice(cursor);
+            const newValue = `${beforeAt}@${entry.path} ${afterCursor}`;
+            onChange(newValue);
+            setCursor(atPosition + 1 + entry.path.length + 1);
+            setShowFilePicker(false);
+            setAtPosition(-1);
+          }
+          return;
         }
         return;
       }
@@ -260,6 +354,10 @@ export function PromptInput({
           });
           return;
         }
+        if (hasFilePicker) {
+          setFilePickerIndex((i) => (i > 0 ? i - 1 : filteredFileEntries.length - 1));
+          return;
+        }
         if (!moveLine(-1)) historyUp();
         return;
       }
@@ -270,6 +368,10 @@ export function PromptInput({
             setSelectedCommand(suggestions[next]?.name ?? null);
             return next;
           });
+          return;
+        }
+        if (hasFilePicker) {
+          setFilePickerIndex((i) => (i < filteredFileEntries.length - 1 ? i + 1 : 0));
           return;
         }
         if (!moveLine(1)) historyDown();
@@ -405,6 +507,45 @@ export function PromptInput({
                     {`/${cmd.name}`}
                   </Text>
                   <Text dimColor>{`  ${cmd.description.slice(0, 80)}`}</Text>
+                </Box>
+              );
+            })}
+            {hasBelow && (
+              <Text dimColor>{`  ↓ ${total - scrollOffset - max} more`}</Text>
+            )}
+          </Box>
+        );
+      })()}
+      {hasFilePicker && filteredFileEntries.length > 0 && (() => {
+        const total = filteredFileEntries.length;
+        const max = MAX_VISIBLE_FILE_ENTRIES;
+        let scrollOffset = 0;
+        if (total > max) {
+          const half = Math.floor(max / 2);
+          if (filePickerIndex <= half) scrollOffset = 0;
+          else if (filePickerIndex >= total - max + half) scrollOffset = total - max;
+          else scrollOffset = filePickerIndex - half;
+        }
+        const visible = filteredFileEntries.slice(scrollOffset, scrollOffset + max);
+        const hasAbove = scrollOffset > 0;
+        const hasBelow = scrollOffset + max < total;
+
+        return (
+          <Box flexDirection="column" marginLeft={2}>
+            <Text dimColor>  Files matching "@{atQuery}":</Text>
+            {hasAbove && (
+              <Text dimColor>{`  ↑ ${scrollOffset} more`}</Text>
+            )}
+            {visible.map((entry, vi) => {
+              const i = scrollOffset + vi;
+              const isFocused = i === filePickerIndex;
+              const icon = entry.isDir ? "📁 " : "📄 ";
+              return (
+                <Box key={entry.path}>
+                  <Text color={isFocused ? "cyan" : undefined}>{isFocused ? "❯" : " "}</Text>
+                  <Text color={isFocused ? "cyan" : undefined} bold={isFocused}>
+                    {`${icon}${entry.path}`}
+                  </Text>
                 </Box>
               );
             })}
