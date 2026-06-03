@@ -141,7 +141,7 @@ Common fields:
 
 | Field | Description | Default |
 |-------|-------------|---------|
-| `model` | Default model name | `deepseek-chat` |
+| `model` | Default model name | `deepseek-v4-pro` |
 | `api_key` | LLM API key | (required) |
 | `base_url` | Custom API base URL | `https://api.deepseek.com/v1` |
 | `reasoning_effort` | Reasoning intensity | `high` |
@@ -155,7 +155,7 @@ Common fields:
 | Variable | Description | Default |
 |----------|-------------|---------|
 | `JARVIS_LLM_API_KEY` | LLM API key | (required) |
-| `JARVIS_LLM_MODEL` | Model name | `deepseek-chat` |
+| `JARVIS_LLM_MODEL` | Model name | `deepseek-v4-pro` |
 | `JARVIS_LLM_BASE_URL` | Custom API base URL | `https://api.deepseek.com/v1` |
 | `JARVIS_LLM_TEMPERATURE` | Sampling temperature | — |
 | `JARVIS_LLM_MAX_TOKENS` | Max completion tokens | — |

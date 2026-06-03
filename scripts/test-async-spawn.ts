@@ -35,7 +35,7 @@ import { SubagentPool, AgentRegistry, buildSubagentSystemPrompt, toolWhitelistFo
 import { createTalkToTool, createReportTool, createListAgentsTool } from '../packages/subagents/src/tools/index.js';
 import type { TalkToDeps, ReportDeps, ListAgentsDeps } from '../packages/subagents/src/tools/index.js';
 
-const model = process.env['JARVIS_LLM_MODEL'] ?? 'deepseek-chat';
+const model = process.env['JARVIS_LLM_MODEL'] ?? 'deepseek-v4-pro';
 const apiKey = process.env['JARVIS_LLM_API_KEY'] ?? process.env['OPENAI_API_KEY'];
 const baseURL = process.env['JARVIS_LLM_BASE_URL'] ?? '';
 

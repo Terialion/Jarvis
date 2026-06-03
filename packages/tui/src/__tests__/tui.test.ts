@@ -25,10 +25,10 @@ describe('TUI module exports', () => {
 describe('TUIOptions type', () => {
   it('accepts minimal config', () => {
     const opts: import('../types.js').TUIOptions = {
-      model: 'deepseek-chat',
+      model: 'deepseek-v4-pro',
       maxTurns: 30,
     };
-    expect(opts.model).toBe('deepseek-chat');
+    expect(opts.model).toBe('deepseek-v4-pro');
     expect(opts.apiKey).toBeUndefined();
     expect(opts.baseURL).toBeUndefined();
     expect(opts.systemPrompt).toBeUndefined();

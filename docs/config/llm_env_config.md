@@ -6,7 +6,7 @@ Use these four variables as the primary configuration:
 
 ```env
 JARVIS_LLM_PROVIDER=deepseek
-JARVIS_LLM_MODEL=deepseek-chat
+JARVIS_LLM_MODEL=deepseek-v4-pro
 JARVIS_LLM_BASE_URL=https://api.deepseek.com
 JARVIS_LLM_API_KEY=your_api_key_here
 ```
@@ -66,7 +66,7 @@ When deprecated aliases are set, Jarvis emits warnings and includes them in diag
 
 ```env
 JARVIS_LLM_PROVIDER=deepseek
-JARVIS_LLM_MODEL=deepseek-chat
+JARVIS_LLM_MODEL=deepseek-v4-pro
 JARVIS_LLM_BASE_URL=https://api.deepseek.com
 JARVIS_LLM_API_KEY=sk-xxxx
 ```

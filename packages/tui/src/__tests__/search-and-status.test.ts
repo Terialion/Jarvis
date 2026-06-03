@@ -54,14 +54,14 @@ describe("buildStatusSegments", () => {
   it("prefers Question over Working when user input is requested", () => {
     const segments = buildStatusSegments({
       cwd: "D:/agent/Jarvis",
-      model: "deepseek-chat",
+      model: "deepseek-v4-pro",
       isLoading: true,
       hasQuestion: true,
       taskCounts: { pending: 0, in_progress: 0, completed: 0 },
       elapsedMs: 0,
     });
 
-    expect(segments[1]?.content).toBe("model deepseek-chat");
+    expect(segments[1]?.content).toBe("model deepseek-v4-pro");
     expect(segments[2]?.content).toBe("state Question");
   });
 });

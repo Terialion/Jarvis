@@ -271,7 +271,7 @@ This fallback handles the edge case where nothing was streamed (non-streaming mo
 Run: `cd D:/agent/Jarvis && npx tsc --noEmit -p packages/tui/tsconfig.json`
 Expected: Only 2 pre-existing errors
 
-Run one-shot test: `npx tsx --tsconfig packages/tui/tsconfig.json packages/cli/src/main.ts -p "你好" -m deepseek-chat --max-turns 2`
+Run one-shot test: `npx tsx --tsconfig packages/tui/tsconfig.json packages/cli/src/main.ts -p "你好" -m deepseek-v4-pro --max-turns 2`
 Expected: Normal response text
 
 - [ ] **Step 7: Commit**
