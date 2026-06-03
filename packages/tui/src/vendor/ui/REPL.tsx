@@ -206,8 +206,6 @@ export function REPL({
   // LogUpdate from emitting \n during streaming growth or triggering fullReset
   // (clearTerminal → CURSOR_HOME) when the spinner disappears, both of which
   // yank the user's scroll position.
-  const BOTTOM_PANE_ROWS = 5;
-  const messageMinHeight = Math.max(0, (termSize?.rows ?? 24) - BOTTOM_PANE_ROWS);
   const [inputValue, setInputValue] = useState("");
   const [showAgents, setShowAgents] = useState(false);
   // Auto-show agents panel when agents are active, hide when all done
@@ -436,7 +434,7 @@ export function REPL({
 
   return (
     <Box flexDirection="column" flexGrow={1}>
-      <Box flexDirection="column" minHeight={messageMinHeight}>
+      <Box flexDirection="column" minHeight={showWelcome ? 0 : Math.max(0, (termSize?.rows ?? 24) - 5)}>
         {showWelcome && <Box marginBottom={0}>{welcome}</Box>}
 
         {presentationMode === "codex" ? (
