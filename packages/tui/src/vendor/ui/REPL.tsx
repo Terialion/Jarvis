@@ -1,4 +1,4 @@
-import { Box, Text, type Key, useApp, useInput } from "../ink-renderer/index.js";
+import { Box, Text, type Key, useApp, useInput, ScrollBox } from "../ink-renderer/index.js";
 import { AgentsPanel, type AgentStatusEntry } from "./AgentsPanel";
 import type React from "react";
 import { useCallback, useMemo, useRef, useState } from "react";
@@ -365,6 +365,7 @@ export function REPL({
   const resolvedSegments = statusSegments ?? buildDefaultSegments(model);
   const showWelcome = welcome && messages.length === 0 && threadEvents.length === 0 && !isLoading;
   const showPermission = !!permissionRequest;
+  const messageAreaFlexGrow = showWelcome ? 0 : 1;
   const codexState = useMemo(
     () =>
       buildCodexTimelineState({
@@ -428,7 +429,7 @@ export function REPL({
 
   return (
     <Box flexDirection="column" flexGrow={1}>
-      <Box flexDirection="column">
+      <ScrollBox flexDirection="column" flexGrow={messageAreaFlexGrow} stickyScroll>
         {showWelcome && <Box marginBottom={0}>{welcome}</Box>}
 
         {presentationMode === "codex" ? (
@@ -461,7 +462,7 @@ export function REPL({
             )}
           </Box>
         )}
-      </Box>
+      </ScrollBox>
 
       <AgentsPanel
         agents={agents ?? []}
