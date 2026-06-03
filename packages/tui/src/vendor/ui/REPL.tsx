@@ -1,7 +1,7 @@
-import { Box, Text, type Key, useApp, useInput } from "../ink-renderer/index.js";
+import { Box, Text, type Key, useApp, useInput, TerminalSizeContext } from "../ink-renderer/index.js";
 import { AgentsPanel, type AgentStatusEntry } from "./AgentsPanel";
 import type React from "react";
-import { useCallback, useMemo, useRef, useState } from "react";
+import { useCallback, useContext, useMemo, useRef, useState } from "react";
 import { AskUserQuestion } from "./AskUserQuestion";
 import { PlanReview } from "./PlanReview";
 import type { AskQuestionDef } from "@jarvis/tools";
@@ -200,6 +200,14 @@ export function REPL({
   onHelpPopupClose,
 }: REPLProps): React.ReactNode {
   const { exit } = useApp();
+  const termSize = useContext(TerminalSizeContext);
+  // Reserve space for the bottom pane (prompt + divider + status + divider ≈ 5 rows)
+  // so the total Ink tree always fills the terminal viewport. This prevents
+  // LogUpdate from emitting \n during streaming growth or triggering fullReset
+  // (clearTerminal → CURSOR_HOME) when the spinner disappears, both of which
+  // yank the user's scroll position.
+  const BOTTOM_PANE_ROWS = 5;
+  const messageMinHeight = Math.max(0, (termSize?.rows ?? 24) - BOTTOM_PANE_ROWS);
   const [inputValue, setInputValue] = useState("");
   const [showAgents, setShowAgents] = useState(false);
   // Auto-show agents panel when agents are active, hide when all done
@@ -428,7 +436,7 @@ export function REPL({
 
   return (
     <Box flexDirection="column" flexGrow={1}>
-      <Box flexDirection="column">
+      <Box flexDirection="column" minHeight={messageMinHeight}>
         {showWelcome && <Box marginBottom={0}>{welcome}</Box>}
 
         {presentationMode === "codex" ? (
@@ -447,9 +455,9 @@ export function REPL({
           />
         )}
 
-        {presentationMode !== "codex" && isLoading && !streamingContent && !streamingThinking && (
-          <Box marginTop={messages.length > 0 ? 1 : 0}>
-            {spinner ?? (
+        <Box marginTop={messages.length > 0 ? 1 : 0}>
+          {presentationMode !== "codex" && isLoading && !streamingContent && !streamingThinking ? (
+            spinner ?? (
               <Spinner
                 tokenCount={spinnerTokenCount}
                 verb={spinnerVerb}
@@ -458,9 +466,14 @@ export function REPL({
                 running={spinnerRunning}
                 completed={spinnerCompleted}
               />
-            )}
-          </Box>
-        )}
+            )
+          ) : (
+            /* Height placeholder — keeps the Ink tree from shrinking when the
+               spinner disappears, preventing LogUpdate fullReset (clearTerminal
+               → CURSOR_HOME) that yanks scroll position to top. */
+            <Box height={1} />
+          )}
+        </Box>
       </Box>
 
       <AgentsPanel
