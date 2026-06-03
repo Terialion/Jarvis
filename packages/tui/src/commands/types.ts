@@ -39,6 +39,7 @@ export interface SlashCommandCtx {
   modifiedFilesRef: React.MutableRefObject<Set<string>>;
   getAgent: () => AgentLoop;
   invalidateAgent: () => void;
+  onModelChange?: () => void; // Callback to trigger re-render when model changes
   maxTurns: number;
   outputStyleRef: React.MutableRefObject<string>;
   permissionModeRef: React.MutableRefObject<string>;

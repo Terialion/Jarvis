@@ -13,7 +13,7 @@ export type EffortSelectorProps = {
 
 // ============================================================================
 const LABELS: Record<string, string> = {
-  auto: "Auto", minimal: "Minimal", low: "Low", medium: "Medium",
+  auto: "Auto", low: "Low", medium: "Medium",
   high: "High", xhigh: "X-High", max: "Max",
 };
 const labelOf = (e: string) => LABELS[e] ?? e;

@@ -34,7 +34,7 @@ function BootApp({ options }: { options: TUIOptions }) {
       <SetupScreen
         onComplete={(config: JarvisConfig) => {
           const resolved = resolveJarvisConfigDefaults(config);
-          const activeModel = resolved.active_model ?? resolved.model ?? 'deepseek-chat';
+          const activeModel = resolved.active_model ?? resolved.model ?? 'deepseek-v4-pro';
           const provider = resolveProviderForModel(activeModel, config);
           setRuntimeOptions((prev) => ({
             ...prev,

@@ -53,7 +53,6 @@ const DEFAULT_EFFORT_LEVELS = ["high", "medium", "low"] as const;
 
 const EFFORT_LABELS: Record<string, string> = {
   auto: "Auto",
-  minimal: "Minimal effort",
   low: "Low effort",
   medium: "Medium effort",
   high: "High effort (default)",

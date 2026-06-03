@@ -37,7 +37,7 @@ const FIELDS: SetupField[] = [
   { key: 'model', label: 'Model', section: 'Connection', help: 'Default model slug for new Jarvis sessions.' },
   { key: 'base_url', label: 'Base URL', section: 'Connection', help: 'API endpoint used for model requests.' },
   { key: 'api_key', label: 'API key', section: 'Connection', help: 'Credential stored in your user config.' },
-  { key: 'reasoning_effort', label: 'Reasoning effort', section: 'Behavior', help: 'auto, minimal, low, medium, high, xhigh, or max.' },
+  { key: 'reasoning_effort', label: 'Reasoning effort', section: 'Behavior', help: 'auto, low, medium, high, xhigh, or max.' },
   { key: 'max_turns', label: 'Max turns', section: 'Behavior', help: 'Default turn budget for each run.' },
   { key: 'permission_mode', label: 'Permission mode', section: 'Behavior', help: 'workspace_write, accept_edits, or bypass.' },
   { key: 'output_style', label: 'Output style', section: 'Behavior', help: 'default, concise, or verbose.' },
