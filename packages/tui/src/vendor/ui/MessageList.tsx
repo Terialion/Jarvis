@@ -401,51 +401,61 @@ function ErrorBlock({ content }: { content: Extract<MessageContent, { type: "err
   );
 }
 
-const STATUS_ICONS: Record<string, string> = {
-  pending: "o",
-  in_progress: "~",
-  completed: "x",
-};
+const STATUS_ICONS: Record<string, string> = { pending: "○", in_progress: "◌", completed: "✓" };
+const STATUS_COLORS: Record<string, string> = { pending: "#808080", in_progress: "#E6B450", completed: "#5FAF5F" };
 
 function TaskBlock({ content }: { content: Extract<MessageContent, { type: "task_result" }> }): React.ReactNode {
-  const summary = [
-    content.counts.pending > 0 ? `${content.counts.pending} pending` : null,
-    content.counts.in_progress > 0 ? `${content.counts.in_progress} in progress` : null,
-    content.counts.completed > 0 ? `${content.counts.completed} completed` : null,
-  ].filter(Boolean).join(" | ");
+  const { pending, in_progress, completed } = content.counts;
+  const parts: string[] = [];
+  if (pending > 0) parts.push(`${pending} pending`);
+  if (in_progress > 0) parts.push(`${in_progress} in progress`);
+  if (completed > 0) parts.push(`${completed} done`);
+  const header = parts.length > 0 ? `Tasks · ${parts.join(", ")}` : "Tasks";
 
   return (
-    <BlockShell title={summary ? `Tasks | ${summary}` : "Tasks"} backgroundColor={CARD_BG_SOFT}>
-      {content.tasks.map((task) => (
-        <Box key={task.id} marginLeft={2}>
-          <Text>{STATUS_ICONS[task.status] ?? " "}</Text>
-          <Text> </Text>
-          <Text dimColor={task.status === "completed"}>{task.subject}</Text>
-        </Box>
-      ))}
+    <BlockShell title={header} titleColor="#DA7756" backgroundColor={CARD_BG_SOFT}>
+      {content.tasks.map((task) => {
+        const icon = STATUS_ICONS[task.status] ?? " ";
+        const color = STATUS_COLORS[task.status] ?? "#808080";
+        return (
+          <Box key={task.id} marginLeft={2}>
+            <Text color={color}>{icon}</Text>
+            <Text> </Text>
+            <Text dimColor={task.status === "completed"}>{task.subject}</Text>
+            {task.status === "in_progress" && <Text color="#E6B450" dimColor> — active</Text>}
+          </Box>
+        );
+      })}
     </BlockShell>
   );
 }
 
 function PlanBlock({ content }: { content: Extract<MessageContent, { type: "plan" }> }): React.ReactNode {
   const steps = content.steps ?? [];
+  const header = `Plan · ${content.summary}`;
+
+  if (steps.length === 0) {
+    return <BlockShell title={header} titleColor="#DA7756" backgroundColor={CARD_BG_SOFT} />;
+  }
 
   return (
-    <BlockShell title={`Plan | ${content.summary}`} titleColor="#DA7756" backgroundColor={CARD_BG_SOFT}>
+    <BlockShell title={header} titleColor="#DA7756" backgroundColor={CARD_BG_SOFT}>
       {steps.map((step, index) => (
         <Box key={`plan-step-${index}`} marginLeft={2} flexDirection="column" marginBottom={1}>
           <Box>
-            <Text dimColor>{index + 1}. </Text>
-            <Text>{step.step}</Text>
+            <Text dimColor>{String(index + 1).padStart(2, " ")}. </Text>
+            <Text bold>{step.step}</Text>
           </Box>
           {step.files && step.files.length > 0 && (
-            <Box marginLeft={3}>
-              <Text dimColor>files | {step.files.join(", ")}</Text>
+            <Box marginLeft={4}>
+              <Text dimColor>files: </Text>
+              <Text>{step.files.join(", ")}</Text>
             </Box>
           )}
           {step.verification && (
-            <Box marginLeft={3}>
-              <Text dimColor>verify | {step.verification}</Text>
+            <Box marginLeft={4}>
+              <Text dimColor>verify: </Text>
+              <Text>{step.verification}</Text>
             </Box>
           )}
         </Box>
