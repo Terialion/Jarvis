@@ -1,4 +1,4 @@
-import { Box, ScrollBox, Text } from "../ink-renderer/index.js";
+import { Box, ScrollBox, Text, useInput } from "../ink-renderer/index.js";
 import type React from "react";
 import { useEffect, useMemo, useState } from "react";
 
@@ -84,27 +84,41 @@ function treeToRows(
 export type AgentsPanelProps = {
   agents: AgentStatusEntry[];
   visible: boolean;
+  focused?: boolean;
   onClose: () => void;
 };
 
-export function AgentsPanel({ agents, visible }: AgentsPanelProps): React.ReactNode {
-  if (!visible) return null;
-
+export function AgentsPanel({ agents, visible, focused }: AgentsPanelProps): React.ReactNode {
   const [selectedIndex, setSelectedIndex] = useState(0);
   const [now, setNow] = useState(Date.now());
 
+  const rows = useMemo(() => treeToRows(buildTree(agents), 0), [agents]);
+
+  // Handle j/k navigation when panel is focused
   useEffect(() => {
     const id = setInterval(() => setNow(Date.now()), 1000);
     return () => clearInterval(id);
   }, []);
-
-  const rows = useMemo(() => treeToRows(buildTree(agents), 0), [agents]);
 
   useEffect(() => {
     if (selectedIndex >= rows.length) {
       setSelectedIndex(Math.max(0, rows.length - 1));
     }
   }, [rows.length, selectedIndex]);
+
+  // Handle j/k navigation when panel is focused — isActive must stay true
+  // because toggling isActive changes hook count (React invariant violation)
+  useInput((_input, key) => {
+    if (!focused) return;
+    if (_input === "j" || key.downArrow) {
+      setSelectedIndex((i) => Math.min(i + 1, rows.length - 1));
+    }
+    if (_input === "k" || key.upArrow) {
+      setSelectedIndex((i) => Math.max(0, i - 1));
+    }
+  }, { isActive: true });
+
+  if (!visible) return null;
 
   const running = agents.filter((agent) => agent.status === "running").length;
   const completed = agents.filter((agent) => agent.status === "completed").length;
@@ -150,7 +164,9 @@ export function AgentsPanel({ agents, visible }: AgentsPanelProps): React.ReactN
         )}
         <Text dimColor>)</Text>
         <Text> </Text>
-        <Text dimColor>q close · j/k navigate</Text>
+        {focused
+          ? <Text color="#E6B450">j/k navigate · q Esc back to input</Text>
+          : <Text dimColor>Ctrl+G focus · q close</Text>}
       </Box>
 
       <ScrollBox flexDirection="column" marginTop={1} maxHeight={Math.min(rows.length + 1, 16)}>
@@ -161,7 +177,7 @@ export function AgentsPanel({ agents, visible }: AgentsPanelProps): React.ReactN
             depth > 0 ? (index < rows.length - 1 && rows[index + 1]?.depth >= depth ? "├─ " : "└─ ") : "";
           const selected = index === selectedIndex;
           const elapsed = node.agent.startedAt ? now - node.agent.startedAt : undefined;
-          const taskPreview = compactTask(node.agent.task, 40);
+          const taskPreview = compactTask(node.agent.task, 64);
           const toolsInfo = node.agent.toolCount ? ` · ${node.agent.toolCount}t` : "";
 
           return (
@@ -170,14 +186,14 @@ export function AgentsPanel({ agents, visible }: AgentsPanelProps): React.ReactN
               <Text color={color}>{glyph}</Text>
               <Text> {indent}{connector}</Text>
               <Text bold={selected} color={selected ? "#E6B450" : undefined}>
-                {node.agent.agentId}
+                {taskPreview || node.agent.agentId}
               </Text>
               <Text dimColor> ({node.agent.role})</Text>
               {elapsed && node.agent.status === "running" && (
                 <Text dimColor> {formatElapsed(elapsed)}</Text>
               )}
               <Text dimColor>{toolsInfo}</Text>
-              {taskPreview && <Text dimColor> - {taskPreview}</Text>}
+              {taskPreview && <Text dimColor> · {node.agent.agentId.slice(-8)}</Text>}
             </Box>
           );
         })}

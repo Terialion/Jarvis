@@ -12,6 +12,7 @@ import { AgentMailbox } from '@jarvis/agent';
 export class SubagentPool {
   private agents: Map<string, SubagentHandle> = new Map();
   private mailboxes: Map<string, AgentMailbox> = new Map();
+  private configs: Map<string, SubagentConfig> = new Map();
   private runner: ((config: SubagentConfig, mailbox: AgentMailbox) => Promise<SubagentResult>) | null = null;
   private notifications: Array<{ agentId: string; status: SubagentStatus; result?: SubagentResult }> = [];
   private activeCount = 0;
@@ -110,6 +111,7 @@ export class SubagentPool {
     };
 
     this.agents.set(config.agentId, handle);
+    this.configs.set(config.agentId, config);
 
     // Create a dedicated mailbox for this subagent
     const mailbox = new AgentMailbox();
@@ -264,7 +266,7 @@ export class SubagentPool {
   }
 
   /** External callback for TUI agent store updates. */
-  onStatusUpdate?: (entry: { agentId: string; status: string; role?: string; depth?: number; task?: string }) => void;
+  onStatusUpdate?: (entry: { agentId: string; status: string; role?: string; depth?: number; task?: string; parentId?: string }) => void;
 
   private _updateStatus(
     agentId: string,
@@ -275,7 +277,15 @@ export class SubagentPool {
     if (handle) {
       (handle as { status: SubagentStatus }).status = status;
     }
+    const cfg = this.configs.get(agentId);
     this.notifications.push({ agentId, status, result });
-    this.onStatusUpdate?.({ agentId, status });
+    this.onStatusUpdate?.({
+      agentId,
+      status,
+      role: cfg?.agentType,
+      depth: cfg?.depth,
+      task: cfg?.task,
+      parentId: cfg?.parentId,
+    });
   }
 }

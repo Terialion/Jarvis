@@ -14,6 +14,7 @@ import type { ToolRegistry, ToolRuntime } from '@jarvis/tools';
 import type { SkillRegistry, SkillExecutor } from '@jarvis/skills';
 import type { HookRegistry } from '@jarvis/hooks';
 import { LLMProvider, type ModelConfig, type LLMMessage, FakeModelClient } from './model.js';
+import { resolveContextWindow } from './model-catalog.js';
 import type { FallbackLLMProvider } from './model-fallback.js';
 import { TokenTracker } from './token-tracker.js';
 import { AgentEventBus } from './events.js';
@@ -251,9 +252,9 @@ export class AgentLoop {
       maxSkills: config.maxSkills ?? 5,
       projectRoot: config.projectRoot ?? process.cwd(),
       permissionMode: config.permissionMode ?? 'workspace_write',
-      maxSteps: config.maxSteps ?? 20,
-      timeoutS: config.timeoutS ?? 300,
-      toolTimeoutS: config.toolTimeoutS ?? 60,
+      maxSteps: config.maxSteps ?? 50,
+      timeoutS: config.timeoutS ?? 3600,
+      toolTimeoutS: config.toolTimeoutS ?? 300,
       autoApprove: config.autoApprove ?? false,
       tools: config.tools,
       toolRuntime: config.toolRuntime,
@@ -291,14 +292,18 @@ export class AgentLoop {
 
     this.modelInfo = this._getModelInfo();
 
-    this.contextBuilder = new ContextBuilder(config.context, {
-      sessionStore: config.sessionStore,
-      memoryStore: config.memoryStore,
-      skillRegistry: config.skillRegistry as unknown as SkillRegistryLike,
-      contextStore: config.contextStore,
-      modelInfo: this.modelInfo as unknown as Record<string, unknown>,
-      permissionMode: this.permissionMode,
-    });
+    const contextWindow = resolveContextWindow(this.config.model.model);
+    this.contextBuilder = new ContextBuilder(
+      { maxTokens: contextWindow, ...config.context },
+      {
+        sessionStore: config.sessionStore,
+        memoryStore: config.memoryStore,
+        skillRegistry: config.skillRegistry as unknown as SkillRegistryLike,
+        contextStore: config.contextStore,
+        modelInfo: this.modelInfo as unknown as Record<string, unknown>,
+        permissionMode: this.permissionMode,
+      },
+    );
 
     this.promptBuilder = new PromptBuilder();
     this.summaryComposer = new ResponseComposer();
@@ -845,7 +850,7 @@ export class AgentLoop {
     // Failure tracking + convergence state machine
     // maxRepeat=25: each tool can be called up to 25 times per turn.
     // Bumped from 3 — multi-URL reads and large refactors need many calls.
-    const failureTracker = new FailureTracker(5, 4, 25);
+    const failureTracker = new FailureTracker(10, 8, 25);
     let noProgressCount = 0;
     let lastProgressMarker = '';
     const seenCalls = new Map<string, Array<{ argsFrozen: string; result: Record<string, unknown> }>>();
@@ -944,24 +949,23 @@ export class AgentLoop {
           }
         }
 
-        // Context window usage
-        const contextUsed = this.contextBuilder.estimateMessageTokens(
-          messages.map((m) => ({ role: m.role as ChatMessage['role'], content: m.content, messageId: '' })),
-        );
-        const contextPct = contextUsed / this.config.context.maxTokens!;
-        this._emit(events, turnId, 'context_window_usage', {
-          used_tokens: contextUsed,
-          context_window: this.config.context.maxTokens!,
-          usage_pct: Math.round(contextPct * 1000) / 1000,
-          message_count: messages.length,
-        });
-
+        // Context window usage — estimate full context (messages + tools)
         const currentToolSpecs = getToolSpecs();
         const contextBreakdown = this._estimateContextBreakdown(
           messages as LLMMessage[],
           currentToolSpecs,
           this.config.context.maxTokens!,
         );
+        const contextUsed = (contextBreakdown.estimated_total_tokens as number) ?? 0;
+        const contextPct = this.config.context.maxTokens! > 0
+          ? contextUsed / this.config.context.maxTokens!
+          : 0;
+        this._emit(events, turnId, 'context_window_usage', {
+          used_tokens: contextUsed,
+          context_window: this.config.context.maxTokens!,
+          usage_pct: Math.round(contextPct * 1000) / 1000,
+          message_count: messages.length,
+        });
         this._emit(events, turnId, 'context_usage_breakdown', contextBreakdown);
 
         // Model call with retry
@@ -1164,6 +1168,7 @@ export class AgentLoop {
         let anyOkThisStep = false;
         let requestForcedSynthesis = false;
         let newEvidenceThisStep = false;
+        let lastConsecutiveFailureReason = '';
 
         // ── Phase 1: Pre-filter ──
         // Run fast checks (failure tracker, dedup) to determine which calls need execution.
@@ -1376,6 +1381,7 @@ export class AgentLoop {
               stopReason = 'consecutive_failures';
               outputType = 'error';
               finalAnswer = shouldStop.reason;
+              lastConsecutiveFailureReason = shouldStop.reason;
               break;
             }
 
@@ -1422,8 +1428,22 @@ export class AgentLoop {
           continue;
         }
 
-        if (['approval_required', 'timeout', 'consecutive_failures', 'consecutive_rejections'].includes(stopReason)) {
+        if (['approval_required', 'timeout', 'consecutive_rejections'].includes(stopReason)) {
           break;
+        }
+        // consecutive_failures: let the model see errors and retry with different approach
+        if (stopReason === 'consecutive_failures') {
+          this._emit(events, turnId, 'turn:warning', {
+            warning: `Multiple tools failed: ${lastConsecutiveFailureReason || 'check results below'}`,
+          });
+          messages.push({
+            role: 'user',
+            content:
+              'Multiple tools above failed. Read the error messages carefully and try a different approach — ' +
+              'use different commands, different paths, or a different tool entirely.',
+          });
+          stopReason = ''; // clear so the loop continues
+          continue;
         }
 
         // Mid-turn compaction with safety margin
@@ -2099,8 +2119,25 @@ export class AgentLoop {
               messages,
               toolSpecs,
             );
-        if (chatResp.usage && this.config.tokenTracker) {
-          this.config.tokenTracker.record(chatResp.usage);
+        if (this.config.tokenTracker) {
+          if (chatResp.usage) {
+            this.config.tokenTracker.record(chatResp.usage);
+          } else {
+            // Fallback: streaming may not return usage for some providers
+            // (DeepSeek/Qwen via proxies). Estimate from context + output.
+            const estimatedInput = this.contextBuilder.estimateMessageTokens(
+              messages.map((m) => ({ role: m.role as ChatMessage['role'], content: m.content, messageId: '' })),
+            );
+            const estimatedOutput = Math.ceil(
+              ((chatResp.content?.length ?? 0) + (chatResp.reasoningSummary?.length ?? 0)) / 4,
+            );
+            this.config.tokenTracker.record({
+              promptTokens: estimatedInput,
+              completionTokens: estimatedOutput,
+              totalTokens: estimatedInput + estimatedOutput,
+              cachedTokens: 0,
+            });
+          }
         }
         if (streamingReasoningItemId && !streamingReasoningCompleted) {
           this.emitThreadEvent({

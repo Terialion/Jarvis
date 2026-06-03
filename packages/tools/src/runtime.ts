@@ -63,7 +63,7 @@ interface PermissionConfig {
 }
 
 const DEFAULT_RISK_MAP: Record<string, ToolRiskLevel> = {
-  bash: 'command',
+  bash: 'caution',
   read_file: 'read_only',
   write_file: 'write_approval_required',
   edit_file: 'write_approval_required',

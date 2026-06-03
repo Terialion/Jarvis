@@ -31,6 +31,8 @@ export interface SubagentConfig {
   forkContext?: boolean;
   /** Parent agent's messages for fork mode */
   parentMessages?: Array<{ role: string; content: string }>;
+  /** Parent agent ID (for tree display) */
+  parentId?: string;
 }
 
 export interface SubagentHandle {

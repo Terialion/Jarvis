@@ -1360,7 +1360,7 @@ describe('tool schema routing readiness', () => {
     const knownAsync = new Set([
       'bash', 'read_file', 'write_file', 'edit_file', 'glob', 'grep',
       'web_search', 'web_fetch', 'ask_user_question', 'notebook_edit',
-      'enter_worktree', 'exit_worktree',
+      'enter_worktree', 'exit_worktree', 'exit_plan_mode',
     ]);
     for (const tool of asyncTools) {
       expect(knownAsync.has(tool.name)).toBe(true);

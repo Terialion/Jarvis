@@ -271,12 +271,14 @@ describe('PermissionManager', () => {
       expect(pm.check('web_search').needsApproval).toBe(true);
     });
 
-    it('accept_edits mode auto-approves read + write, flags bash/network', () => {
+    it('accept_edits mode auto-approves read + write + caution, flags network', () => {
       pm.setMode('accept_edits');
       expect(pm.check('read_file').allowed).toBe(true);
       expect(pm.check('write_file').allowed).toBe(true);
       expect(pm.check('edit_file').allowed).toBe(true);
-      expect(pm.check('bash').needsApproval).toBe(true);
+      // bash is now 'caution' risk — auto-approved in auto-edit mode;
+      // the ApprovalGate (sandbox policy) still filters dangerous commands
+      expect(pm.check('bash').allowed).toBe(true);
       expect(pm.check('web_search').needsApproval).toBe(true);
     });
   });
@@ -407,9 +409,9 @@ describe('PermissionManager', () => {
       // Write: auto-approved
       expect(r.write_file.allowed).toBe(true);
       expect(r.edit_file.allowed).toBe(true);
-      // Bash: needs approval
-      expect(r.bash.allowed).toBe(false);
-      expect(r.bash.needsApproval).toBe(true);
+      // Bash: auto-approved in auto-edit (risk is 'caution');
+      // ApprovalGate (sandbox policy) still filters dangerous commands
+      expect(r.bash.allowed).toBe(true);
       // Network: needs approval
       expect(r.web_search.allowed).toBe(false);
       expect(r.web_search.needsApproval).toBe(true);

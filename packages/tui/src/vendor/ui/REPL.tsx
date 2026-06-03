@@ -1,8 +1,9 @@
-import { Box, Text, type Key, useApp, useInput } from "../ink-renderer/index.js";
+import { Box, Text, type Key, useApp, useInput, ScrollBox } from "../ink-renderer/index.js";
 import { AgentsPanel, type AgentStatusEntry } from "./AgentsPanel";
 import type React from "react";
 import { useCallback, useMemo, useRef, useState } from "react";
 import { AskUserQuestion } from "./AskUserQuestion";
+import { PlanReview } from "./PlanReview";
 import type { AskQuestionDef } from "@jarvis/tools";
 import type { ThreadEvent, ModelInfo } from "@jarvis/agent";
 import { CodexTimeline } from "../../presentation/CodexTimeline.js";
@@ -42,6 +43,7 @@ type PermissionRequestState = {
   toolName: string;
   description: string;
   details?: string;
+  patternLabel?: string;
   preview?: React.ReactNode;
   onDecision: (action: PermissionAction) => void;
 };
@@ -72,6 +74,13 @@ export type REPLProps = {
 
   permissionRequest?: PermissionRequestState;
   askUserQuestion?: AskUserQuestionState;
+
+  // Plan review (CC-style exit_plan_mode popup)
+  planReview?: import("@jarvis/tools").PlanReviewRequest | null;
+  planReviewIndex?: number;
+  onPlanReviewNavigate?: (dir: number) => void;
+  onPlanReviewSubmit?: () => void;
+  onPlanReviewCancel?: () => void;
 
   // Permission mode cycling (Shift+Tab)
   permissionMode?: string;
@@ -121,6 +130,10 @@ export type REPLProps = {
 
   // Agent panel (Ctrl+A)
   agents?: AgentStatusEntry[];
+
+  // @ file reference
+  fileEntries?: import("./utils/fileScanner").FileEntry[];
+  onFileSearch?: (query: string) => void;
 };
 
 export function REPL({
@@ -139,6 +152,11 @@ export function REPL({
   welcome,
   permissionRequest,
   askUserQuestion,
+  planReview,
+  planReviewIndex = 0,
+  onPlanReviewNavigate,
+  onPlanReviewSubmit,
+  onPlanReviewCancel,
   permissionMode,
   onPermissionModeCycle,
   commands = [],
@@ -158,6 +176,9 @@ export function REPL({
   spinnerRunning,
   spinnerCompleted,
   agents,
+  // @ file reference
+  fileEntries,
+  onFileSearch,
   // Model selector
   modelSelectorOpen = false,
   modelSelectorCurrentModel = "",
@@ -181,6 +202,10 @@ export function REPL({
   const { exit } = useApp();
   const [inputValue, setInputValue] = useState("");
   const [showAgents, setShowAgents] = useState(false);
+  // Auto-show agents panel when agents are active, hide when all done
+  const agentsActive = (agents?.length ?? 0) > 0;
+  const agentsPanelVisible = showAgents || agentsActive;
+  const [agentsFocused, setAgentsFocused] = useState(false);
   const [internalHistory, setInternalHistory] = useState<string[]>([]);
   const [searchOpen, setSearchOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
@@ -252,7 +277,37 @@ export function REPL({
 
   useInput(
     (_input: string, key: Key) => {
-      // Ctrl+C: first press interrupts, second within 1s exits (like Codex)
+      // Agents panel focus mode — route keys to panel
+      if (agentsFocused && agentsPanelVisible) {
+        if (_input === "q" || key.escape || (key.ctrl && _input === "g")) {
+          setAgentsFocused(false);
+          return;
+        }
+        // j/up/down/k are handled by the AgentsPanel internally via useInput
+        // The AgentsPanel component listens for these keys when focused
+        return;
+      }
+
+      // Ctrl+G: toggle agents panel focus when agents are visible
+      if (key.ctrl && _input === "g") {
+        if (agentsPanelVisible) {
+          setAgentsFocused((prev) => !prev);
+        } else {
+          setShowAgents((prev) => !prev);
+        }
+        return;
+      }
+
+      // Plan review: j/k/enter/escape navigation
+      if (planReview) {
+        if (_input === "j" || key.downArrow) { onPlanReviewNavigate?.(1); return; }
+        if (_input === "k" || key.upArrow) { onPlanReviewNavigate?.(-1); return; }
+        if (key.return) { onPlanReviewSubmit?.(); return; }
+        if (key.escape) { onPlanReviewCancel?.(); return; }
+        return;
+      }
+
+      // Ctrl+C: first press interrupts/clears, second within 1s exits (like Codex)
       if (key.ctrl && _input === "c") {
         const now = Date.now();
         if (lastCtrlCPressRef.current > 0 && now - lastCtrlCPressRef.current < 1000) {
@@ -263,6 +318,9 @@ export function REPL({
         lastCtrlCPressRef.current = now;
         if (isLoading && onInterrupt) {
           onInterrupt();
+        } else {
+          // When not loading, clear the input so user can type a new command
+          setInputValue("");
         }
         return;
       }
@@ -291,9 +349,7 @@ export function REPL({
           setThinkingExpanded((prev) => !prev);
         }
       }
-      if (key.ctrl && _input === "g") {
-        setShowAgents((prev) => !prev);
-      }
+      // Ctrl+G handled earlier for focus/panel toggle — skip here
       if (key.ctrl && _input === "o") {
         setToolResultsExpanded((prev) => !prev);
       }
@@ -373,14 +429,8 @@ export function REPL({
 
   return (
     <Box flexDirection="column" flexGrow={1}>
-      <Box flexDirection="column" flexGrow={messageAreaFlexGrow}>
+      <ScrollBox flexDirection="column" flexGrow={messageAreaFlexGrow} stickyScroll>
         {showWelcome && <Box marginBottom={0}>{welcome}</Box>}
-
-        <AgentsPanel
-          agents={agents ?? []}
-          visible={showAgents}
-          onClose={() => setShowAgents(false)}
-        />
 
         {presentationMode === "codex" ? (
           <CodexTimeline state={codexState} search={codexSearchState} detailsExpanded={toolResultsExpanded} />
@@ -412,7 +462,14 @@ export function REPL({
             )}
           </Box>
         )}
-      </Box>
+      </ScrollBox>
+
+      <AgentsPanel
+        agents={agents ?? []}
+        visible={agentsPanelVisible}
+        focused={agentsFocused}
+        onClose={() => { setShowAgents(false); setAgentsFocused(false); }}
+      />
 
       {searchOpen && (
         <SearchOverlay
@@ -458,6 +515,13 @@ export function REPL({
         />
       )}
 
+      {planReview && (
+        <PlanReview
+          plan={planReview}
+          selectedIndex={planReviewIndex}
+        />
+      )}
+
       <Divider />
 
       {askUserQuestion ? (
@@ -471,6 +535,7 @@ export function REPL({
           toolName={permissionRequest.toolName}
           description={permissionRequest.description}
           details={permissionRequest.details}
+          patternLabel={permissionRequest.patternLabel}
           preview={permissionRequest.preview}
           onDecision={permissionRequest.onDecision}
         />
@@ -485,6 +550,8 @@ export function REPL({
           isLoading={isLoading}
           commands={promptCommands}
           history={history}
+          fileEntries={fileEntries}
+          onFileSearch={onFileSearch}
         />
       )}
 

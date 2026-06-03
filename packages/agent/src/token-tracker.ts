@@ -119,12 +119,19 @@ export class TokenTracker {
     return this._turnCount;
   }
 
-  /** Percentage of context window remaining (based on cumulative tokens). */
+  /** Percentage of context window remaining (based on last turn's input tokens,
+   *  matching CC's formula: context = latest response input_tokens). */
   get contextPercentRemaining(): number {
     if (this._contextWindow <= 0) return 100;
-    const used = this.totalTokens;
+    if (!this._turnCount) return 100; // no data yet → assume full remaining
+    const used = this._lastTurnInput;
     const pct = Math.round(((this._contextWindow - used) / this._contextWindow) * 100);
     return Math.max(0, Math.min(100, pct));
+  }
+
+  /** Input tokens from the most recent turn — actual current context size (matches CC). */
+  get currentContextTokens(): number {
+    return this._lastTurnInput;
   }
 
   /** Snapshot for display. */

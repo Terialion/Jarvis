@@ -3,6 +3,7 @@
 // ============================================================================
 
 import type { ToolHandler, ToolContext } from '@jarvis/tools';
+import { getBackgroundTaskRegistry } from '@jarvis/tools';
 import type { AgentMailbox } from '@jarvis/agent';
 import type { SubagentPool } from '../pool.js';
 import type { AgentRegistry, AgentIdentity } from '../registry.js';
@@ -51,6 +52,25 @@ export function createSpawnAgentHandler(deps: SpawnAgentDeps): ToolHandler {
       agentType,
       task: `## ${description}\n\n${prompt}`,
       depth: childDepth,
+      parentId: deps.parentId,
+    });
+
+    // Register in background task registry so task_output can find it
+    const bgTaskId = getBackgroundTaskRegistry().register({
+      type: 'agent',
+      status: 'running',
+      description: `${agentType}: ${description}`,
+      promise: new Promise((resolve) => {
+        handle.completion.then((result) => {
+          resolve({
+            result: result.answer || result.error || '(no output)',
+            error: result.status === 'failed' ? result.error : undefined,
+          });
+        }).catch((err) => {
+          resolve({ error: err instanceof Error ? err.message : String(err) });
+        });
+      }),
+      cancel: () => { handle.cancel?.(); },
     });
 
     // Return immediately — results will flow via mailbox notifications
@@ -69,6 +89,7 @@ export function createSpawnAgentHandler(deps: SpawnAgentDeps): ToolHandler {
 
     return JSON.stringify({
       agentId,
+      taskId: bgTaskId,
       status: 'spawned',
       depth: childDepth,
       message: `Agent "${agentId}" spawned for: ${description}`,

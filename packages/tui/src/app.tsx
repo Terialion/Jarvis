@@ -9,12 +9,13 @@ import type { Message, MessageContent } from './vendor/ui/MessageList.js';
 import type { StatusLineSegment } from './vendor/ui/StatusLine.js';
 import { WelcomeScreen } from './vendor/ui/WelcomeScreen.js';
 import { loadSettings, saveSettings, type UserSettings } from './settings-store.js';
-import { AgentLoop, AgentEventBus, TokenTracker, formatTokensCompact, estimateTokens, validateContextWindow, getAllModels, parseModelName, findModel, buildSystemPrompt, createMemorySearchHandler, createMemoryGetHandler, type ThreadEvent, type ModelInfo } from '@jarvis/agent';
+import { AgentLoop, AgentEventBus, TokenTracker, formatTokensCompact, estimateTokens, validateContextWindow, resolveContextWindow, getAllModels, parseModelName, findModel, buildSystemPrompt, createMemorySearchHandler, createMemoryGetHandler, type ThreadEvent, type ModelInfo } from '@jarvis/agent';
 import {
   ToolRegistry,
   allBuiltinTools,
   createToolRuntime,
   setAskUserQuestionBridge,
+  setPlanReviewBridge,
   createSkillLoadTool,
   createSkillTool,
   createAgentTool,
@@ -30,7 +31,8 @@ import {
   tryCreateTavilySearch,
   tryCreateTavilyFetch,
 } from '@jarvis/tools';
-import type { AskQuestionDef } from '@jarvis/tools';
+import type { AskQuestionDef, PlanReviewRequest, PlanReviewCallback } from '@jarvis/tools';
+import type { PlanReviewDecision } from './vendor/ui/PlanReview';
 import { SkillRegistry, SkillExecutor } from '@jarvis/skills';
 import { SessionStore, MarkdownMemoryStore } from '@jarvis/store';
 import { SubagentPool, toolWhitelistForType, type SubagentConfig } from '@jarvis/subagents';
@@ -54,6 +56,7 @@ import { decodeHtmlEntities } from './vendor/ui/utils/markdown.js';
 import { loadJarvisConfig } from '@jarvis/shared';
 import { resolveModelCredentials } from './utils/credentials.js';
 import { connectMcpServers } from '@jarvis/mcp';
+import { getCronScheduler } from '@jarvis/tools';
 
 export function App({ options }: { options: TUIOptions }): React.ReactNode {
   const [messages, setMessages] = useState<Message[]>([]);
@@ -116,6 +119,9 @@ export function App({ options }: { options: TUIOptions }): React.ReactNode {
       if (Array.isArray(data)) historyRef2.current = data.slice(0, 500);
     } catch { /* corrupt file, start fresh */ }
   }
+  const compactedCountRef = useRef(0);
+  const peakContextRef = useRef(0);
+  const [compactedVersion, setCompactedVersion] = useState(0);
   const [historyVersion, setHistoryVersion] = useState(0);
   const handleHistoryAdd = useCallback((entry: string) => {
     // Dedup consecutive duplicates
@@ -132,6 +138,10 @@ export function App({ options }: { options: TUIOptions }): React.ReactNode {
   const [askQuestions, setAskQuestions] = useState<AskQuestionDef[] | null>(null);
   const askResolveRef = useRef<((answers: Record<string, string>) => void) | null>(null);
   const askRejectRef = useRef<((err: Error) => void) | null>(null);
+  // Plan review bridge state (CC-style interactive plan approval)
+  const [planReview, setPlanReview] = useState<PlanReviewRequest | null>(null);
+  const [planReviewIndex, setPlanReviewIndex] = useState(0);
+  const planReviewResolveRef = useRef<((choice: PlanReviewDecision) => void) | null>(null);
   const [streamingContent, setStreamingContent] = useState<string | null>(null);
   const [streamingThinking, setStreamingThinking] = useState<string | null>(null);
   const [elapsedMs, setElapsedMs] = useState(0);
@@ -203,6 +213,9 @@ export function App({ options }: { options: TUIOptions }): React.ReactNode {
     liveContextUsageRef.current = null;
     poolRef.current = null;
     eventBusRef.current = null;
+    compactedCountRef.current = 0;
+    peakContextRef.current = 0;
+    setCompactedVersion((v) => v + 1);
   }, []);
 
   // Model selector handlers
@@ -307,8 +320,9 @@ export function App({ options }: { options: TUIOptions }): React.ReactNode {
     permissionModeRef.current = next;
     saveSettings({ permission_mode: next as UserSettings['permission_mode'] });
     setModeVersion((v) => v + 1);
-    invalidateAgent();
-  }, [invalidateAgent]);
+    // Update the active PermissionManager without rebuilding the agent
+    permManagerRef.current?.setMode(next);
+  }, []);
 
   const pushSpinnerDetail = useCallback((line: string | null) => {
     if (!line) return;
@@ -366,6 +380,18 @@ export function App({ options }: { options: TUIOptions }): React.ReactNode {
       });
     });
     return () => setAskUserQuestionBridge(null);
+  }, []);
+
+  // Set up the PlanReview bridge for exit_plan_mode (CC-style)
+  useEffect(() => {
+    setPlanReviewBridge((plan) => {
+      return new Promise<PlanReviewDecision>((resolve) => {
+        planReviewResolveRef.current = resolve;
+        setPlanReview(plan);
+        setPlanReviewIndex(0);
+      });
+    });
+    return () => setPlanReviewBridge(null);
   }, []);
 
   // Initialize session store and restore previous session for this directory
@@ -469,7 +495,12 @@ export function App({ options }: { options: TUIOptions }): React.ReactNode {
           }
         });
       };
-      for (const eventName of ['turn:start', 'skills:matched', 'context:compressing', 'llm:request', 'llm:response', 'tool:executing', 'tool:result', 'turn:warning', 'turn:complete']) {
+      eventBus.on('context:compressing', () => {
+        compactedCountRef.current++;
+        peakContextRef.current = 0; // reset peak — compaction freed space
+        setCompactedVersion((v) => v + 1);
+      });
+      for (const eventName of ['turn:start', 'skills:matched', 'llm:request', 'llm:response', 'tool:executing', 'tool:result', 'turn:warning', 'turn:complete']) {
         bindProgressEvent(eventName);
       }
       eventBus.on('context_window_usage', (payload) => {
@@ -477,17 +508,22 @@ export function App({ options }: { options: TUIOptions }): React.ReactNode {
         const window = Number(payload.context_window ?? tokenTrackerRef.current?.contextWindow ?? 200_000);
         const pct = Number(payload.usage_pct ?? (window > 0 ? used / window : 0));
         const messageCount = Number(payload.message_count ?? 0);
+        // Track peak usage so the bar doesn't oscillate between turns
+        // (a new turn starts with smaller context before tool results accumulate)
+        const peakUsed = Math.max(used, peakContextRef.current);
+        const peakPct = window > 0 ? peakUsed / window : 0;
+        peakContextRef.current = peakUsed;
         const prev = liveContextUsageRef.current;
         liveContextUsageRef.current = {
           ...(prev ?? {
             contextWindow: window,
-            usedTokens: used,
-            usagePct: pct,
+            usedTokens: peakUsed,
+            usagePct: peakPct,
             messageCount,
           }),
           contextWindow: window,
-          usedTokens: used,
-          usagePct: pct,
+          usedTokens: peakUsed,
+          usagePct: peakPct,
           messageCount,
         };
         setContextUsageVersion((v) => v + 1);
@@ -650,14 +686,15 @@ export function App({ options }: { options: TUIOptions }): React.ReactNode {
         // Wire pool status updates to agent store for TUI panel
         poolRef.current.onStatusUpdate = (entry) => {
           import('./agent-store.js').then(({ agentStore }) => {
+            const existing = agentStore.getSnapshot().find((a) => a.agentId === entry.agentId);
             agentStore.upsert({
               agentId: entry.agentId,
               status: entry.status,
-              role: entry.role ?? 'unknown',
-              depth: entry.depth ?? 0,
-              parentId: null,
-              task: entry.task,
-              startedAt: Date.now(),
+              role: entry.role ?? existing?.role ?? 'unknown',
+              depth: entry.depth ?? existing?.depth ?? 0,
+              parentId: entry.parentId ?? existing?.parentId ?? null,
+              task: entry.task ?? existing?.task,
+              startedAt: existing?.startedAt ?? Date.now(),
             });
           });
         };
@@ -721,6 +758,9 @@ export function App({ options }: { options: TUIOptions }): React.ReactNode {
           reasoningEffort: reasoningEffortRef.current as ModelReasoningEffort,
         },
         maxTurns: options.maxTurns,
+        maxSteps: options.maxSteps,
+        timeoutS: options.timeoutS,
+        toolTimeoutS: options.toolTimeoutS,
         systemPrompt: options.systemPrompt,
         eventBus,
         onThreadEvent: (event) => {
@@ -1006,7 +1046,7 @@ export function App({ options }: { options: TUIOptions }): React.ReactNode {
       if (!result.ok || result.status === 'failed') {
         const errorContent: MessageContent = {
           type: 'error',
-          message: finalAnswer || 'Model call failed',
+          message: decodeHtmlEntities(finalAnswer) || 'Model call failed',
         };
         const errMsg: Message = {
           id: `msg_${Date.now()}`,
@@ -1068,9 +1108,10 @@ export function App({ options }: { options: TUIOptions }): React.ReactNode {
       }
 
       // Preserve the final answer unless the trailing streamed text already
-      // rendered the same content.
+      // rendered the same content. Decode HTML entities that models
+      // (especially DeepSeek) emit in text — &quot; &amp; &lt; etc.
       if (finalAnswer && finalAnswer !== normalizedCommittedText) {
-        content.push({ type: 'text', text: result.finalAnswer });
+        content.push({ type: 'text', text: decodeHtmlEntities(result.finalAnswer) });
       }
 
       // Append file change summary if any files were modified
@@ -1252,6 +1293,18 @@ export function App({ options }: { options: TUIOptions }): React.ReactNode {
     }
   }, [getAgent]);
 
+  // Wire cron scheduler to auto-submit prompts when schedule_wakeup fires.
+  // This enables the CC-style "wake up and continue working" pattern.
+  const onSubmitRef = useRef(onSubmit);
+  onSubmitRef.current = onSubmit;
+  useEffect(() => {
+    const scheduler = getCronScheduler();
+    scheduler.onFireCallback((job) => {
+      // Automatically submit the wakeup prompt as a new user message
+      onSubmitRef.current?.(job.prompt);
+    });
+  }, []);
+
   const statusSegments: StatusLineSegment[] = useMemo(() => {
     const tracker = tokenTrackerRef.current;
     const liveUsage = liveContextUsageRef.current;
@@ -1269,13 +1322,19 @@ export function App({ options }: { options: TUIOptions }): React.ReactNode {
       permissionMode: permissionModeRef.current,
       isLoading,
       hasQuestion: askQuestions !== null,
-      totalTokens: tracker?.turnCount ? tracker.totalBlended : undefined,
-      contextPercentRemaining: liveContextRemaining ?? (tracker?.turnCount ? tracker.contextPercentRemaining : undefined),
+      totalTokens: liveUsage?.usedTokens ?? (tracker?.turnCount ? tracker.currentContextTokens : undefined),
+      contextPercentRemaining: liveContextRemaining ?? tracker?.contextPercentRemaining,
+      contextWindow: tracker?.contextWindow ?? resolveContextWindow(modelRef.current),
       taskCounts: taskCountRef.current,
       elapsedMs,
+      agentCounts: {
+        total: agentEntries.length,
+        running: agentEntries.filter((a) => a.status === 'running').length,
+        completed: agentEntries.filter((a) => a.status === 'completed').length,
+      },
       sessionId: sessionIdRef.current,
     });
-  }, [askQuestions, contextUsageVersion, cwd, elapsedMs, gitBranch, isLoading, messages.length, modeVersion, modelVersion]);
+  }, [agentEntries, askQuestions, contextUsageVersion, cwd, elapsedMs, gitBranch, isLoading, messages.length, modeVersion, modelVersion]);
 
   const statusDetailLines = useMemo(() => {
     const lines: StatusDetailLine[] = [];
@@ -1290,7 +1349,12 @@ export function App({ options }: { options: TUIOptions }): React.ReactNode {
     const contextLine = buildContextProgressBar(
       liveContextRemaining ?? (tracker?.turnCount ? tracker.contextPercentRemaining : undefined),
     );
-    if (contextLine) lines.push(contextLine);
+    if (contextLine) {
+      if (compactedCountRef.current > 0) {
+        contextLine.content += ` · compacted ${compactedCountRef.current}x`;
+      }
+      lines.push(contextLine);
+    }
     // Per-component breakdown (when available from context_usage_breakdown event)
     if (liveUsage) {
       const parts: string[] = [];
@@ -1320,7 +1384,7 @@ export function App({ options }: { options: TUIOptions }): React.ReactNode {
       lines.push(mcpLines[0]!);
     }
     return lines.slice(0, 3);
-  }, [contextUsageVersion, elapsedMs, isLoading, mcpStatusVersion, messages.length]);
+  }, [compactedVersion, contextUsageVersion, elapsedMs, isLoading, mcpStatusVersion, messages.length]);
 
   const spinnerTokenCount = useMemo(() => {
     if (!isLoading) return undefined;
@@ -1333,8 +1397,25 @@ export function App({ options }: { options: TUIOptions }): React.ReactNode {
     if (abortRef.current) {
       abortRef.current.abort();
     }
-    setSpinnerStatus('stopping this turn');
-    pushSpinnerDetail('Interrupt requested');
+    // Reset loading state so input stays responsive while agent winds down
+    setIsLoading(false);
+    setStreamingContent(null);
+    setStreamingThinking(null);
+    streamingContentRef.current = null;
+    setSpinnerRunning(undefined);
+    // Clear flush buffer
+    if (streamFlushRef.current) {
+      clearTimeout(streamFlushRef.current);
+      streamFlushRef.current = null;
+    }
+    streamAccumRef.current = '';
+    // Stop elapsed timer
+    if (elapsedTimerRef.current) {
+      clearInterval(elapsedTimerRef.current);
+      elapsedTimerRef.current = null;
+    }
+    setElapsedMs(elapsedRef.current);
+    runStatsRef.current = null;
   }, [pushSpinnerDetail]);
 
   // Exit handler — clean shutdown (Ctrl+C double-tap or Ctrl+D)
@@ -1361,6 +1442,20 @@ export function App({ options }: { options: TUIOptions }): React.ReactNode {
     askResolveRef.current = null;
     askRejectRef.current = null;
     setAskQuestions(null);
+  }, []);
+
+  // Plan review handlers
+  const handlePlanReviewSubmit = useCallback(() => {
+    const choice = (["proceed", "edit", "cancel"] as const)[planReviewIndex] ?? "cancel";
+    planReviewResolveRef.current?.(choice);
+    planReviewResolveRef.current = null;
+    setPlanReview(null);
+  }, [planReviewIndex]);
+
+  const handlePlanReviewCancel = useCallback(() => {
+    planReviewResolveRef.current?.("cancel");
+    planReviewResolveRef.current = null;
+    setPlanReview(null);
   }, []);
 
   useEffect(() => {
@@ -1395,6 +1490,11 @@ export function App({ options }: { options: TUIOptions }): React.ReactNode {
       statusDetailLines={statusDetailLines}
       commands={replCommands}
       askUserQuestion={askUserQuestion}
+      planReview={planReview}
+      planReviewIndex={planReviewIndex}
+      onPlanReviewNavigate={(dir) => setPlanReviewIndex((i) => Math.max(0, Math.min(2, i + dir)))}
+      onPlanReviewSubmit={handlePlanReviewSubmit}
+      onPlanReviewCancel={handlePlanReviewCancel}
       spinnerTokenCount={spinnerTokenCount}
       spinnerVerb={spinnerVerb}
       spinnerStatus={spinnerStatus}

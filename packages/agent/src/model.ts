@@ -30,7 +30,6 @@ export interface ModelConfig {
 
 export const MODEL_REASONING_EFFORTS = [
   'auto',
-  'minimal',
   'low',
   'medium',
   'high',
@@ -255,7 +254,7 @@ export class LLMProvider {
 
     this.config = {
       maxRetries: 3,
-      timeout: 120_000,
+      timeout: 300_000,
       ...config,
       // Ensure the clean model name (no [size] annotation) is used for API calls
       model: this.parsedModel.cleanName,
@@ -1158,7 +1157,6 @@ function mapAnthropicReasoningEffort(
   effort: Exclude<ModelReasoningEffort, 'auto'>,
   model: string,
 ): 'low' | 'medium' | 'high' | 'xhigh' | 'max' {
-  if (effort === 'minimal') return 'low';
   if (effort === 'max') return 'max';
   if (effort === 'xhigh') {
     return /4[-.]6/.test(model) ? 'max' : 'xhigh';
@@ -1169,7 +1167,6 @@ function mapAnthropicReasoningEffort(
 function mapProxyReasoningEffort(
   effort: Exclude<ModelReasoningEffort, 'auto'>,
 ): 'low' | 'medium' | 'high' | 'xhigh' {
-  if (effort === 'minimal') return 'low';
   if (effort === 'max') return 'xhigh';
   if (effort === 'xhigh') return 'xhigh';
   return effort;
@@ -1178,7 +1175,7 @@ function mapProxyReasoningEffort(
 function mapNativeReasoningEffort(
   effort: Exclude<ModelReasoningEffort, 'auto'>,
 ): 'low' | 'medium' | 'high' {
-  if (effort === 'minimal' || effort === 'low') return 'low';
+  if (effort === 'low') return 'low';
   if (effort === 'medium') return 'medium';
   return 'high';
 }

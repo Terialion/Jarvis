@@ -2,6 +2,7 @@ import { Ansi, Box, Text } from "../ink-renderer/index.js";
 import type React from "react";
 import { useEffect, useState } from "react";
 import { Markdown } from "./Markdown";
+import { DiffView } from "./DiffView";
 import type { SearchMatch } from "./SearchOverlay";
 import { Spinner } from "./Spinner";
 import { StreamCursor } from "./StreamCursor";
@@ -338,24 +339,14 @@ function ThinkingBlock({
 }
 
 function DiffBlock({ content }: { content: Extract<MessageContent, { type: "diff" }> }): React.ReactNode {
-  const diffLines = getStableLineEntries(content.diff, `${content.filename}:diff`);
-
+  // Use DiffView for proper unified-diff parsing with line numbers (CC-style)
   return (
-    <BlockShell title={content.filename} backgroundColor={CARD_BG_SOFT}>
-      {diffLines.map(({ key, line }) => {
-        let color: string | undefined;
-        if (line.startsWith("+")) color = "green";
-        else if (line.startsWith("-")) color = "red";
-        else if (line.startsWith("@")) color = "cyan";
-        return (
-          <Box key={key} marginLeft={2}>
-            <Text color={color} dimColor={!color}>
-              {line}
-            </Text>
-          </Box>
-        );
-      })}
-    </BlockShell>
+    <DiffView
+      filename={content.filename}
+      diff={content.diff}
+      maxHeight={120}
+      showLineNumbers
+    />
   );
 }
 

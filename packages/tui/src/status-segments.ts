@@ -16,11 +16,14 @@ export interface StatusSegmentInput {
   hasQuestion: boolean;
   totalTokens?: number;
   contextPercentRemaining?: number;
+  contextWindow?: number;
   taskCounts: TaskCounts;
   elapsedMs: number;
   effort?: string;
   permissionMode?: string;
   sessionId?: string | null;
+  /** Agent counts: total, running, completed */
+  agentCounts?: { total: number; running: number; completed: number };
 }
 
 function formatElapsed(elapsedMs: number): string | null {
@@ -84,6 +87,15 @@ export function buildStatusSegments(input: StatusSegmentInput): StatusLineSegmen
     segments.splice(1, 0, { content: `branch ${input.gitBranch}`, color: "cyan" });
   }
 
+  // Agent counts — CC-style: "Agents (2 running, 1 done)"
+  if (input.agentCounts && input.agentCounts.total > 0) {
+    const parts: string[] = [`Agents (${input.agentCounts.total})`];
+    segments.push({
+      content: parts[0],
+      color: input.agentCounts.running > 0 ? "#E6B450" : "#5FAF5F",
+    });
+  }
+
   if (
     input.totalTokens !== undefined &&
     input.totalTokens > 0 &&
@@ -92,6 +104,8 @@ export function buildStatusSegments(input: StatusSegmentInput): StatusLineSegmen
     segments.push({
       content: `${input.totalTokens.toLocaleString()} tok | ${input.contextPercentRemaining}% left`,
     });
+  } else if (input.contextWindow !== undefined && input.contextWindow > 0) {
+    segments.push({ content: `0 tok | 100% left`, color: 'gray' });
   }
 
   const taskSegment = formatTasks(input.taskCounts);

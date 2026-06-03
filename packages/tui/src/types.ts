@@ -7,6 +7,9 @@ export interface TUIOptions {
   baseURL?: string;
   reasoningEffort?: JarvisReasoningEffort;
   maxTurns: number;
+  maxSteps?: number;
+  timeoutS?: number;
+  toolTimeoutS?: number;
   systemPrompt?: string;
   forceOnboarding?: boolean;
   presentationMode?: TuiPresentationMode;

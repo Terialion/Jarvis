@@ -11,8 +11,12 @@ class AgentStoreImpl {
   private agents: Map<string, AgentStatusEntry> = new Map();
   private listeners: Set<Listener> = new Set();
 
-  /** Update or add an agent status entry. */
+  /** Update or add an agent status entry. Preserves startedAt from first upsert. */
   upsert(entry: AgentStatusEntry): void {
+    const existing = this.agents.get(entry.agentId);
+    if (existing?.startedAt && !entry.startedAt) {
+      entry.startedAt = existing.startedAt;
+    }
     this.agents.set(entry.agentId, entry);
     this.notify();
   }

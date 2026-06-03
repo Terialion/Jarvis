@@ -49,7 +49,8 @@ export { askUserQuestionTool, setAskUserQuestionBridge } from './builtin/ask-use
 export type { AskQuestionDef, AskUserQuestionCallback } from './builtin/ask-user-question.js';
 export { taskCreateTool, taskUpdateTool, taskListTool, taskGetTool, taskOutputTool, taskStopTool, getBackgroundTaskRegistry } from './builtin/task.js';
 export type { TaskItem, BackgroundTask } from './builtin/task.js';
-export { enterPlanModeTool, exitPlanModeTool } from './builtin/plan-mode.js';
+export { enterPlanModeTool, exitPlanModeTool, setPlanReviewBridge } from './builtin/plan-mode.js';
+export type { PlanReviewRequest, PlanReviewCallback } from './builtin/plan-mode.js';
 export { notebookEditTool, notebookEditSchema } from './builtin/notebook-edit.js';
 export { cronCreateTool, cronDeleteTool, cronListTool, scheduleWakeupTool } from './builtin/cron.js';
 export { CronScheduler, getCronScheduler } from './builtin/cron-scheduler.js';

@@ -12,7 +12,7 @@ export type DiffLine = {
 
 export type DiffViewProps = {
   filename: string;
-  lines: DiffLine[];
+  lines?: DiffLine[];
   /** Raw unified diff string — parsed automatically if provided */
   diff?: string;
   /** Show line numbers (default: true) */
@@ -102,7 +102,7 @@ export function DiffView({
   }, [diff]);
 
   const resolvedFilename = parsed?.filename ?? filename;
-  const resolvedLines = parsed?.lines ?? propLines;
+  const resolvedLines = parsed?.lines ?? propLines ?? [];
 
   const addedColor = (colorOverrides?.added ?? "green") as Color;
   const removedColor = (colorOverrides?.removed ?? "red") as Color;
@@ -126,6 +126,9 @@ export function DiffView({
       ? resolvedLines.slice(0, maxHeight)
       : resolvedLines;
 
+  const addedCount = resolvedLines.filter((l) => l.type === 'added').length;
+  const removedCount = resolvedLines.filter((l) => l.type === 'removed').length;
+
   const truncated =
     maxHeight && resolvedLines.length > maxHeight ? resolvedLines.length - maxHeight : 0;
   const lineKeys = getStableKeys(
@@ -140,19 +143,30 @@ export function DiffView({
         {" "}
         {resolvedFilename}
       </Text>
+      {(addedCount > 0 || removedCount > 0) && (
+        <Text dimColor>
+          {' '}⎿  Added {addedCount} line{addedCount !== 1 ? 's' : ''}, removed {removedCount} line{removedCount !== 1 ? 's' : ''}
+        </Text>
+      )}
       <Text dimColor> {"─".repeat(30)}</Text>
 
-      {visibleLines.map((line, i) => (
-        <DiffLineRow
-          key={lineKeys[i]}
-          line={line}
-          gutterWidth={gutterWidth}
-          showLineNumbers={showLineNumbers}
-          addedColor={addedColor}
-          removedColor={removedColor}
-          contextColor={contextColor}
-        />
-      ))}
+      {visibleLines.map((line, i) => {
+        // CC-style grouping: suppress line number for consecutive same-type lines
+        const prevType = i > 0 ? visibleLines[i - 1]?.type : null;
+        const suppressNum = line.type !== 'context' && line.type === prevType;
+        return (
+          <DiffLineRow
+            key={lineKeys[i]}
+            line={line}
+            gutterWidth={gutterWidth}
+            showLineNumbers={showLineNumbers}
+            suppressLineNum={suppressNum}
+            addedColor={addedColor}
+            removedColor={removedColor}
+            contextColor={contextColor}
+          />
+        );
+      })}
 
       {truncated > 0 && <Text dimColor> ... {truncated} more lines</Text>}
     </Box>
@@ -163,6 +177,7 @@ function DiffLineRow({
   line,
   gutterWidth,
   showLineNumbers,
+  suppressLineNum,
   addedColor,
   removedColor,
   contextColor,
@@ -170,6 +185,7 @@ function DiffLineRow({
   line: DiffLine;
   gutterWidth: number;
   showLineNumbers: boolean;
+  suppressLineNum?: boolean;
   addedColor: Color;
   removedColor: Color;
   contextColor: Color | undefined;
@@ -178,7 +194,7 @@ function DiffLineRow({
     line.type === "removed" ? line.oldLineNumber : (line.newLineNumber ?? line.oldLineNumber);
   const prefix = line.type === "added" ? "+ " : line.type === "removed" ? "- " : "  ";
   const gutterStr =
-    showLineNumbers && lineNum !== undefined
+    showLineNumbers && lineNum !== undefined && !suppressLineNum
       ? String(lineNum).padStart(gutterWidth)
       : " ".repeat(gutterWidth);
   const contentColor =

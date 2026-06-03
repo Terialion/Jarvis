@@ -61,10 +61,13 @@ export function buildSystemPrompt(modelName: string, mode: PromptMode = 'full'):
   if (mode === 'none') {
     return `<agent>\n${PROMPT_IDENTITY.replace('{model_name}', name)}\n</agent>`;
   }
+  const envNote = process.platform === 'win32'
+    ? '\n## Environment\nWindows with bash (Git Bash). Use bash commands (ls, cat, find, grep) — NOT CMD commands (dir, type). Paths use forward slashes.\n'
+    : '';
   if (mode === 'minimal') {
-    return `<agent>\n${PROMPT_IDENTITY.replace('{model_name}', name)}\n\n${PROMPT_CORE}\n\n## Tool rules\n- ALWAYS use tools for file contents, code search, reading files, running commands, web content.\n- Use provided function tools only.\n- If a tool fails 2+ times, report the error.\n</agent>`;
+    return `<agent>\n${PROMPT_IDENTITY.replace('{model_name}', name)}\n\n${envNote}${PROMPT_CORE}\n\n## Tool rules\n- ALWAYS use tools for file contents, code search, reading files, running commands, web content.\n- Use provided function tools only.\n- If a tool fails 2+ times, report the error.\n</agent>`;
   }
-  return `<agent>\n${PROMPT_IDENTITY.replace('{model_name}', name)}\n\n## Core directive\n${PROMPT_CORE}${PROMPT_FULL_EXTRA}\n</agent>`;
+  return `<agent>\n${PROMPT_IDENTITY.replace('{model_name}', name)}\n\n${envNote}## Core directive\n${PROMPT_CORE}${PROMPT_FULL_EXTRA}\n</agent>`;
 }
 
 /** @deprecated Use buildSystemPrompt(modelName, mode) instead. */

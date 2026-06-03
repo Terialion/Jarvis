@@ -1,9 +1,27 @@
 // ============================================================================
-// Plan Mode tools — enter and exit structured planning mode
+// Plan Mode tools — enter and exit structured planning mode (CC-style)
 // ============================================================================
 
 import { toOpenAITool } from '@jarvis/shared';
 import type { ToolEntry, ToolHandler } from '../registry.js';
+
+// ---- Plan Review Bridge (CC-style interactive approval) ----
+// The TUI sets this bridge so exit_plan_mode can show an interactive review
+// popup. The bridge returns the user's choice: "proceed", "edit", or "cancel".
+
+export interface PlanReviewRequest {
+  summary: string;
+  steps: Array<{ step: string; files?: string[]; verification?: string }>;
+  allowedPrompts?: Array<{ tool: string; prompt: string }>;
+}
+
+export type PlanReviewCallback = (plan: PlanReviewRequest) => Promise<'proceed' | 'edit' | 'cancel'>;
+
+let planReviewBridge: PlanReviewCallback | null = null;
+
+export function setPlanReviewBridge(fn: PlanReviewCallback | null): void {
+  planReviewBridge = fn;
+}
 
 // ---- enter_plan_mode ----
 
@@ -36,7 +54,7 @@ const enterPlanModeHandler: ToolHandler = (args) => {
 export const exitPlanModeSchema = toOpenAITool({
   name: 'exit_plan_mode',
   description:
-    'Exit plan mode and present the plan for user approval. The plan should be clear, actionable, and reference specific files and changes. After calling this, wait for user feedback before implementing.',
+    'Exit plan mode and present the plan for user approval. The plan should be clear, actionable, and reference specific files and changes. After calling this, the user will be shown an interactive review popup with options to Proceed, Edit, or Cancel. Wait for the user choice before taking further action.',
   parameters: {
     type: 'object',
     properties: {
@@ -67,10 +85,11 @@ export const exitPlanModeSchema = toOpenAITool({
   },
 });
 
-const exitPlanModeHandler: ToolHandler = (args) => {
+const exitPlanModeHandler: ToolHandler = async (args) => {
   const params = args as { summary: string; steps?: Array<{ step: string; files?: string[]; verification?: string }>; allowedPrompts?: Array<{ tool: string; prompt: string }> };
   const steps = params.steps ?? [];
   const allowedPrompts = params.allowedPrompts ?? [];
+
   const planLines = [
     `## Plan: ${params.summary}`,
     '',
@@ -81,7 +100,46 @@ const exitPlanModeHandler: ToolHandler = (args) => {
     }),
     ...(allowedPrompts.length > 0 ? ['', '## Required permissions', ...allowedPrompts.map((p) => `- **${p.tool}**: ${p.prompt}`)] : []),
   ];
-  return JSON.stringify({ plan_mode: false, message: planLines.join('\n'), allowedPrompts: allowedPrompts.length > 0 ? allowedPrompts : undefined });
+
+  // If bridge is available, show interactive review popup (CC-style)
+  if (planReviewBridge) {
+    const choice = await planReviewBridge({
+      summary: params.summary,
+      steps,
+      allowedPrompts: allowedPrompts.length > 0 ? allowedPrompts : undefined,
+    });
+
+    if (choice === 'cancel') {
+      return JSON.stringify({
+        plan_mode: false,
+        status: 'cancelled',
+        message: planLines.join('\n') + '\n\n**Plan cancelled by user.** Return to exploration or ask the user for clarification.',
+      });
+    }
+
+    if (choice === 'edit') {
+      return JSON.stringify({
+        plan_mode: false,
+        status: 'needs_edit',
+        message: planLines.join('\n') + '\n\n**User requested edits to this plan.** Ask the user what changes they would like, update the plan, then call exit_plan_mode again.',
+      });
+    }
+
+    // choice === 'proceed'
+    return JSON.stringify({
+      plan_mode: false,
+      status: 'approved',
+      message: planLines.join('\n') + '\n\n**Plan approved!** You may now implement the plan. Follow the steps in order.',
+      allowedPrompts: allowedPrompts.length > 0 ? allowedPrompts : undefined,
+    });
+  }
+
+  // No bridge — fallback to text-only (non-interactive)
+  return JSON.stringify({
+    plan_mode: false,
+    message: planLines.join('\n'),
+    allowedPrompts: allowedPrompts.length > 0 ? allowedPrompts : undefined,
+  });
 };
 
 // ---- entries ----
@@ -100,6 +158,7 @@ export const exitPlanModeTool: ToolEntry = {
   toolset: 'orchestration',
   schema: exitPlanModeSchema,
   handler: exitPlanModeHandler,
+  isAsync: true,
   emoji: '📋',
-  description: 'Exit planning mode with a structured implementation plan.',
+  description: 'Exit planning mode with a structured implementation plan for user review.',
 };
