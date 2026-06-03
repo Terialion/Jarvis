@@ -118,6 +118,7 @@ ffmpeg-8.1-full_build/
 # 临时文件
 temp/
 tmp/
+docs/
 *.tmp
 .workbuddy/
 .jarvis/

@@ -7,6 +7,15 @@ export interface ProviderConfig {
   api_key?: string;
 }
 
+export interface ProxyConfig {
+  /** Proxy base URL (e.g., "https://api.llm.ustc.edu.cn") */
+  base_url: string;
+  /** Proxy API key */
+  api_key: string;
+  /** Enable proxy mode - all requests go through this proxy */
+  enabled?: boolean;
+}
+
 export interface SandboxSettings {
   /** Enable restricted local sandbox. Default: true */
   enabled?: boolean;
@@ -34,6 +43,8 @@ export interface JarvisConfig {
   base_url?: string;
   /** Per-provider credentials. Keyed by provider name (e.g. "deepseek", "xiaomi"). */
   providers?: Record<string, ProviderConfig>;
+  /** Global proxy configuration - overrides all provider settings when enabled */
+  proxy?: ProxyConfig;
   /** Sandbox settings for restricted local mode */
   sandbox?: SandboxSettings;
   reasoning_effort?: JarvisReasoningEffort;
@@ -49,7 +60,6 @@ export interface JarvisConfig {
 
 export const JARVIS_REASONING_EFFORTS = [
   "auto",
-  "minimal",
   "low",
   "medium",
   "high",
@@ -62,7 +72,7 @@ export type JarvisReasoningEffort = (typeof JARVIS_REASONING_EFFORTS)[number];
 const JARVIS_DIR = join(homedir(), ".jarvis");
 const CONFIG_PATH = join(JARVIS_DIR, "config.json");
 const LEGACY_SETTINGS_PATH = join(JARVIS_DIR, "settings.json");
-const DEFAULT_MODEL = "deepseek-chat";
+const DEFAULT_MODEL = "deepseek-v4-pro";
 const DEFAULT_BASE_URL = "https://api.deepseek.com/v1";
 const DEFAULT_MAX_TURNS = 30;
 const DEFAULT_PERMISSION_MODE: NonNullable<JarvisConfig["permission_mode"]> = "workspace_write";

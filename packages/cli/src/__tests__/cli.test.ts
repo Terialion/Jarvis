@@ -9,7 +9,7 @@ import { SlashCommandRegistry, registerBuiltinCommands } from '../commands.js';
 describe('parseCLIArgs', () => {
   it('parses default values', () => {
     const opts = parseCLIArgs(['node', 'jarvis']);
-    expect(opts.model).toBe('deepseek-chat');
+    expect(opts.model).toBe('deepseek-v4-pro');
     expect(opts.maxTurns).toBe(30);
     expect(opts.oneShot).toBeUndefined();
   });

@@ -93,7 +93,7 @@ export function resolveProviderForModel(
 export function parseCLIArgs(argv: string[] = process.argv): CLIOptions {
   const userConfig = loadJarvisConfig();
   const resolvedDefaults = resolveJarvisConfigDefaults(userConfig);
-  const activeModel = userConfig.active_model ?? userConfig.model ?? process.env['JARVIS_LLM_MODEL'] ?? process.env['JARVIS_MODEL'] ?? 'deepseek-chat';
+  const activeModel = userConfig.active_model ?? userConfig.model ?? process.env['JARVIS_LLM_MODEL'] ?? process.env['JARVIS_MODEL'] ?? 'deepseek-v4-pro';
   const resolved = resolveProviderForModel(activeModel, userConfig);
 
   const { values } = parseArgs({
@@ -524,10 +524,10 @@ export function printHelp(): string {
     'Usage: jarvis [options]',
     '',
     'Options:',
-    '  -m, --model <name>       Model to use (default: deepseek-chat)',
+    '  -m, --model <name>       Model to use (default: deepseek-v4-pro)',
     '  --api-key <key>           API key (config or env fallback)',
     '  --base-url <url>          API base URL (config or env fallback)',
-    '  --effort <level>          Reasoning effort: auto|minimal|low|medium|high|xhigh|max',
+    '  --effort <level>          Reasoning effort: auto|low|medium|high|xhigh|max',
     '  --max-turns <n>           Max conversation turns (default: 30)',
     '  --system-prompt <text>    System prompt override',
     '  -p, --prompt <text>       One-shot: run a single prompt and exit',
