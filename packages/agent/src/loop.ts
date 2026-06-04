@@ -110,6 +110,10 @@ type CompareTaskTemplate = {
   fileB: string;
 };
 
+type CreateArtifactTaskTemplate = {
+  targetHint: string;
+};
+
 function normalizeSkillName(value: string): string {
   return value
     .trim()
@@ -824,14 +828,22 @@ export class AgentLoop {
 
     const { messages } = this.contextBuilder.buildMessagesFromContext(turnContext, this.promptBuilder);
     const compareTaskTemplate = this._buildCompareTaskTemplate(userInput);
+    const createArtifactTaskTemplate = compareTaskTemplate ? null : this._buildCreateArtifactTaskTemplate(userInput);
     let structuredFinalizeRetries = 0;
     const collectedReadPaths = new Set<string>();
     let sawDiffEvidence = false;
+    let sawWorkspaceInspectionEvidence = false;
+    let sawWriteEvidence = false;
 
     if (compareTaskTemplate) {
       messages.push({
         role: 'user',
         content: this._buildCompareTemplateInstruction(compareTaskTemplate),
+      });
+    } else if (createArtifactTaskTemplate) {
+      messages.push({
+        role: 'user',
+        content: this._buildCreateArtifactTemplateInstruction(createArtifactTaskTemplate),
       });
     }
 
@@ -870,6 +882,22 @@ export class AgentLoop {
           compareTaskTemplate,
           collectedReadPaths,
           sawDiffEvidence,
+        );
+        if (!evidenceCheck.ok) {
+          messages.push({
+            role: 'user',
+            content:
+              `Evidence is incomplete. Before finalizing, gather missing evidence: ${evidenceCheck.missing.join('; ')}. ` +
+              'Use tools now and then produce the final Markdown answer.',
+          });
+          return false;
+        }
+      }
+      if (createArtifactTaskTemplate) {
+        const evidenceCheck = this._checkCreateArtifactEvidence(
+          createArtifactTaskTemplate,
+          sawWorkspaceInspectionEvidence,
+          sawWriteEvidence,
         );
         if (!evidenceCheck.ok) {
           messages.push({
@@ -1029,6 +1057,23 @@ export class AgentLoop {
               continue;
             }
           }
+          if (createArtifactTaskTemplate) {
+            const evidenceCheck = this._checkCreateArtifactEvidence(
+              createArtifactTaskTemplate,
+              sawWorkspaceInspectionEvidence,
+              sawWriteEvidence,
+            );
+            if (!evidenceCheck.ok) {
+              messages.push({
+                role: 'user',
+                content:
+                  `Evidence is incomplete. Before finalizing, gather missing evidence: ${evidenceCheck.missing.join('; ')}. ` +
+                  'Use tools now and then produce the final Markdown answer.',
+              });
+              finalAnswer = '';
+              continue;
+            }
+          }
           outputType = toolCallsLog.length > 0 ? 'tool_result' : 'answer';
           stopReason = finalizeReason !== null
             ? (finalizeReason === 'rejections' ? 'finalized_after_rejections' : 'finalized_after_stagnation')
@@ -1039,6 +1084,31 @@ export class AgentLoop {
 
         if (modelResp.toolCalls.length === 0 && !finalAnswer) {
           const finish = modelResp.finishReason;
+          const assistantLower = (modelResp.assistantText || '').toLowerCase();
+
+          if (assistantLower.includes('exit plan mode') || assistantLower.includes('not in plan mode')) {
+            forceNoToolsNextStep = true;
+            messages.push({
+              role: 'user',
+              content:
+                'Plan mode is already finished for this task. Do not talk about exiting plan mode again. ' +
+                'Either call the needed tool now or provide the final answer directly.',
+            });
+            continue;
+          }
+
+          if (createArtifactTaskTemplate && !sawWriteEvidence && !forceNoToolsNextStep) {
+            retryWithToolInstructionCount++;
+            if (retryWithToolInstructionCount <= 3) {
+              messages.push({
+                role: 'user',
+                content:
+                  `This task requires actually creating or updating ${createArtifactTaskTemplate.targetHint}. ` +
+                  'Do not stop at describing the next step. Inspect the workspace if needed, then execute the required write/edit tool call now.',
+              });
+              continue;
+            }
+          }
 
           // Tool-intent retry (only before any tools have been called)
           if (finish === 'retry_with_tool_instruction') {
@@ -1060,6 +1130,17 @@ export class AgentLoop {
             if (toolCallsLog.length === 0) {
               retryWithToolInstructionCount++;
               if (retryWithToolInstructionCount >= 3) {
+                if (!forcedSynthesisAttempted) {
+                  forcedSynthesisAttempted = true;
+                  messages.push({
+                    role: 'user',
+                    content:
+                      'Your previous replies still did not execute the required tool. ' +
+                      'In this reply, either call the appropriate tool directly or, if no tool is actually needed, provide the final answer now. ' +
+                      'Do not explain what you plan to do.',
+                  });
+                  continue;
+                }
                 stopReason = 'retry_with_tool_instruction';
                 break;
               }
@@ -1125,6 +1206,17 @@ export class AgentLoop {
               role: 'user',
               content:
                 'You must provide the final answer now in Markdown with no further tool calls.',
+            });
+            continue;
+          }
+          if (toolCallsLog.length > 0 && modelResp.assistantText && !forcedSynthesisAttempted) {
+            forcedSynthesisAttempted = true;
+            forceNoToolsNextStep = true;
+            messages.push({
+              role: 'user',
+              content:
+                'Use the evidence already collected and write the final Markdown answer now. ' +
+                'Do not describe your next step and do not call more tools.',
             });
             continue;
           }
@@ -1252,6 +1344,8 @@ export class AgentLoop {
             });
             failureTracker.recordSuccess(call.name);
             anyOkThisStep = true;
+            if (this._isWorkspaceInspectionToolCall(call.name, call.arguments)) sawWorkspaceInspectionEvidence = true;
+            if (this._isWriteLikeToolCall(call.name, call.arguments, reused)) sawWriteEvidence = true;
             if (call.name === 'skill.load') {
               const sn = String((reused['metadata'] as Record<string, unknown>)?.['skill_name'] || call.arguments['name'] || '');
               if (sn && !loadedSkills.includes(sn)) loadedSkills.push(sn);
@@ -1324,6 +1418,8 @@ export class AgentLoop {
             const evidencePath = this._extractReadPathFromToolCall(call.name, call.arguments);
             if (evidencePath) collectedReadPaths.add(evidencePath);
             if (this._isDiffLikeToolCall(call.name, call.arguments)) sawDiffEvidence = true;
+            if (this._isWorkspaceInspectionToolCall(call.name, call.arguments)) sawWorkspaceInspectionEvidence = true;
+            if (this._isWriteLikeToolCall(call.name, call.arguments, resultDict)) sawWriteEvidence = true;
 
             this._emit(events, turnId, 'tool_call_completed', { step, tool_result: resultDict });
             this.emitThreadEvent({
@@ -1929,6 +2025,31 @@ export class AgentLoop {
     ].join('\n');
   }
 
+  private _buildCreateArtifactTaskTemplate(userInput: string): CreateArtifactTaskTemplate | null {
+    const asksCreate =
+      /(create|build|write|implement|scaffold|generate|add|make|修改|新建|创建|实现|生成|编写)/i.test(userInput);
+    const artifactLike =
+      /(tool|script|benchmark|utility|cli|program|file|markdown|md|py|ts|js|json|txt|工具|脚本|文件|程序)/i.test(userInput);
+    if (!asksCreate || !artifactLike) return null;
+
+    const fileMatches = Array.from(
+      userInput.matchAll(/([A-Za-z0-9_\-./\\\u4e00-\u9fa5]+\.[A-Za-z0-9]{1,8})/g),
+    ).map((m) => m[1] ?? '').filter(Boolean);
+    const targetHint = fileMatches[0] || 'the requested artifact';
+    return { targetHint };
+  }
+
+  private _buildCreateArtifactTemplateInstruction(template: CreateArtifactTaskTemplate): string {
+    return [
+      'Follow this fixed workflow for this task:',
+      '1) Inspect the relevant workspace area or existing files first',
+      `2) Create or update ${template.targetHint}`,
+      '3) Verify the artifact contents or surrounding context',
+      '4) Produce a concise final Markdown summary',
+      'Do not stop at describing your next step. Actually execute the required tools before finalizing.',
+    ].join('\n');
+  }
+
   private _normalizePathKey(pathLike: string): string {
     return pathLike.replace(/\\/g, '/').replace(/^\.?\//, '').trim().toLowerCase();
   }
@@ -1953,6 +2074,27 @@ export class AgentLoop {
     return /\bdiff\b|\bgit\s+diff\b|\bfc\b/.test(cmd);
   }
 
+  private _isWorkspaceInspectionToolCall(toolName: string, args: Record<string, unknown>): boolean {
+    if (toolName === 'read_file' || toolName === 'glob' || toolName === 'grep') return true;
+    if (toolName !== 'bash') return false;
+    const cmd = typeof args['command'] === 'string' ? args['command'].toLowerCase() : '';
+    return /\b(ls|dir|find|rg|tree|pwd|cat|type)\b/.test(cmd);
+  }
+
+  private _isWriteLikeToolCall(
+    toolName: string,
+    args: Record<string, unknown>,
+    result?: Record<string, unknown>,
+  ): boolean {
+    if (toolName === 'write_file' || toolName === 'edit_file') {
+      return result ? Boolean(result['ok']) : true;
+    }
+    if (toolName !== 'bash') return false;
+    const cmd = typeof args['command'] === 'string' ? args['command'].toLowerCase() : '';
+    if (!cmd) return false;
+    return /\b(echo|copy|move|ren|mkdir|touch|tee|out-file|set-content|add-content)\b/.test(cmd);
+  }
+
   private _checkCompareEvidence(
     template: CompareTaskTemplate,
     readPaths: Set<string>,
@@ -1967,6 +2109,21 @@ export class AgentLoop {
     }
     if (!hasDiffEvidence) {
       missing.push('run a diff between the two files');
+    }
+    return { ok: missing.length === 0, missing };
+  }
+
+  private _checkCreateArtifactEvidence(
+    template: CreateArtifactTaskTemplate,
+    sawInspectionEvidence: boolean,
+    sawWriteEvidence: boolean,
+  ): { ok: boolean; missing: string[] } {
+    const missing: string[] = [];
+    if (!sawInspectionEvidence) {
+      missing.push('inspect the relevant workspace files or directories');
+    }
+    if (!sawWriteEvidence) {
+      missing.push(`create or update ${template.targetHint}`);
     }
     return { ok: missing.length === 0, missing };
   }
