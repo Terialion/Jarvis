@@ -1,6 +1,6 @@
 // ============================================================================
-// Web Fetch tool — fetch content from a URL with an extraction prompt
-// Uses native fetch() with configurable backend
+// Web Fetch tool — fetch content from a URL with content extraction
+// Uses @mozilla/readability for HTML → markdown conversion
 // ============================================================================
 
 import { toOpenAITool } from '@jarvis/shared';
@@ -11,7 +11,7 @@ import type { ToolEntry, ToolHandler } from '../registry.js';
 export const webFetchSchema = toOpenAITool({
   name: 'web_fetch',
   description:
-    'Fetch content from a specified URL and processes it. Fetches the URL content, converts HTML to text, and returns the content. Uses a self-cleaning 15-minute cache. For authenticated URLs (Google Docs, Confluence, Jira, GitHub), prefer specialized MCP tools.',
+    'Fetch content from a URL and extract readable text. Converts HTML to clean markdown using Readability (Firefox reader mode). Returns structured content with the prompt answered from the page. For GitHub repos, fetches README directly. For authenticated URLs, prefer specialized MCP tools.',
   parameters: {
     type: 'object',
     properties: {
@@ -21,51 +21,168 @@ export const webFetchSchema = toOpenAITool({
       },
       prompt: {
         type: 'string',
-        description: 'Instructions for what information to extract from the page',
+        description: 'Question to answer from the fetched content',
       },
     },
     required: ['url', 'prompt'],
   },
 });
 
-// ---- helpers ----
+// ---- HTML → Markdown via Readability ----
 
-function stripHtml(html: string): string {
-  return html
-    .replace(/<script[^>]*>[\s\S]*?<\/script>/gi, '')
-    .replace(/<style[^>]*>[\s\S]*?<\/style>/gi, '')
-    .replace(/<[^>]+>/g, ' ')
-    .replace(/&amp;/g, '&')
-    .replace(/&lt;/g, '<')
-    .replace(/&gt;/g, '>')
-    .replace(/&quot;/g, '"')
-    .replace(/&#x27;/g, "'")
-    .replace(/&#(\d+);/g, (_, d) => String.fromCharCode(Number(d)))
-    .replace(/\s+/g, ' ')
-    .trim();
+let readabilityDeps: {
+  Readability: typeof import('@mozilla/readability').Readability;
+  parseHTML: typeof import('linkedom').parseHTML;
+} | null = null;
+
+async function loadReadability() {
+  if (!readabilityDeps) {
+    const [readability, linkedom] = await Promise.all([
+      import('@mozilla/readability'),
+      import('linkedom'),
+    ]);
+    readabilityDeps = {
+      Readability: readability.Readability,
+      parseHTML: linkedom.parseHTML,
+    };
+  }
+  return readabilityDeps;
 }
 
-// Simple in-memory cache with 15-minute TTL
-const fetchCache = new Map<string, { content: string; timestamp: number }>();
-const CACHE_TTL_MS = 15 * 60 * 1000; // 15 minutes
+/** Extract readable content from HTML using @mozilla/readability */
+async function extractReadableContent(
+  html: string,
+  url: string,
+): Promise<{ title: string; text: string } | null> {
+  try {
+    const { Readability, parseHTML } = await loadReadability();
+    // Skip huge HTML to avoid DOM parsing overhead
+    if (html.length > 1_000_000) {
+      html = html.slice(0, 1_000_000);
+    }
+    const { document } = parseHTML(html);
+    const reader = new Readability(document);
+    const article = reader.parse();
+    if (!article?.textContent) return null;
+    return {
+      title: article.title ?? '',
+      text: article.textContent.trim(),
+    };
+  } catch {
+    return null;
+  }
+}
 
-// ---- factory ----
+/** Fallback: basic HTML → markdown with tag stripping */
+function basicHtmlToMarkdown(html: string): { title: string; text: string } {
+  const titleMatch = html.match(/<title[^>]*>([\s\S]*?)<\/title>/i);
+  const title = titleMatch ? titleMatch[1].replace(/<[^>]+>/g, '').trim() : '';
+
+  let text = html
+    .replace(/<script[\s\S]*?<\/script>/gi, '')
+    .replace(/<style[\s\S]*?<\/style>/gi, '')
+    .replace(/<noscript[\s\S]*?<\/noscript>/gi, '');
+
+  // Links → markdown
+  text = text.replace(/<a\s+[^>]*href=["']([^"']+)["'][^>]*>([\s\S]*?)<\/a>/gi, (_, href, body) => {
+    const label = body.replace(/<[^>]+>/g, '').trim();
+    return label ? `[${label}](${href})` : href;
+  });
+  // Headers → markdown
+  text = text.replace(/<h([1-6])[^>]*>([\s\S]*?)<\/h1>/gi, (_, level, body) => {
+    const prefix = '#'.repeat(Math.min(6, Number(level)));
+    return `\n${prefix} ${body.replace(/<[^>]+>/g, '').trim()}\n`;
+  });
+  // List items
+  text = text.replace(/<li[^>]*>([\s\S]*?)<\/li>/gi, (_, body) => {
+    const label = body.replace(/<[^>]+>/g, '').trim();
+    return label ? `\n- ${label}` : '';
+  });
+  // Block elements → newlines
+  text = text
+    .replace(/<(br|hr)\s*\/?>/gi, '\n')
+    .replace(/<\/(p|div|section|article|header|footer|table|tr|ul|ol)>/gi, '\n');
+  // Strip remaining tags
+  text = text.replace(/<[^>]+>/g, '');
+  // Decode entities
+  text = text
+    .replace(/&nbsp;/gi, ' ')
+    .replace(/&amp;/gi, '&')
+    .replace(/&lt;/gi, '<')
+    .replace(/&gt;/gi, '>')
+    .replace(/&quot;/gi, '"')
+    .replace(/&#x27;/gi, "'")
+    .replace(/&#(\d+);/gi, (_, d) => String.fromCharCode(Number(d)));
+  // Normalize whitespace
+  text = text
+    .replace(/\r/g, '')
+    .replace(/[ \t]+\n/g, '\n')
+    .replace(/\n{3,}/g, '\n\n')
+    .replace(/[ \t]{2,}/g, ' ')
+    .trim();
+
+  return { title, text };
+}
+
+// ---- SSRF protection ----
+
+function isPrivateIP(hostname: string): boolean {
+  // IPv4 private ranges
+  if (/^(127\.|10\.|172\.(1[6-9]|2\d|3[01])\.|192\.168\.|0\.)/.test(hostname)) return true;
+  // IPv6 loopback
+  if (hostname === '::1' || hostname === 'localhost') return true;
+  // Link-local
+  if (/^(fe80:|fe[89ab]:)/i.test(hostname)) return true;
+  return false;
+}
+
+// ---- Cache ----
+
+interface CacheEntry {
+  content: string;
+  title: string;
+  extractor: string;
+  timestamp: number;
+}
+
+const fetchCache = new Map<string, CacheEntry>();
+const CACHE_TTL_MS = 15 * 60 * 1000;
+const MAX_CONTENT_CHARS = 50_000;
+const MAX_RESPONSE_BYTES = 2_000_000;
+
+// ---- GitHub helpers ----
+
+async function fetchGitHubReadme(owner: string, repo: string): Promise<{ title: string; text: string } | null> {
+  const url = `https://raw.githubusercontent.com/${owner}/${repo}/HEAD/README.md`;
+  try {
+    const resp = await fetch(url, {
+      headers: { 'User-Agent': 'Jarvis/0.1 (web-fetch)' },
+      signal: AbortSignal.timeout(15_000),
+    });
+    if (!resp.ok) return null;
+    let text = await resp.text();
+    if (text.length > MAX_CONTENT_CHARS) text = text.slice(0, MAX_CONTENT_CHARS) + '\n\n... [truncated]';
+    return { title: `${owner}/${repo} README`, text };
+  } catch {
+    return null;
+  }
+}
+
+// ---- backend interface ----
 
 export interface WebFetchBackend {
   fetch(url: string, prompt: string): Promise<string>;
 }
+
+// ---- main handler ----
 
 export function createWebFetchHandler(backend?: WebFetchBackend): ToolHandler {
   return async (args: Record<string, unknown>, _context): Promise<string> => {
     const url = String(args.url ?? '').trim();
     const prompt = String(args.prompt ?? '').trim();
 
-    if (!url) {
-      return JSON.stringify({ error: 'Missing required parameter: url' });
-    }
-    if (!prompt) {
-      return JSON.stringify({ error: 'Missing required parameter: prompt' });
-    }
+    if (!url) return JSON.stringify({ error: 'Missing required parameter: url' });
+    if (!prompt) return JSON.stringify({ error: 'Missing required parameter: prompt' });
 
     // Validate URL
     let parsedUrl: URL;
@@ -76,110 +193,138 @@ export function createWebFetchHandler(backend?: WebFetchBackend): ToolHandler {
     }
 
     if (!['http:', 'https:'].includes(parsedUrl.protocol)) {
-      return JSON.stringify({ error: `Unsupported protocol: ${parsedUrl.protocol}. Only http: and https: are allowed.` });
+      return JSON.stringify({ error: `Unsupported protocol: ${parsedUrl.protocol}` });
     }
 
-    // Check cache
+    // SSRF: block private IPs
+    if (isPrivateIP(parsedUrl.hostname)) {
+      return JSON.stringify({ error: `Blocked: ${parsedUrl.hostname} is a private/local address` });
+    }
+
+    // Cache check
     const cacheKey = `${url}::${prompt.slice(0, 100)}`;
     const cached = fetchCache.get(cacheKey);
     if (cached && Date.now() - cached.timestamp < CACHE_TTL_MS) {
       return JSON.stringify({
-        url,
-        prompt,
+        url, prompt,
+        title: cached.title,
         content: cached.content,
+        extractor: cached.extractor,
         cached: true,
       });
     }
 
-    // If a custom backend is provided, use it
+    // Custom backend
     if (backend) {
       try {
         const content = await backend.fetch(url, prompt);
-        fetchCache.set(cacheKey, { content, timestamp: Date.now() });
+        fetchCache.set(cacheKey, { content, title: '', extractor: 'backend', timestamp: Date.now() });
         return JSON.stringify({ url, prompt, content, cached: false });
       } catch (err) {
-        const message = err instanceof Error ? err.message : String(err);
-        return JSON.stringify({ error: `Web fetch failed: ${message}` });
+        return JSON.stringify({ error: `Web fetch failed: ${err instanceof Error ? err.message : String(err)}` });
       }
     }
 
-    // Default: native fetch with HTML stripping
+    // Default pipeline
+    const start = Date.now();
     try {
-      // GitHub repos: use API to get README instead of huge HTML page
+      // GitHub repo: fast path via raw README
       const ghMatch = parsedUrl.pathname.match(/^\/([^/]+)\/([^/]+)\/?$/);
       if (parsedUrl.hostname === 'github.com' && ghMatch) {
         const [, owner, repo] = ghMatch;
-        const readmeUrl = `https://raw.githubusercontent.com/${owner}/${repo}/HEAD/README.md`;
-        const readmeResp = await fetch(readmeUrl, {
-          headers: { 'User-Agent': 'Jarvis/0.1 (web-fetch)' },
-          signal: AbortSignal.timeout(15_000),
-        });
-        if (readmeResp.ok) {
-          let content = await readmeResp.text();
-          if (content.length > 50_000) content = content.slice(0, 50_000) + '\n\n... [truncated]';
-          fetchCache.set(cacheKey, { content, timestamp: Date.now() });
-          return JSON.stringify({ url, prompt, content, source: 'github-readme', cached: false });
+        const readme = await fetchGitHubReadme(owner, repo);
+        if (readme) {
+          fetchCache.set(cacheKey, { content: readme.text, title: readme.title, extractor: 'github-readme', timestamp: Date.now() });
+          return JSON.stringify({
+            url, prompt,
+            title: readme.title,
+            content: readme.text,
+            extractor: 'github-readme',
+            tookMs: Date.now() - start,
+            cached: false,
+          });
         }
-        // Fall through to normal fetch if README not found
       }
 
+      // General fetch
       const response = await fetch(url, {
         headers: {
-          'User-Agent': 'Jarvis/0.1 (web-fetch)',
+          'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 14_7_2) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
           Accept: 'text/html, text/plain, */*',
         },
         signal: AbortSignal.timeout(30_000),
       });
 
       if (!response.ok) {
-        return JSON.stringify({
-          error: `HTTP ${response.status}: ${response.statusText}`,
-          url,
-        });
+        return JSON.stringify({ error: `HTTP ${response.status}: ${response.statusText}`, url });
       }
 
       const contentType = response.headers.get('content-type') ?? '';
-      // Reject huge pages upfront to avoid hanging on multi-MB HTML
       const contentLength = Number(response.headers.get('content-length') ?? '0');
-      if (contentLength > 1_000_000) {
+      if (contentLength > MAX_RESPONSE_BYTES) {
         return JSON.stringify({
-          error: `Page too large (${Math.round(contentLength / 1024)}KB). Use specialized tools for large pages.`,
+          error: `Page too large (${Math.round(contentLength / 1024)}KB). Max is ${MAX_RESPONSE_BYTES / 1024}KB.`,
           url,
-          contentLength,
         });
       }
+
       const raw = await response.text();
+      let title = '';
+      let text = '';
+      let extractor = 'raw';
 
-      let content: string;
-      if (contentType.includes('text/html')) {
-        content = stripHtml(raw);
+      if (contentType.includes('text/markdown')) {
+        // Server returned markdown directly (e.g. Cloudflare Markdown for Agents)
+        text = raw;
+        extractor = 'markdown';
+      } else if (contentType.includes('text/html') || raw.trimStart().startsWith('<!doctype') || raw.trimStart().startsWith('<html')) {
+        // Try Readability first (Firefox reader mode algorithm)
+        const readable = await extractReadableContent(raw, url);
+        if (readable?.text) {
+          title = readable.title;
+          text = readable.text;
+          extractor = 'readability';
+        } else {
+          // Fallback to basic HTML→markdown
+          const basic = basicHtmlToMarkdown(raw);
+          title = basic.title;
+          text = basic.text;
+          extractor = 'basic-html';
+        }
+      } else if (contentType.includes('application/json')) {
+        try {
+          text = JSON.stringify(JSON.parse(raw), null, 2);
+          extractor = 'json';
+        } catch {
+          text = raw;
+        }
       } else {
-        content = raw;
+        text = raw;
       }
 
-      // Truncate to reasonable size
-      if (content.length > 50_000) {
-        content = content.slice(0, 50_000) + '\n\n... [truncated]';
+      // Truncate
+      if (text.length > MAX_CONTENT_CHARS) {
+        text = text.slice(0, MAX_CONTENT_CHARS) + '\n\n... [truncated]';
       }
 
-      fetchCache.set(cacheKey, { content, timestamp: Date.now() });
+      fetchCache.set(cacheKey, { content: text, title, extractor, timestamp: Date.now() });
 
       return JSON.stringify({
-        url,
-        prompt,
-        content,
+        url, prompt,
+        title,
+        content: text,
+        extractor,
         contentType,
-        contentLength: raw.length,
+        tookMs: Date.now() - start,
         cached: false,
       });
     } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      return JSON.stringify({ error: `Web fetch failed: ${message}`, url });
+      return JSON.stringify({ error: `Web fetch failed: ${err instanceof Error ? err.message : String(err)}`, url });
     }
   };
 }
 
-// ---- static tool entry (for allBuiltinTools) ----
+// ---- static tool entry ----
 
 const webFetchHandler: ToolHandler = createWebFetchHandler();
 
@@ -190,5 +335,5 @@ export const webFetchTool: ToolEntry = {
   handler: webFetchHandler,
   isAsync: true,
   emoji: '📄',
-  maxResultSizeChars: 50_000,
+  maxResultSizeChars: MAX_CONTENT_CHARS,
 };

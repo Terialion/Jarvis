@@ -18,9 +18,12 @@
   },
   "dependencies": {
     "@jarvis/shared": "workspace:*",
+    "@mozilla/readability": "^0.6.0",
+    "linkedom": "^0.18.12",
     "pdf-parse": "^2.4.5"
   },
   "devDependencies": {
+    "@types/mozilla-readability": "^0.2.1",
     "typescript": "^5.8.0",
     "vitest": "^3.0.0"
   }
