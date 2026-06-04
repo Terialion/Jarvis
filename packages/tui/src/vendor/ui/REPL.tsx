@@ -240,7 +240,7 @@ export function REPL({
   const [scrollPositionKind, setScrollPositionKind] = useState<"following" | "history" | "selection">("following");
   const submittingRef = useRef(false);
   const hasSelection = useHasSelection();
-  const { clearSelection, copySelectionNoClear } = useSelection();
+  const { clearSelection, copySelectionNoClear, shiftSelection, captureScrolledRows } = useSelection();
 
   const history = externalHistory ?? internalHistory;
   const overlaysOpen =
@@ -272,6 +272,20 @@ export function REPL({
 
   const handleViewportScrollBy = useCallback(
     (dy: number) => {
+      // Shift text selection to track the scrolled content
+      if (hasSelection && dy !== 0) {
+        const maxRow = process.stdout.rows ?? 40;
+        // Capture rows scrolling out of view so they remain copyable
+        if (dy > 0) {
+          // Content moves up: rows at the top scroll out
+          captureScrolledRows(0, dy - 1, "above");
+        } else {
+          // Content moves down: rows at the bottom scroll out
+          captureScrolledRows(maxRow + dy, maxRow - 1, "below");
+        }
+        // Shift selection: content at row R moves to row R-dy
+        shiftSelection(-dy, 0, maxRow);
+      }
       scrollRef.current?.scrollBy(dy);
       const nextKind = hasSelection ? "selection" : "history";
       stopFollowingOutput(nextKind);
@@ -287,7 +301,7 @@ export function REPL({
         }, 0);
       }
     },
-    [getRemainingScrollDistance, hasSelection, resumeFollowingOutput, stopFollowingOutput],
+    [captureScrolledRows, getRemainingScrollDistance, hasSelection, resumeFollowingOutput, shiftSelection, stopFollowingOutput],
   );
 
   const handleViewportScrollToTop = useCallback(() => {
