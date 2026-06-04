@@ -2,7 +2,12 @@
 // TUI module tests
 // ============================================================================
 
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi, afterEach } from 'vitest';
+
+afterEach(() => {
+  vi.resetModules();
+  vi.restoreAllMocks();
+});
 
 describe('TUI module exports', () => {
   it('exports renderTUI', async () => {
@@ -55,5 +60,27 @@ describe('entry.tsx renderTUI', () => {
     const mod = await import('../entry.js');
     expect(mod.renderTUI).toBeDefined();
     expect(typeof mod.renderTUI).toBe('function');
+  });
+
+  it('disables Ink immediate exit on Ctrl+C for interactive sessions', async () => {
+    const renderMock = vi.fn(async () => ({
+      waitUntilExit: vi.fn(async () => undefined),
+    }));
+
+    vi.doMock('../vendor/ink-renderer/index.js', () => ({
+      render: renderMock,
+    }));
+
+    const mod = await import('../entry.js');
+    await mod.renderTUI({
+      model: 'deepseek-v4-pro',
+      maxTurns: 30,
+    });
+
+    expect(renderMock).toHaveBeenCalledTimes(1);
+    const firstCall = renderMock.mock.calls[0] as unknown[] | undefined;
+    expect(firstCall?.[1]).toMatchObject({
+      exitOnCtrlC: false,
+    });
   });
 });

@@ -8,6 +8,7 @@ import {
 } from "../vendor/ui/MessageList.js";
 import { computeMatches } from "../vendor/ui/SearchOverlay.js";
 import { buildCodexTimelineState } from "../presentation/codex-timeline-state.js";
+import { DEFAULT_BINDINGS } from "../vendor/ui/keybindings/defaultBindings.js";
 
 describe("computeMatches", () => {
   it("finds case-insensitive matches across messages", () => {
@@ -63,6 +64,13 @@ describe("buildStatusSegments", () => {
 
     expect(segments[1]?.content).toBe("model deepseek-v4-pro");
     expect(segments[2]?.content).toBe("state Question");
+  });
+});
+
+describe("default scroll keybindings", () => {
+  it("includes an End shortcut for resuming follow mode", () => {
+    const scrollBlock = DEFAULT_BINDINGS.find((block) => block.context === "Scroll");
+    expect(scrollBlock?.bindings.end).toBe("scroll:bottom");
   });
 });
 

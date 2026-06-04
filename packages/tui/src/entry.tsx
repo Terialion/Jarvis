@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { render } from './vendor/ink-renderer/index.js';
 import { App } from './app.js';
+import { TuiShell } from './TuiShell.js';
 import type { TUIOptions } from './types.js';
 import { SetupScreen } from './SetupScreen.js';
 import { needsJarvisOnboarding, resolveJarvisConfigDefaults, type JarvisConfig } from '@jarvis/shared';
@@ -52,10 +53,16 @@ function BootApp({ options }: { options: TUIOptions }) {
     );
   }
 
-  return <App options={runtimeOptions} />;
+  return (
+    <TuiShell>
+      <App options={runtimeOptions} />
+    </TuiShell>
+  );
 }
 
 export async function renderTUI(options: TUIOptions): Promise<void> {
-  const instance = await render(<BootApp options={options} />);
+  const instance = await render(<BootApp options={options} />, {
+    exitOnCtrlC: false,
+  });
   await instance.waitUntilExit();
 }

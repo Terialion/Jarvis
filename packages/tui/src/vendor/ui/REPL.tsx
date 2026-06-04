@@ -1,13 +1,24 @@
-import { Box, Text, type Key, useApp, useInput, ScrollBox } from "../ink-renderer/index.js";
+import {
+  Box,
+  Text,
+  type Key,
+  useApp,
+  useHasSelection,
+  useInput,
+  useSelection,
+  ScrollBox,
+  type ScrollBoxHandle,
+} from "../ink-renderer/index.js";
 import { AgentsPanel, type AgentStatusEntry } from "./AgentsPanel";
-import type React from "react";
-import { useCallback, useMemo, useRef, useState } from "react";
+import React from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { AskUserQuestion } from "./AskUserQuestion";
 import { PlanReview } from "./PlanReview";
 import type { AskQuestionDef } from "@jarvis/tools";
 import type { ThreadEvent, ModelInfo } from "@jarvis/agent";
 import { CodexTimeline } from "../../presentation/CodexTimeline.js";
 import { HelpPopup, type HelpCommandEntry } from "./HelpPopup";
+import { ShellTextPanel } from "./ShellTextPanel";
 import {
   buildCodexTimelineState,
   buildSearchExcerpt,
@@ -27,6 +38,8 @@ import { Spinner } from "./Spinner";
 import { StatusLine, type StatusLineSegment } from "./StatusLine";
 import type { SearchMatch } from "./SearchOverlay";
 import type { TuiPresentationMode } from "../../presentation/contracts.js";
+import { useRegisterKeybindingContext } from "./keybindings/KeybindingContext";
+import { useKeybindings } from "./keybindings/useKeybinding";
 
 type REPLCommand = {
   name: string;
@@ -35,8 +48,10 @@ type REPLCommand = {
 };
 
 export type StatusDetailLine = {
-  content: string;
+  content?: string;
   color?: "green" | "yellow" | "red" | "cyan" | "gray";
+  emphasis?: boolean;
+  segments?: StatusLineSegment[];
 };
 
 type PermissionRequestState = {
@@ -112,11 +127,15 @@ export type REPLProps = {
   helpPopupOpen?: boolean;
   helpPopupCommands?: HelpCommandEntry[];
   onHelpPopupClose?: () => void;
+  contextPanel?: { title: string; subtitle?: string; lines: string[] } | null;
+  onContextPanelClose?: () => void;
+  mcpPanel?: { title: string; subtitle?: string; lines: string[] } | null;
+  onMcpPanelClose?: () => void;
 
   prefix?: string;
   placeholder?: string;
   history?: string[];
-  /** Called when a prompt is submitted — parent can persist to disk */
+  /** Called when a prompt is submitted - parent can persist to disk */
   onHistoryAdd?: (entry: string) => void;
 
   renderMessage?: (message: Message) => React.ReactNode;
@@ -198,8 +217,13 @@ export function REPL({
   helpPopupOpen = false,
   helpPopupCommands = [],
   onHelpPopupClose,
+  contextPanel = null,
+  onContextPanelClose,
+  mcpPanel = null,
+  onMcpPanelClose,
 }: REPLProps): React.ReactNode {
   const { exit } = useApp();
+  const scrollRef = useRef<ScrollBoxHandle | null>(null);
   const [inputValue, setInputValue] = useState("");
   const [showAgents, setShowAgents] = useState(false);
   // Auto-show agents panel when agents are active, hide when all done
@@ -212,9 +236,110 @@ export function REPL({
   const [activeSearchMatch, setActiveSearchMatch] = useState<SearchMatch | null>(null);
   const [thinkingExpanded, setThinkingExpanded] = useState(false);
   const [toolResultsExpanded, setToolResultsExpanded] = useState(false);
+  const [followOutput, setFollowOutput] = useState(true);
+  const [scrollPositionKind, setScrollPositionKind] = useState<"following" | "history" | "selection">("following");
   const submittingRef = useRef(false);
+  const hasSelection = useHasSelection();
+  const { clearSelection, copySelectionNoClear } = useSelection();
 
   const history = externalHistory ?? internalHistory;
+  const overlaysOpen =
+    searchOpen || modelSelectorOpen || effortSelectorOpen || helpPopupOpen || !!contextPanel || !!mcpPanel;
+  const viewportHotkeysActive = !overlaysOpen && !agentsFocused;
+
+  useRegisterKeybindingContext("Chat", !overlaysOpen && !planReview);
+  useRegisterKeybindingContext("Scroll", viewportHotkeysActive);
+
+  const stopFollowingOutput = useCallback(
+    (kind: "history" | "selection" = "history") => {
+      setFollowOutput(false);
+      setScrollPositionKind(kind);
+    },
+    [],
+  );
+
+  const getRemainingScrollDistance = useCallback(() => {
+    const handle = scrollRef.current;
+    if (!handle) return Number.POSITIVE_INFINITY;
+    return Math.max(0, handle.getScrollHeight() - handle.getViewportHeight() - handle.getScrollTop());
+  }, []);
+
+  const resumeFollowingOutput = useCallback(() => {
+    scrollRef.current?.scrollToBottom();
+    setFollowOutput(true);
+    setScrollPositionKind("following");
+  }, []);
+
+  const handleViewportScrollBy = useCallback(
+    (dy: number) => {
+      scrollRef.current?.scrollBy(dy);
+      const nextKind = hasSelection ? "selection" : "history";
+      stopFollowingOutput(nextKind);
+      if (dy > 0) {
+        setTimeout(() => {
+          if (hasSelection) return;
+          const remaining = getRemainingScrollDistance();
+          if (remaining <= 2) {
+            resumeFollowingOutput();
+          } else {
+            setScrollPositionKind(nextKind);
+          }
+        }, 0);
+      }
+    },
+    [getRemainingScrollDistance, hasSelection, resumeFollowingOutput, stopFollowingOutput],
+  );
+
+  const handleViewportScrollToTop = useCallback(() => {
+    scrollRef.current?.scrollTo(0);
+    stopFollowingOutput(hasSelection ? "selection" : "history");
+  }, [hasSelection, stopFollowingOutput]);
+
+  useEffect(() => {
+    if (hasSelection) {
+      stopFollowingOutput("selection");
+      return;
+    }
+    if (!followOutput && getRemainingScrollDistance() <= 2) {
+      resumeFollowingOutput();
+      return;
+    }
+    if (followOutput) {
+      setScrollPositionKind("following");
+      return;
+    }
+    setScrollPositionKind("history");
+  }, [followOutput, getRemainingScrollDistance, hasSelection, resumeFollowingOutput, stopFollowingOutput]);
+
+  useKeybindings(
+    {
+      "scroll:pageUp": () => {
+        const amount = Math.max(1, Math.floor((scrollRef.current?.getViewportHeight() ?? 20) * 0.85));
+        handleViewportScrollBy(-amount);
+      },
+      "scroll:pageDown": () => {
+        const amount = Math.max(1, Math.floor((scrollRef.current?.getViewportHeight() ?? 20) * 0.85));
+        handleViewportScrollBy(amount);
+      },
+      "scroll:lineUp": () => {
+        handleViewportScrollBy(-3);
+      },
+      "scroll:lineDown": () => {
+        handleViewportScrollBy(3);
+      },
+      "scroll:top": () => {
+        handleViewportScrollToTop();
+      },
+      "scroll:bottom": () => {
+        resumeFollowingOutput();
+      },
+      "selection:copy": () => {
+        if (!hasSelection) return false;
+        copySelectionNoClear();
+      },
+    },
+    { context: "Scroll", isActive: viewportHotkeysActive },
+  );
 
   const messageContents = messages.map((m) =>
     typeof m.content === "string"
@@ -277,7 +402,37 @@ export function REPL({
 
   useInput(
     (_input: string, key: Key) => {
-      // Agents panel focus mode — route keys to panel
+      if (viewportHotkeysActive) {
+        if (key.pageUp) {
+          const amount = Math.max(1, Math.floor((scrollRef.current?.getViewportHeight() ?? 20) * 0.85));
+          handleViewportScrollBy(-amount);
+          return;
+        }
+        if (key.pageDown) {
+          const amount = Math.max(1, Math.floor((scrollRef.current?.getViewportHeight() ?? 20) * 0.85));
+          handleViewportScrollBy(amount);
+          return;
+        }
+        if (key.ctrl && key.home) {
+          handleViewportScrollToTop();
+          return;
+        }
+        if (key.end || (key.ctrl && key.end)) {
+          resumeFollowingOutput();
+          return;
+        }
+      }
+
+      if (hasSelection && key.escape) {
+        clearSelection();
+        return;
+      }
+      if (hasSelection && key.ctrl && _input === "c") {
+        lastCtrlCPressRef.current = 0;
+        copySelectionNoClear();
+        return;
+      }
+      // Agents panel focus mode 鈥?route keys to panel
       if (agentsFocused && agentsPanelVisible) {
         if (_input === "q" || key.escape || (key.ctrl && _input === "g")) {
           setAgentsFocused(false);
@@ -349,23 +504,25 @@ export function REPL({
           setThinkingExpanded((prev) => !prev);
         }
       }
-      // Ctrl+G handled earlier for focus/panel toggle — skip here
+      // Ctrl+G handled earlier for focus/panel toggle 鈥?skip here
       if (key.ctrl && _input === "o") {
         setToolResultsExpanded((prev) => !prev);
       }
-      // Shift+Tab: cycle permission modes (suggest → auto-edit → full-auto → suggest)
+      // Shift+Tab: cycle permission modes (suggest 鈫?auto-edit 鈫?full-auto 鈫?suggest)
       if (key.tab && key.shift) {
         onPermissionModeCycle?.();
       }
     },
     // Deactivate when search, model, or effort selector overlays are open
-    { isActive: !searchOpen && !modelSelectorOpen && !effortSelectorOpen },
+    { isActive: !overlaysOpen },
   );
 
   const resolvedSegments = statusSegments ?? buildDefaultSegments(model);
   const showWelcome = welcome && messages.length === 0 && threadEvents.length === 0 && !isLoading;
   const showPermission = !!permissionRequest;
   const messageAreaFlexGrow = showWelcome ? 0 : 1;
+  const contentAreaFlexGrow = showWelcome ? 0 : 1;
+  const planSidebarWidth = 52;
   const codexState = useMemo(
     () =>
       buildCodexTimelineState({
@@ -427,9 +584,38 @@ export function REPL({
     };
   }, [activeSearchMatch, codexState.searchDocuments, presentationMode, searchQuery]);
 
-  return (
-    <Box flexDirection="column" flexGrow={1}>
-      <ScrollBox flexDirection="column" flexGrow={messageAreaFlexGrow} stickyScroll>
+  const finalViewportStatusLine = useMemo((): StatusDetailLine => {
+    if (scrollPositionKind === "selection") {
+      return {
+        content: "[Selection mode] Follow paused | Ctrl+C copies | Esc clears | End resumes live output",
+        color: "cyan",
+        emphasis: true,
+      };
+    }
+    if (scrollPositionKind === "history") {
+      return {
+        content: "[History mode] Follow paused | Scroll freely | End resumes live output",
+        color: "yellow",
+        emphasis: true,
+      };
+    }
+    return {
+      content: isLoading
+        ? "[Live mode] Following output | pinned to the newest live step"
+        : "[Live mode] Following output | pinned to the latest message",
+      color: "green",
+      emphasis: true,
+    };
+  }, [isLoading, scrollPositionKind]);
+
+  const combinedStatusDetailLines = useMemo(
+    () => [finalViewportStatusLine, ...statusDetailLines],
+    [finalViewportStatusLine, statusDetailLines],
+  );
+
+  const transcriptBody = useMemo(
+    () => (
+      <>
         {showWelcome && <Box marginBottom={0}>{welcome}</Box>}
 
         {presentationMode === "codex" ? (
@@ -462,7 +648,50 @@ export function REPL({
             )}
           </Box>
         )}
-      </ScrollBox>
+      </>
+    ),
+    [
+      activeSearchMatch,
+      codexSearchState,
+      codexState,
+      isLoading,
+      messages,
+      presentationMode,
+      renderMessage,
+      searchQuery,
+      showWelcome,
+      spinner,
+      spinnerCompleted,
+      spinnerDetails,
+      spinnerRunning,
+      spinnerStatus,
+      spinnerTokenCount,
+      spinnerVerb,
+      streamingContent,
+      streamingElapsedMs,
+      streamingThinking,
+      thinkingExpanded,
+      toolResultsExpanded,
+      welcome,
+    ],
+  );
+
+  const shellScrollableBody = (
+    <Box flexDirection="column" width="100%">
+      <Box flexDirection="row" flexGrow={contentAreaFlexGrow}>
+        <Box flexDirection="column" flexGrow={messageAreaFlexGrow}>
+          {transcriptBody}
+        </Box>
+
+        {planReview && (
+          <Box width={planSidebarWidth} flexShrink={0} marginLeft={1}>
+            <PlanReview
+              plan={planReview}
+              selectedIndex={planReviewIndex}
+            />
+          </Box>
+        )}
+      </Box>
 
       <AgentsPanel
         agents={agents ?? []}
@@ -515,10 +744,23 @@ export function REPL({
         />
       )}
 
-      {planReview && (
-        <PlanReview
-          plan={planReview}
-          selectedIndex={planReviewIndex}
+      {contextPanel && (
+        <ShellTextPanel
+          title={contextPanel.title}
+          subtitle={contextPanel.subtitle}
+          lines={contextPanel.lines}
+          accentColor="cyan"
+          onClose={() => onContextPanelClose?.()}
+        />
+      )}
+
+      {mcpPanel && (
+        <ShellTextPanel
+          title={mcpPanel.title}
+          subtitle={mcpPanel.subtitle}
+          lines={mcpPanel.lines}
+          accentColor="yellow"
+          onClose={() => onMcpPanelClose?.()}
         />
       )}
 
@@ -546,7 +788,7 @@ export function REPL({
           onSubmit={handleSubmit}
           prefix={prefix}
           placeholder={placeholder}
-          disabled={searchOpen || modelSelectorOpen}
+          disabled={overlaysOpen || !!planReview}
           isLoading={isLoading}
           commands={promptCommands}
           history={history}
@@ -558,15 +800,41 @@ export function REPL({
       <Divider />
 
       {resolvedSegments.length > 0 && <StatusLine segments={resolvedSegments} />}
-      {statusDetailLines.length > 0 && (
+      {combinedStatusDetailLines.length > 0 && (
         <Box flexDirection="column" paddingX={1}>
-          {statusDetailLines.map((line, index) => (
-            <Text key={`${index}:${line.content}`} dimColor color={line.color}>
-              {line.content}
-            </Text>
+          {combinedStatusDetailLines.map((line, index) => (
+            line.segments && line.segments.length > 0 ? (
+              <Box key={`${index}:segments`} flexDirection="row">
+                {line.segments.map((segment, segmentIndex) => (
+                  <React.Fragment key={`${index}:${segmentIndex}:${segment.content}`}>
+                    {segmentIndex > 0 && <Text dimColor>{' | '}</Text>}
+                    <Text dimColor={line.emphasis ? false : true} color={segment.color}>
+                      {segment.content}
+                    </Text>
+                  </React.Fragment>
+                ))}
+              </Box>
+            ) : (
+              <Text key={`${index}:${line.content ?? ''}`} dimColor={line.emphasis ? false : true} color={line.color}>
+                {line.content ?? ""}
+              </Text>
+            )
           ))}
         </Box>
       )}
+    </Box>
+  );
+
+  return (
+    <Box flexDirection="column" flexGrow={1}>
+      <ScrollBox
+        ref={scrollRef}
+        flexDirection="column"
+        flexGrow={1}
+        stickyScroll={followOutput && !hasSelection}
+      >
+        {shellScrollableBody}
+      </ScrollBox>
     </Box>
   );
 }
@@ -575,3 +843,4 @@ function buildDefaultSegments(model?: string): StatusLineSegment[] {
   if (!model) return [];
   return [{ content: model, color: "green" }];
 }
+

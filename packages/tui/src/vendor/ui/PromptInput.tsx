@@ -475,7 +475,7 @@ export function PromptInput({
   };
 
   return (
-    <Box flexDirection="column">
+    <Box flexDirection="column" flexShrink={0} width="100%">
       {renderContent()}
       {hasSuggestions && (() => {
         const total = suggestions.length;

@@ -32,7 +32,7 @@ export const SLASH_COMMANDS: SlashCommandDef[] = [
     handler: (_args, _ctx) => {
       const lines: string[] = ['Available commands:\n'];
       for (const cmd of SLASH_COMMANDS) {
-        lines.push(`  /${cmd.name} — ${cmd.description}`);
+        lines.push(`  /${cmd.name} - ${cmd.description}`);
       }
       return lines.join('\n');
     },
@@ -427,13 +427,13 @@ export const SLASH_COMMANDS: SlashCommandDef[] = [
       const reverseMap: Record<string, string> = { 'workspace_write': 'suggest', 'accept_edits': 'auto-edit', 'bypass': 'full-auto' };
       if (args.length === 0) {
         const current = reverseMap[ctx.permissionModeRef.current] ?? ctx.permissionModeRef.current;
-        return `Current mode: ${current}\n\nAvailable modes:\n  suggest     — All changes require approval (default)\n  auto-edit   — File edits auto-approved, bash needs approval\n  full-auto   — Everything auto-approved (use with caution)\n  plan        — Read-only exploration, no writes allowed\n\nUsage: /mode <name>`;
+        return `Current mode: ${current}\n\nAvailable modes:\n  suggest     - All changes require approval (default)\n  auto-edit   - File edits auto-approved, bash needs approval\n  full-auto   - Everything auto-approved (use with caution)\n  plan        - Read-only exploration, no writes allowed\n\nUsage: /mode <name>`;
       }
       const input = args[0].toLowerCase();
       const entry = MODE_MAP[input];
       if (!entry) return `Unknown mode "${input}". Options: suggest, auto-edit, full-auto, plan`;
       ctx.permissionModeRef.current = entry.perm; saveSettings({ permission_mode: entry.perm as UserSettings['permission_mode'] }); ctx.invalidateAgent();
-      return `Mode: ${entry.label} — ${entry.description}`;
+      return `Mode: ${entry.label} - ${entry.description}`;
     },
   },
   {
@@ -523,7 +523,7 @@ export const SLASH_COMMANDS: SlashCommandDef[] = [
       if (filtered.length === 0) return `No skills matching "${search}".`;
       const lines = filtered.map((s) => {
         const tagStr = s.tags?.length ? ` [${s.tags.join(', ')}]` : '';
-        return `  ${s.name}${tagStr} — ${s.description}`;
+        return `  ${s.name}${tagStr} - ${s.description}`;
       });
       const header = search ? `Skills matching "${search}" (${filtered.length}):` : `Available skills (${filtered.length}):`;
       return `${header}\n\n${lines.join('\n')}`;

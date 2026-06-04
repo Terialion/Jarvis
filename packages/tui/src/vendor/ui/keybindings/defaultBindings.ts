@@ -198,6 +198,7 @@ export const DEFAULT_BINDINGS: KeybindingBlock[] = [
       pagedown: "scroll:pageDown",
       wheelup: "scroll:lineUp",
       wheeldown: "scroll:lineDown",
+      end: "scroll:bottom",
       "ctrl+home": "scroll:top",
       "ctrl+end": "scroll:bottom",
       // Selection copy. ctrl+shift+c is standard terminal copy.

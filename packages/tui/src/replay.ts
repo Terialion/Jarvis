@@ -6,6 +6,7 @@ import { parseArgs } from "node:util";
 import React from "react";
 import stripAnsi from "strip-ansi";
 import { App } from "./app.js";
+import { TuiShell } from "./TuiShell.js";
 import type { TUIDebugEvent, TUIOptions } from "./types.js";
 import { createRoot, type RenderOptions } from "./vendor/ink-renderer/root.js";
 import { loadJarvisConfig } from "@jarvis/shared";
@@ -13,7 +14,21 @@ import { loadJarvisConfig } from "@jarvis/shared";
 export type ReplayAction =
   | { type: "text"; value: string; delayMs?: number }
   | { type: "wait"; ms: number }
-  | { type: "key"; key: "enter" | "escape" | "backspace" | "ctrl+o" | "ctrl+f"; count?: number; delayMs?: number };
+  | {
+      type: "key";
+      key:
+        | "enter"
+        | "escape"
+        | "backspace"
+        | "ctrl+c"
+        | "ctrl+o"
+        | "ctrl+f"
+        | "pageup"
+        | "pagedown"
+        | "end";
+      count?: number;
+      delayMs?: number;
+    };
 
 type ReplayKeyAction = Extract<ReplayAction, { type: "key" }>;
 
@@ -35,6 +50,7 @@ export type ReplayOptions = TUIOptions & {
   snapshotDir: string;
   width: number;
   height: number;
+  shellMode: boolean;
 };
 
 function loadEnvFile(filePath: string): void {
@@ -182,6 +198,7 @@ function parseReplayArgs(argv: string[] = process.argv): ReplayOptions {
       "snapshot-dir": { type: "string" },
       width: { type: "string", default: "120" },
       height: { type: "string", default: "40" },
+      "shell-mode": { type: "boolean", default: false },
     },
     allowPositionals: false,
   });
@@ -233,6 +250,7 @@ function parseReplayArgs(argv: string[] = process.argv): ReplayOptions {
     snapshotDir: resolve(snapshotDir),
     width: Number.parseInt(values["width"] as string, 10) || 120,
     height: Number.parseInt(values["height"] as string, 10) || 40,
+    shellMode: Boolean(values["shell-mode"]),
   };
 }
 
@@ -304,10 +322,18 @@ function mapReplayKey(key: ReplayKeyAction["key"]): string {
       return "\u001b";
     case "backspace":
       return "\b";
+    case "ctrl+c":
+      return "\u0003";
     case "ctrl+o":
       return "\u000f";
     case "ctrl+f":
       return "\u0006";
+    case "pageup":
+      return "\u001b[5~";
+    case "pagedown":
+      return "\u001b[6~";
+    case "end":
+      return "\u001b[F";
     default:
       return "";
   }
@@ -399,6 +425,38 @@ async function runActionScript(
   }
 }
 
+async function sendPromptSequence(
+  stdin: FakeTTYInput,
+  options: ReplayOptions,
+  debugEvents: TUIDebugEvent[],
+): Promise<void> {
+  const prompts = options.prompts && options.prompts.length > 0 ? options.prompts : [options.prompt];
+
+  for (let promptIndex = 0; promptIndex < prompts.length; promptIndex += 1) {
+    const prompt = prompts[promptIndex]!;
+    const baselineEvents = debugEvents.length;
+    stdin.send(prompt);
+    const submits =
+      options.prompts && options.prompts.length > 0
+        ? (prompt.startsWith("/") ? 2 : 1)
+        : options.submitCount;
+
+    for (let i = 0; i < submits; i += 1) {
+      await sleep(60);
+      stdin.send("\r");
+    }
+
+    if (promptIndex < prompts.length - 1) {
+      if (prompt.startsWith("/")) {
+        await sleep(options.betweenPromptsMs);
+      } else {
+        await waitForRunCompletion(debugEvents, baselineEvents, options.waitMs);
+        await sleep(options.betweenPromptsMs);
+      }
+    }
+  }
+}
+
 export async function runReplay(options: ReplayOptions): Promise<void> {
   const outputDir = options.snapshotDir;
   const framesDir = join(outputDir, "frames");
@@ -442,34 +500,21 @@ export async function runReplay(options: ReplayOptions): Promise<void> {
       },
     },
   };
-  root.render(React.createElement(App, { options: replayAppOptions }));
+  root.render(
+    options.shellMode
+      ? React.createElement(
+          TuiShell,
+          null,
+          React.createElement(App, { options: replayAppOptions }),
+        )
+      : React.createElement(App, { options: replayAppOptions }),
+  );
 
   await sleep(options.inputDelayMs);
+  await sendPromptSequence(stdin, options, debugEvents);
+
   if (options.actionScript && options.actionScript.length > 0) {
     await runActionScript(stdin, options, debugEvents);
-  } else {
-    const prompts = options.prompts && options.prompts.length > 0 ? options.prompts : [options.prompt];
-    for (let promptIndex = 0; promptIndex < prompts.length; promptIndex += 1) {
-      const prompt = prompts[promptIndex]!;
-      const baselineEvents = debugEvents.length;
-      stdin.send(prompt);
-      const submits =
-        options.prompts && options.prompts.length > 0
-          ? (prompt.startsWith("/") ? 2 : 1)
-          : options.submitCount;
-      for (let i = 0; i < submits; i += 1) {
-        await sleep(60);
-        stdin.send("\r");
-      }
-      if (promptIndex < prompts.length - 1) {
-        if (prompt.startsWith("/")) {
-          await sleep(options.betweenPromptsMs);
-        } else {
-          await waitForRunCompletion(debugEvents, baselineEvents, options.waitMs);
-          await sleep(options.betweenPromptsMs);
-        }
-      }
-    }
   }
 
   const interruptElapsed = await sendInterruptSequence(stdin, options);

@@ -31,7 +31,7 @@ import {
   tryCreateTavilySearch,
   tryCreateTavilyFetch,
 } from '@jarvis/tools';
-import type { AskQuestionDef, PlanReviewRequest, PlanReviewCallback } from '@jarvis/tools';
+import type { AskQuestionDef, PlanReviewRequest } from '@jarvis/tools';
 import type { PlanReviewDecision } from './vendor/ui/PlanReview';
 import { SkillRegistry, SkillExecutor } from '@jarvis/skills';
 import { SessionStore, MarkdownMemoryStore } from '@jarvis/store';
@@ -49,14 +49,46 @@ import type { CodexTaskSnapshot, CodexTurnSnapshot } from './presentation/codex-
 // Extracted modules
 import { buildReplCommands, resolveSlashCommand, SLASH_COMMANDS, makeSysMsg, type SlashCommandCtx, type REPLCommandDef, type LiveContextUsage } from './commands/index.js';
 import { getGitBranch, discoverPluginSkillDirs, discoverPluginMcpServers, discoverUserMcpServers, discoverProjectMcpServers } from './utils/discovery.js';
-import { extractModifiedFiles, safeJsonParse, computeFileChange, formatFileChangeSummary, FILE_MODIFYING_TOOLS, parseToolContent, type FileChange } from './utils/tool-formatters.js';
+import { buildContextPanelLines, resolveContextMode, type SkillTokenEntry, type ToolTokenEntry } from './context-panel.js';
 import { formatMcpDiagnostics, refreshMcpStatuses } from './utils/mcp-diagnostics.js';
+import { extractModifiedFiles, safeJsonParse, computeFileChange, formatFileChangeSummary, FILE_MODIFYING_TOOLS, parseToolContent, type FileChange } from './utils/tool-formatters.js';
 import { estimateTokensFromText, estimateMemoryEntries, buildContextProgressBar, estimateTurnTokenCount, buildMcpFooterLines } from './utils/token-estimation.js';
 import { decodeHtmlEntities } from './vendor/ui/utils/markdown.js';
 import { loadJarvisConfig } from '@jarvis/shared';
 import { resolveModelCredentials } from './utils/credentials.js';
 import { connectMcpServers } from '@jarvis/mcp';
 import { getCronScheduler } from '@jarvis/tools';
+
+function formatInlinePlanReview(plan: PlanReviewRequest): string {
+  const lines = [
+    `Updated plan: ${plan.summary}`,
+    '',
+    ...plan.steps.map((step, index) => {
+      const details = [
+        step.files?.length ? `[${step.files.join(', ')}]` : '',
+        step.verification ? `verify: ${step.verification}` : '',
+      ]
+        .filter(Boolean)
+        .join(' · ');
+      return `${index + 1}. ${step.step}${details ? ` · ${details}` : ''}`;
+    }),
+  ];
+
+  if (plan.allowedPrompts?.length) {
+    lines.push('', 'Required permissions:');
+    for (const prompt of plan.allowedPrompts) {
+      lines.push(`- ${prompt.tool}: ${prompt.prompt}`);
+    }
+  }
+
+  lines.push(
+    '',
+    'Tell me what to change if this plan needs edits.',
+    'Otherwise use Enter to proceed or Esc to cancel.',
+  );
+
+  return lines.join('\n');
+}
 
 export function App({ options }: { options: TUIOptions }): React.ReactNode {
   const [messages, setMessages] = useState<Message[]>([]);
@@ -109,6 +141,8 @@ export function App({ options }: { options: TUIOptions }): React.ReactNode {
 
   // Help popup state
   const [helpPopupOpen, setHelpPopupOpen] = useState(false);
+  const [contextPanel, setContextPanel] = useState<{ title: string; subtitle?: string; lines: string[] } | null>(null);
+  const [mcpPanel, setMcpPanel] = useState<{ title: string; subtitle?: string; lines: string[] } | null>(null);
 
   // Persistent command history — survives restarts like CC/Codex
   const HISTORY_FILE = join(process.cwd(), '.jarvis', 'history.json');
@@ -265,6 +299,104 @@ export function App({ options }: { options: TUIOptions }): React.ReactNode {
     setEffortSelectorOpen(false);
   }, []);
 
+  const openContextPanel = useCallback((args: string[]) => {
+    const msgCount = historyRef.current.length;
+    const messageTokens = Math.ceil(historyRef.current.reduce((sum, m) => sum + m.content.length, 0) / 4);
+    const snapshot = tokenTrackerRef.current?.snapshot();
+    const live = liveContextUsageRef.current;
+    const contextWindow = live?.contextWindow ?? snapshot?.contextWindow ?? 200_000;
+    const shortSid = (sessionIdRef.current ?? 'none').slice(-16);
+    const modelName = parseModelName(modelRef.current).cleanName;
+    const defaultSystemPrompt = buildSystemPrompt(modelName);
+    const systemPromptText = systemPromptRef.current?.trim()
+      ? `${defaultSystemPrompt}\n\n${systemPromptRef.current}`
+      : defaultSystemPrompt;
+    const systemPromptTokens = estimateTokensFromText(systemPromptText);
+    const memoryEntries = estimateMemoryEntries(cwd);
+    const skillEntries: SkillTokenEntry[] = (skillsRef.current?.listLoadable() ?? []).map((skill) => ({
+      name: skill.name,
+      source: skill.source,
+      tokens: estimateTokensFromText(`${skill.name}\n${skill.description}`),
+    }));
+    const allToolSchemas = toolsRef.current?.getDefinitions() ?? [];
+    const toolEntries: ToolTokenEntry[] = allToolSchemas.map((schema) => {
+      const fn = (schema as { function?: { name?: string } }).function?.name ?? 'unknown';
+      const serialized = JSON.stringify(schema);
+      return { name: fn, tokens: estimateTokensFromText(serialized), isMcp: typeof fn === 'string' && fn.toLowerCase().includes('mcp') };
+    });
+    const memoryTokens = memoryEntries.reduce((acc, item) => acc + item.tokens, 0);
+    const skillTokens = skillEntries.reduce((acc, item) => acc + item.tokens, 0);
+    const toolTokens = toolEntries.reduce((acc, item) => acc + item.tokens, 0);
+    const estimatedTotalTokens = live?.estimatedTotalTokens ?? (systemPromptTokens + toolTokens + memoryTokens + skillTokens + messageTokens);
+    const resolvedSystemPromptTokens = live?.systemPromptTokens ?? systemPromptTokens;
+    const resolvedMessageTokens = live?.conversationTokens ?? messageTokens;
+    const mode = resolveContextMode(args);
+    const lines = buildContextPanelLines({
+      mode,
+      modelName,
+      sessionId: shortSid,
+      messageCount: msgCount,
+      uiMessageCount: messages.length,
+      contextWindow,
+      estimatedTotalTokens,
+      providerReportedTokens: live?.usedTokens ?? snapshot?.totalTokens,
+      systemPromptTokens: resolvedSystemPromptTokens,
+      messageTokens: resolvedMessageTokens,
+      projectContextTokens: live?.projectContextTokens,
+      systemToolsTokens: live?.toolSchemasTokens,
+      mcpToolsTokens: live?.mcpToolsTokens,
+      memoryTokens: live?.memoryTokens,
+      skillsTokens: live?.skillsTokens,
+      conversationTokens: live?.conversationTokens,
+      memoryEntries,
+      skillEntries,
+      toolEntries,
+      mcpConfigured: mcpConfiguredRef.current.map((e) => ({ id: e.id, plugin: e.plugin, command: e.config.command })),
+      mcpStatuses: mcpStatusesRef.current.map((s) => ({ id: s.id, state: s.state, serverName: s.serverName, toolCount: s.toolCount, resourceCount: s.resourceCount, error: s.error })),
+    });
+    setHelpPopupOpen(false);
+    setMcpPanel(null);
+    setContextPanel({
+      title: mode === 'overview' ? 'Context Usage' : `Context Usage · ${mode}`,
+      subtitle: `${modelName} · session ${shortSid}`,
+      lines,
+    });
+  }, [cwd, messages.length]);
+
+  const openMcpPanel = useCallback(async (args: string[]) => {
+    const mode = (args[0] ?? '').toLowerCase();
+    let statuses = mcpStatusesRef.current;
+    if (statuses.length === 0 || statuses.every((s) => s.state === 'connecting' || s.state === 'retrying')) {
+      statuses = await refreshMcpStatuses({
+        mcpClientRef: mcpRef,
+        mcpConfiguredRef,
+        mcpStatusesRef,
+      });
+      setMcpStatusVersion((v) => v + 1);
+    }
+    const configured = mcpConfiguredRef.current;
+    const totalCount = statuses.length;
+    const readyCount = statuses.filter((s) => s.state === 'ready' || s.state === 'degraded').length;
+    const firstError = statuses.find((s) => s.error)?.error;
+    const lines = mode === 'full'
+      ? formatMcpDiagnostics(configured, statuses, mcpRef.current).split('\n')
+      : [
+          configured.length === 0
+            ? 'No MCP servers configured. Run mcp_bootstrap to add one, then restart Jarvis.'
+            : `Pinned MCP summary under status line (${readyCount}/${totalCount} ready).`,
+          ...(firstError ? ['', `First error: ${firstError}`] : []),
+          '',
+          ...formatMcpDiagnostics(configured, statuses, mcpRef.current).split('\n'),
+        ];
+    setHelpPopupOpen(false);
+    setContextPanel(null);
+    setMcpPanel({
+      title: mode === 'full' ? 'MCP Diagnostics' : 'MCP Summary',
+      subtitle: configured.length === 0 ? 'No configured servers' : `${readyCount}/${totalCount} ready`,
+      lines,
+    });
+  }, []);
+
   // Permission approval bridge — when PermissionManager blocks a tool, show UI and wait
   type PermissionRequestState = {
     toolName: string;
@@ -387,6 +519,7 @@ export function App({ options }: { options: TUIOptions }): React.ReactNode {
     setPlanReviewBridge((plan) => {
       return new Promise<PlanReviewDecision>((resolve) => {
         planReviewResolveRef.current = resolve;
+        setMessages((prev) => [...prev, makeSysMsg(formatInlinePlanReview(plan))]);
         setPlanReview(plan);
         setPlanReviewIndex(0);
       });
@@ -1357,15 +1490,15 @@ export function App({ options }: { options: TUIOptions }): React.ReactNode {
     }
     // Per-component breakdown (when available from context_usage_breakdown event)
     if (liveUsage) {
-      const parts: string[] = [];
-      if (liveUsage.systemPromptTokens) parts.push(`sys:${formatTokensCompact(liveUsage.systemPromptTokens)}`);
-      if (liveUsage.conversationTokens) parts.push(`msg:${formatTokensCompact(liveUsage.conversationTokens)}`);
-      if (liveUsage.skillsTokens) parts.push(`skills:${formatTokensCompact(liveUsage.skillsTokens)}`);
-      if (liveUsage.mcpToolsTokens) parts.push(`mcp:${formatTokensCompact(liveUsage.mcpToolsTokens)}`);
+      const parts: StatusLineSegment[] = [];
+      if (liveUsage.systemPromptTokens) parts.push({ content: `sys:${formatTokensCompact(liveUsage.systemPromptTokens)}`, color: 'cyan' });
+      if (liveUsage.conversationTokens) parts.push({ content: `msg:${formatTokensCompact(liveUsage.conversationTokens)}`, color: 'green' });
+      if (liveUsage.skillsTokens) parts.push({ content: `skills:${formatTokensCompact(liveUsage.skillsTokens)}`, color: 'yellow' });
+      if (liveUsage.mcpToolsTokens) parts.push({ content: `mcp:${formatTokensCompact(liveUsage.mcpToolsTokens)}`, color: 'red' });
       const toolTotal = (liveUsage.toolSchemasTokens ?? 0) + (liveUsage.mcpToolsTokens ?? 0);
-      if (toolTotal > 0 && !liveUsage.mcpToolsTokens) parts.push(`tools:${formatTokensCompact(toolTotal)}`);
+      if (toolTotal > 0 && !liveUsage.mcpToolsTokens) parts.push({ content: `tools:${formatTokensCompact(toolTotal)}`, color: 'yellow' });
       if (parts.length > 0) {
-        lines.push({ content: `  ${parts.join(' · ')}`, color: 'gray' });
+        lines.push({ segments: parts, emphasis: true });
       }
     }
     // Context window size guard — warn for small windows

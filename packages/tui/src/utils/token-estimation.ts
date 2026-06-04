@@ -37,7 +37,7 @@ export function estimateMemoryEntries(cwd: string): MemoryTokenEntry[] {
 
 export function buildContextProgressBar(percentRemaining?: number): StatusDetailLine | null {
   if (percentRemaining === undefined || !Number.isFinite(percentRemaining)) {
-    return { content: 'CTX [░░░░░░░░░░░░░░░░░░] used 0% · left 100%', color: 'gray' };
+    return { content: 'CTX [░░░░░░░░░░░░░░░░░░] used 0% | left 100%', color: 'gray' };
   }
   const width = 18;
   const left = Math.max(0, Math.min(100, percentRemaining));
@@ -46,7 +46,7 @@ export function buildContextProgressBar(percentRemaining?: number): StatusDetail
   const bar = `${'█'.repeat(filled)}${'░'.repeat(Math.max(0, width - filled))}`;
   const color: StatusDetailLine['color'] =
     used < 60 ? 'green' : used < 85 ? 'yellow' : 'red';
-  return { content: `CTX [${bar}] used ${used.toFixed(1)}% · left ${left.toFixed(1)}%`, color };
+  return { content: `CTX [${bar}] used ${used.toFixed(1)}% | left ${left.toFixed(1)}%`, color };
 }
 
 export function estimateTurnTokenCount(stats: {
@@ -65,16 +65,39 @@ export function estimateTurnTokenCount(stats: {
 export function buildMcpFooterLines(
   statuses: McpConnectionStatus[],
 ): StatusDetailLine[] {
-  if (statuses.length === 0) return [{ content: '[MCP --] waiting for status', color: 'gray' }];
+  if (statuses.length === 0) {
+    return [{
+      segments: [
+        { content: '[MCP --]', color: 'gray' },
+        { content: 'waiting for status', color: 'gray' },
+      ],
+      emphasis: true,
+    }];
+  }
   const ok = statuses.filter((s) => s.state === 'ready' || s.state === 'degraded');
   const failed = statuses.filter((s) => s.state === 'failed');
   const firstError = failed[0]?.error;
   const summaryColor: StatusDetailLine['color'] = failed.length > 0 ? 'red' : 'green';
   const summary = `[MCP ${ok.length}/${statuses.length}]`;
-  if (!firstError) return [{ content: summary, color: summaryColor }];
+  if (!firstError) {
+    return [{
+      segments: [
+        { content: summary, color: summaryColor },
+        { content: failed.length > 0 ? 'issues detected' : 'all servers healthy', color: summaryColor },
+      ],
+      emphasis: true,
+    }];
+  }
   const compactError = firstError.length > 92 ? `${firstError.slice(0, 92)}...` : firstError;
   return [
-    { content: summary, color: summaryColor },
+    {
+      segments: [
+        { content: summary, color: summaryColor },
+        { content: 'startup error', color: 'red' },
+      ],
+      emphasis: true,
+    },
     { content: `[MCP ERR] ${compactError}`, color: 'red' },
   ];
 }
+

@@ -20,6 +20,7 @@ function baseReplayOptions(): Omit<ReplayOptions, "prompt" | "snapshotDir"> {
     searchNextCount: 0,
     width: 120,
     height: 40,
+    shellMode: false,
   };
 }
 
