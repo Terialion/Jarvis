@@ -105,6 +105,24 @@ export function createWebFetchHandler(backend?: WebFetchBackend): ToolHandler {
 
     // Default: native fetch with HTML stripping
     try {
+      // GitHub repos: use API to get README instead of huge HTML page
+      const ghMatch = parsedUrl.pathname.match(/^\/([^/]+)\/([^/]+)\/?$/);
+      if (parsedUrl.hostname === 'github.com' && ghMatch) {
+        const [, owner, repo] = ghMatch;
+        const readmeUrl = `https://raw.githubusercontent.com/${owner}/${repo}/HEAD/README.md`;
+        const readmeResp = await fetch(readmeUrl, {
+          headers: { 'User-Agent': 'Jarvis/0.1 (web-fetch)' },
+          signal: AbortSignal.timeout(15_000),
+        });
+        if (readmeResp.ok) {
+          let content = await readmeResp.text();
+          if (content.length > 50_000) content = content.slice(0, 50_000) + '\n\n... [truncated]';
+          fetchCache.set(cacheKey, { content, timestamp: Date.now() });
+          return JSON.stringify({ url, prompt, content, source: 'github-readme', cached: false });
+        }
+        // Fall through to normal fetch if README not found
+      }
+
       const response = await fetch(url, {
         headers: {
           'User-Agent': 'Jarvis/0.1 (web-fetch)',
@@ -121,6 +139,15 @@ export function createWebFetchHandler(backend?: WebFetchBackend): ToolHandler {
       }
 
       const contentType = response.headers.get('content-type') ?? '';
+      // Reject huge pages upfront to avoid hanging on multi-MB HTML
+      const contentLength = Number(response.headers.get('content-length') ?? '0');
+      if (contentLength > 1_000_000) {
+        return JSON.stringify({
+          error: `Page too large (${Math.round(contentLength / 1024)}KB). Use specialized tools for large pages.`,
+          url,
+          contentLength,
+        });
+      }
       const raw = await response.text();
 
       let content: string;
