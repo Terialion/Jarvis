@@ -180,6 +180,7 @@ export class AgentLoop {
   private _paused = false;
   private _pausedResolve: (() => void) | null = null;
   private _activeToolAbortController: AbortController | null = null;
+  private _llmAbortController: AbortController | null = null;
 
   /** Signal the agent to pause at the next step boundary. */
   get paused(): boolean { return this._paused; }
@@ -191,6 +192,8 @@ export class AgentLoop {
   private resetLifecycleControl(): void {
     this._activeToolAbortController?.abort();
     this._activeToolAbortController = null;
+    this._llmAbortController?.abort();
+    this._llmAbortController = null;
     this._interrupted = false;
     this._paused = false;
     this._pausedResolve = null;
@@ -203,6 +206,7 @@ export class AgentLoop {
   interrupt(reason?: string): void {
     this._interrupted = true;
     this._activeToolAbortController?.abort();
+    this._llmAbortController?.abort();
     if (this._pausedResolve) {
       // If agent is paused, resume it so it can notice the interrupt
       this._pausedResolve();
@@ -2146,6 +2150,9 @@ export class AgentLoop {
   toolSpecs: Record<string, unknown>[],
   ): Promise<{ assistantText: string; reasoningSummary?: string; toolCalls: Array<{ callId: string; name: string; arguments: Record<string, unknown> }>; finalAnswer: string; finishReason: string }> {
     let lastError: unknown;
+    // Create a fresh LLM abort controller for this call so interrupt() can cancel the HTTP stream
+    this._llmAbortController = new AbortController();
+    const llmSignal = this._llmAbortController.signal;
     for (let attempt = 1; attempt <= 2; attempt++) {
       try {
         if ('complete' in this.provider && typeof this.provider.complete === 'function') {
@@ -2271,10 +2278,12 @@ export class AgentLoop {
                   this.config.onReasoningDelta?.(delta);
                 },
               },
+              llmSignal,
             )
           : await prov.chat(
               messages,
               toolSpecs,
+              llmSignal,
             );
         if (this.config.tokenTracker) {
           if (chatResp.usage) {
@@ -2344,6 +2353,10 @@ export class AgentLoop {
         };
       } catch (exc) {
         lastError = exc;
+        // Don't retry on abort — the user interrupted
+        if (this._interrupted || (exc instanceof DOMException && exc.name === 'AbortError')) {
+          throw exc;
+        }
         if (attempt < 2) {
           this._emit(events, turnId, 'retry_started', {
             step, reason: 'model_call_error', attempt, error_type: (exc as Error).constructor?.name,
@@ -2397,6 +2410,9 @@ export class AgentLoop {
 
   private _mapProviderErrorStopReason(exc: unknown): string {
     const lowered = `${(exc as Error).constructor?.name}: ${(exc as Error).message}`.toLowerCase();
+    if (this._interrupted || (exc instanceof DOMException && exc.name === 'AbortError')) {
+      return 'interrupted';
+    }
     if (/winerror 10013|access socket|permission|connection|timed out|timeout|refused|reset|certificate/.test(lowered)) {
       return 'provider_network_error';
     }

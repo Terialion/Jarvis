@@ -302,6 +302,7 @@ export class LLMProvider {
   async chat(
     messages: LLMMessage[],
     tools?: Record<string, unknown>[],
+    signal?: AbortSignal,
   ): Promise<LLMResponse> {
     // Extract tool names for safe→canonical mapping
     // Tools from ToolRegistry are already in OpenAI format: { type:"function", function:{ name, description, parameters } }
@@ -338,7 +339,7 @@ export class LLMProvider {
     }
     this.applyReasoningEffort(params);
 
-    const response = await this.client.chat.completions.create(params);
+    const response = await this.client.chat.completions.create(params, { signal });
     return this._normalizeResponse(response, safeToCanonical);
   }
 
@@ -453,6 +454,7 @@ export class LLMProvider {
     messages: LLMMessage[],
     tools?: Record<string, unknown>[],
     callbacks?: StreamCallbacks,
+    signal?: AbortSignal,
   ): Promise<LLMResponse> {
     const { safeTools, safeToCanonical, canonicalToSafe } =
       LLMProvider._buildSafeOpenAIToolDefs(tools ?? []);
@@ -487,7 +489,7 @@ export class LLMProvider {
     }
     this.applyReasoningEffort(params);
 
-    const stream = await this.client.chat.completions.create(params);
+    const stream = await this.client.chat.completions.create(params, { signal });
 
     let content = '';
     let reasoningContent = ''; // fallback for models that only use reasoning_content
