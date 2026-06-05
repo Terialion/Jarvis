@@ -38,7 +38,7 @@ import { SessionStore, MarkdownMemoryStore } from '@jarvis/store';
 import { SubagentPool, toolWhitelistForType, type SubagentConfig } from '@jarvis/subagents';
 import { MCPClient, type McpConnectionStatus, type McpServerConfig } from '@jarvis/mcp';
 import { HookRegistry } from '@jarvis/hooks';
-import { ConfigWatcher, JARVIS_REASONING_EFFORTS, type JarvisReasoningEffort } from '@jarvis/shared';
+import { buildInlinePlanReviewText, ConfigWatcher, JARVIS_REASONING_EFFORTS, type JarvisReasoningEffort } from '@jarvis/shared';
 import { LLMProvider } from '@jarvis/agent';
 import type { ModelReasoningEffort } from '@jarvis/agent';
 import type { TUIOptions, TUIDebugEvent } from './types.js';
@@ -519,7 +519,7 @@ export function App({ options }: { options: TUIOptions }): React.ReactNode {
     setPlanReviewBridge((plan) => {
       return new Promise<PlanReviewDecision>((resolve) => {
         planReviewResolveRef.current = resolve;
-        setMessages((prev) => [...prev, makeSysMsg(formatInlinePlanReview(plan))]);
+        setMessages((prev) => [...prev, makeSysMsg(buildInlinePlanReviewText(plan))]);
         setPlanReview(plan);
         setPlanReviewIndex(0);
       });
