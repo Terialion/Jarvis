@@ -91,6 +91,9 @@ importers:
       '@jarvis/tui':
         specifier: workspace:*
         version: link:../tui
+      marked:
+        specifier: ^12.0.2
+        version: 12.0.2
     devDependencies:
       '@types/node':
         specifier: ^24.0.0

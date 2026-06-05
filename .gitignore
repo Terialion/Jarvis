@@ -140,6 +140,7 @@ bin/
 jsonschema/
 reference/
 skills/
+gemini-cli/
 
 # Node.js / TypeScript
 node_modules/
