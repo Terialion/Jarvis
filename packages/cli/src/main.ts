@@ -42,7 +42,7 @@ export interface CLIOptions {
   maxTurns: number;
   systemPrompt?: string;
   oneShot?: string;
-  mainScreen?: boolean;
+  fullscreen?: boolean;
   configure?: boolean;
 }
 
@@ -140,8 +140,9 @@ export function parseCLIArgs(argv: string[] = process.argv): CLIOptions {
         type: 'boolean',
         default: false,
       },
-      'main-screen': {
+      fullscreen: {
         type: 'boolean',
+        short: 'f',
         default: false,
       },
     },
@@ -157,7 +158,7 @@ export function parseCLIArgs(argv: string[] = process.argv): CLIOptions {
     maxTurns: parseInt(values['max-turns'] as string, 10) || 30,
     systemPrompt: values['system-prompt'] as string | undefined,
     oneShot: values['prompt'] as string | undefined,
-    mainScreen: values['main-screen'] as boolean,
+    fullscreen: values['fullscreen'] as boolean,
     configure: Boolean(values['configure']),
   };
 }
@@ -540,7 +541,7 @@ export function printHelp(): string {
     '  --max-turns <n>           Max conversation turns (default: 30)',
     '  --system-prompt <text>    System prompt override',
     '  -p, --prompt <text>       One-shot: run a single prompt and exit',
-    '  --main-screen             Main screen mode (native scrollback, no alt screen)',
+    '  -f, --fullscreen          Fullscreen mode (alternate screen buffer)',
     '  --configure               Run the first-run setup flow',
     '  -h, --help                Show this help',
     '',
@@ -622,7 +623,7 @@ export async function main(argv: string[] = process.argv): Promise<void> {
       maxTurns: options.maxTurns,
       systemPrompt: options.systemPrompt,
       forceOnboarding: wantsConfigure,
-      mainScreen: options.mainScreen,
+      mainScreen: !options.fullscreen,
     });
   } catch (err) {
     if ((err as NodeJS.ErrnoException).code === 'ERR_MODULE_NOT_FOUND') {
