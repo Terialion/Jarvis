@@ -5,6 +5,7 @@
 import { readFileSync, readdirSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { homedir } from 'node:os';
+import type { SlashResult } from '@jarvis/shared';
 
 function parentDir(p: string): string {
   const sep = p.includes('\\') ? '\\' : '/';
@@ -26,8 +27,8 @@ export interface SlashCommand {
   usage?: string;
   /** Category for grouping in help */
   category?: string;
-  /** Execute the command. Returns the output string. */
-  execute: (args: string[], context: CommandContext) => Promise<string> | string;
+  /** Execute the command. Returns the output string or structured blocks. */
+  execute: (args: string[], context: CommandContext) => Promise<SlashResult> | SlashResult;
 }
 
 export interface CommandContext {
@@ -78,7 +79,7 @@ export class SlashCommandRegistry {
     name: string,
     args: string[],
     context: CommandContext,
-  ): Promise<string | null> {
+  ): Promise<SlashResult | null> {
     const command = this.commands.get(name);
     if (!command) return null;
     return command.execute(args, context);

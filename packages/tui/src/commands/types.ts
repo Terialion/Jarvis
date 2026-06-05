@@ -1,6 +1,6 @@
 import type React from 'react';
 import type { Message, MessageContent } from '../vendor/ui/MessageList.js';
-import type { ChatMessage } from '@jarvis/shared';
+import type { ChatMessage, SlashResult } from '@jarvis/shared';
 import type { AgentLoop, TokenTracker } from '@jarvis/agent';
 import type { ToolRegistry } from '@jarvis/tools';
 import type { SkillRegistry } from '@jarvis/skills';
@@ -55,7 +55,7 @@ export interface SlashCommandDef {
   name: string;
   description: string;
   usage?: string;
-  handler: (args: string[], ctx: SlashCommandCtx) => string | Promise<string>;
+  handler: (args: string[], ctx: SlashCommandCtx) => SlashResult | Promise<SlashResult>;
 }
 
 export type REPLCommandDef = {

@@ -5,7 +5,7 @@ import { platform, arch, totalmem, freemem, uptime } from 'node:os';
 import type { Message } from '../vendor/ui/MessageList.js';
 import type { SkillRegistry } from '@jarvis/skills';
 import { ConversationSummarizer, parseModelName, buildSystemPrompt as buildSystemPromptFn, addUserModel, removeUserModel, findModel } from '@jarvis/agent';
-import type { ChatMessage } from '@jarvis/shared';
+import { renderSlashResultText, type ChatMessage, type SlashResult } from '@jarvis/shared';
 import {
   JARVIS_REASONING_EFFORTS,
   loadJarvisConfig,
@@ -24,17 +24,23 @@ import { resolveModelCredentials } from '../utils/credentials.js';
 export { makeSysMsg };
 export type { SlashCommandDef, SlashCommandCtx, REPLCommandDef, LiveContextUsage };
 
+function toSlashText(result: SlashResult): string {
+  return renderSlashResultText(result);
+}
+
 export const SLASH_COMMANDS: SlashCommandDef[] = [
   {
     name: 'help',
     description: 'Show available commands',
     usage: '/help',
     handler: (_args, _ctx) => {
-      const lines: string[] = ['Available commands:\n'];
-      for (const cmd of SLASH_COMMANDS) {
-        lines.push(`  /${cmd.name} - ${cmd.description}`);
-      }
-      return lines.join('\n');
+      return [
+        {
+          kind: 'section',
+          title: 'Available commands',
+          lines: SLASH_COMMANDS.map((cmd) => `/${cmd.name} - ${cmd.description}`),
+        },
+      ];
     },
   },
   {
@@ -147,18 +153,23 @@ export const SLASH_COMMANDS: SlashCommandDef[] = [
       const estimatedTotalTokens = live?.estimatedTotalTokens ?? (systemPromptTokens + toolTokens + memoryTokens + skillTokens + messageTokens);
       const resolvedSystemPromptTokens = live?.systemPromptTokens ?? systemPromptTokens;
       const resolvedMessageTokens = live?.conversationTokens ?? messageTokens;
-      return buildContextPanelLines({
-        mode: resolveContextMode(args), modelName, sessionId: shortSid, messageCount: msgCount,
-        uiMessageCount: ctx.messages.length, contextWindow, estimatedTotalTokens,
-        providerReportedTokens: live?.usedTokens ?? snapshot?.totalTokens,
-        systemPromptTokens: resolvedSystemPromptTokens, messageTokens: resolvedMessageTokens,
-        projectContextTokens: live?.projectContextTokens, systemToolsTokens: live?.toolSchemasTokens,
-        mcpToolsTokens: live?.mcpToolsTokens, memoryTokens: live?.memoryTokens,
-        skillsTokens: live?.skillsTokens, conversationTokens: live?.conversationTokens,
-        memoryEntries, skillEntries, toolEntries,
-        mcpConfigured: ctx.mcpConfiguredRef.current.map((e) => ({ id: e.id, plugin: e.plugin, command: e.config.command })),
-        mcpStatuses: ctx.mcpStatusesRef.current.map((s) => ({ id: s.id, state: s.state, serverName: s.serverName, toolCount: s.toolCount, resourceCount: s.resourceCount, error: s.error })),
-      }).join('\n');
+      return [
+        {
+          kind: 'text',
+          text: buildContextPanelLines({
+            mode: resolveContextMode(args), modelName, sessionId: shortSid, messageCount: msgCount,
+            uiMessageCount: ctx.messages.length, contextWindow, estimatedTotalTokens,
+            providerReportedTokens: live?.usedTokens ?? snapshot?.totalTokens,
+            systemPromptTokens: resolvedSystemPromptTokens, messageTokens: resolvedMessageTokens,
+            projectContextTokens: live?.projectContextTokens, systemToolsTokens: live?.toolSchemasTokens,
+            mcpToolsTokens: live?.mcpToolsTokens, memoryTokens: live?.memoryTokens,
+            skillsTokens: live?.skillsTokens, conversationTokens: live?.conversationTokens,
+            memoryEntries, skillEntries, toolEntries,
+            mcpConfigured: ctx.mcpConfiguredRef.current.map((e) => ({ id: e.id, plugin: e.plugin, command: e.config.command })),
+            mcpStatuses: ctx.mcpStatusesRef.current.map((s) => ({ id: s.id, state: s.state, serverName: s.serverName, toolCount: s.toolCount, resourceCount: s.resourceCount, error: s.error })),
+          }).join('\n'),
+        },
+      ];
     },
   },
   {
@@ -323,7 +334,14 @@ export const SLASH_COMMANDS: SlashCommandDef[] = [
       if (statuses.length === 0 || statuses.every((s) => s.state === 'connecting' || s.state === 'retrying')) {
         statuses = await refreshMcpStatuses(ctx);
       }
-      if (mode === 'full') return formatMcpDiagnostics(ctx.mcpConfiguredRef.current, statuses, ctx.mcpClientRef.current);
+      if (mode === 'full') {
+        return [
+          {
+            kind: 'text',
+            text: formatMcpDiagnostics(ctx.mcpConfiguredRef.current, statuses, ctx.mcpClientRef.current),
+          },
+        ];
+      }
       const totalCount = statuses.length;
       const readyCount = statuses.filter((s) => s.state === 'ready' || s.state === 'degraded').length;
       const firstError = statuses.find((s) => s.error)?.error;
@@ -557,8 +575,8 @@ export function buildReplCommands(
           if (setHelpPopupOpen) { setHelpPopupOpen(true); return; }
           const userMsg: Message = { id: `cmd_${Date.now()}`, role: 'user', content: fullInput, timestamp: Date.now() };
           const result = cmd.handler(rawArgs ? rawArgs.split(/\s+/) : [], ctx);
-          if (result instanceof Promise) { result.then((text) => setMessages((prev) => [...prev, userMsg, makeSysMsg(text)])); }
-          else { setMessages((prev) => [...prev, userMsg, makeSysMsg(result)]); }
+          if (result instanceof Promise) { result.then((value) => setMessages((prev) => [...prev, userMsg, makeSysMsg(toSlashText(value))])); }
+          else { setMessages((prev) => [...prev, userMsg, makeSysMsg(toSlashText(result))]); }
         },
       };
     }
@@ -570,8 +588,8 @@ export function buildReplCommands(
           const args = rawArgs ? rawArgs.split(/\s+/) : [];
           if (args.length === 0 && setEffortSelectorOpen) { setMessages((prev) => [...prev, userMsg]); setEffortSelectorOpen(true); return; }
           const result = cmd.handler(args, ctx);
-          if (result instanceof Promise) { result.then((text) => setMessages((prev) => [...prev, userMsg, makeSysMsg(text)])); }
-          else { setMessages((prev) => [...prev, userMsg, makeSysMsg(result)]); }
+          if (result instanceof Promise) { result.then((value) => setMessages((prev) => [...prev, userMsg, makeSysMsg(toSlashText(value))])); }
+          else { setMessages((prev) => [...prev, userMsg, makeSysMsg(toSlashText(result))]); }
         },
       };
     }
@@ -583,8 +601,8 @@ export function buildReplCommands(
           const args = rawArgs ? rawArgs.split(/\s+/) : [];
           if (args.length === 0 && setModelSelectorOpen) { setMessages((prev) => [...prev, userMsg]); setModelSelectorOpen(true); return; }
           const result = cmd.handler(args, ctx);
-          if (result instanceof Promise) { result.then((text) => setMessages((prev) => [...prev, userMsg, makeSysMsg(text)])); }
-          else { setMessages((prev) => [...prev, userMsg, makeSysMsg(result)]); }
+          if (result instanceof Promise) { result.then((value) => setMessages((prev) => [...prev, userMsg, makeSysMsg(toSlashText(value))])); }
+          else { setMessages((prev) => [...prev, userMsg, makeSysMsg(toSlashText(result))]); }
         },
       };
     }
@@ -594,8 +612,8 @@ export function buildReplCommands(
         const userMsg: Message = { id: `cmd_${Date.now()}`, role: 'user', content: fullInput, timestamp: Date.now() };
         const args = rawArgs ? rawArgs.split(/\s+/) : [];
         const result = cmd.handler(args, ctx);
-        if (result instanceof Promise) { result.then((text) => setMessages((prev) => [...prev, userMsg, makeSysMsg(text)])); }
-        else { setMessages((prev) => [...prev, userMsg, makeSysMsg(result)]); }
+        if (result instanceof Promise) { result.then((value) => setMessages((prev) => [...prev, userMsg, makeSysMsg(toSlashText(value))])); }
+        else { setMessages((prev) => [...prev, userMsg, makeSysMsg(toSlashText(result))]); }
       },
     };
   });
