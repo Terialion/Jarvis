@@ -42,6 +42,7 @@ export interface CLIOptions {
   maxTurns: number;
   systemPrompt?: string;
   oneShot?: string;
+  mainScreen?: boolean;
   configure?: boolean;
 }
 
@@ -53,6 +54,8 @@ export interface CLIContext {
   commands: SlashCommandRegistry;
   cmdContext: CommandContext;
   skills: SkillRegistry;
+  /** Resolves when all MCP servers have finished connecting (or failed). */
+  mcpReady: Promise<Array<{ id: string; state: string; toolCount?: number }>>;
 }
 
 // ============================================================================
@@ -137,6 +140,10 @@ export function parseCLIArgs(argv: string[] = process.argv): CLIOptions {
         type: 'boolean',
         default: false,
       },
+      'main-screen': {
+        type: 'boolean',
+        default: false,
+      },
     },
     allowPositionals: true,
   });
@@ -150,6 +157,7 @@ export function parseCLIArgs(argv: string[] = process.argv): CLIOptions {
     maxTurns: parseInt(values['max-turns'] as string, 10) || 30,
     systemPrompt: values['system-prompt'] as string | undefined,
     oneShot: values['prompt'] as string | undefined,
+    mainScreen: values['main-screen'] as boolean,
     configure: Boolean(values['configure']),
   };
 }
@@ -264,7 +272,7 @@ export function createSkillRegistry(projectRoot?: string): SkillRegistry {
   return registry;
 }
 
-function collectPluginMcpServers(projectRoot: string): Array<{ id: string; plugin: string; config: McpServerConfig }> {
+export function collectPluginMcpServers(projectRoot: string): Array<{ id: string; plugin: string; config: McpServerConfig }> {
   const userPluginsDir = path.join(os.homedir(), '.jarvis', 'plugins');
   const pluginRegistry = new PluginRegistry();
   pluginRegistry.loadAll({ projectRoot, userPluginsDir });
@@ -286,7 +294,7 @@ function collectPluginMcpServers(projectRoot: string): Array<{ id: string; plugi
   return servers;
 }
 
-function collectUserMcpServers(projectRoot: string): Array<{ id: string; plugin?: string; config: McpServerConfig }> {
+export function collectUserMcpServers(projectRoot: string): Array<{ id: string; plugin?: string; config: McpServerConfig }> {
   const configPath = path.join(os.homedir(), '.jarvis', 'mcp_server_config.json');
   if (!fs.existsSync(configPath)) return [];
   try {
@@ -335,7 +343,7 @@ export function registerSkillCommands(
 // Web tool wiring
 // ============================================================================
 
-function registerWebTools(tools: ToolRegistry): void {
+export function registerWebTools(tools: ToolRegistry): void {
   const tavilySearch = tryCreateTavilySearch();
   const tavilyFetch = tryCreateTavilyFetch();
   if (tavilySearch) { tools.register(createWebSearchTool(tavilySearch)); }
@@ -433,18 +441,19 @@ export function bootstrap(options: CLIOptions): CLIContext {
     ...collectUserMcpServers(projectRoot),
     ...collectPluginMcpServers(projectRoot),
   ];
-  if (mcpServers.length > 0) {
-    void connectMcpServers(mcpClient, mcpServers).then((statuses) => {
-      if (process.env['JARVIS_DEBUG']) {
-        for (const status of statuses) {
-          const detail = status.state === 'failed'
-            ? `error=${status.error ?? 'unknown'}`
-            : `server=${status.serverName ?? status.id} tools=${status.toolCount ?? 0} resources=${status.resourceCount ?? 0}`;
-          console.error(`[mcp] ${status.state} ${status.plugin ? `${status.plugin}:` : ''}${status.id} ${detail}`);
+  const mcpReady = mcpServers.length > 0
+    ? connectMcpServers(mcpClient, mcpServers).then((statuses) => {
+        if (process.env['JARVIS_DEBUG']) {
+          for (const status of statuses) {
+            const detail = status.state === 'failed'
+              ? `error=${status.error ?? 'unknown'}`
+              : `server=${status.serverName ?? status.id} tools=${status.toolCount ?? 0} resources=${status.resourceCount ?? 0}`;
+            console.error(`[mcp] ${status.state} ${status.plugin ? `${status.plugin}:` : ''}${status.id} ${detail}`);
+          }
         }
-      }
-    });
-  }
+        return statuses.map((s) => ({ id: s.id, state: s.state, toolCount: s.toolCount }));
+      })
+    : Promise.resolve([]);
   for (const mcpTool of createMcpToolEntries(mcpClient)) {
     tools.register(mcpTool);
   }
@@ -509,7 +518,7 @@ export function bootstrap(options: CLIOptions): CLIContext {
     },
   };
 
-  return { options, provider, tools, hooks, commands, cmdContext, skills };
+  return { options, provider, tools, hooks, commands, cmdContext, skills, mcpReady };
 }
 
 // ============================================================================
@@ -531,6 +540,7 @@ export function printHelp(): string {
     '  --max-turns <n>           Max conversation turns (default: 30)',
     '  --system-prompt <text>    System prompt override',
     '  -p, --prompt <text>       One-shot: run a single prompt and exit',
+    '  --main-screen             Main screen mode (native scrollback, no alt screen)',
     '  --configure               Run the first-run setup flow',
     '  -h, --help                Show this help',
     '',
@@ -547,127 +557,11 @@ export function printHelp(): string {
 // ============================================================================
 
 export async function runOneShot(options: CLIOptions): Promise<string> {
-  const provider = new LLMProvider({
-    model: options.model,
-    apiKey: options.apiKey,
-    baseURL: options.baseURL,
-    reasoningEffort: options.reasoningEffort,
-  });
-
-  const tools = new ToolRegistry();
-  for (const tool of allBuiltinTools) {
-    tools.register(tool);
-  }
-  registerWebTools(tools);
-
-  // Memory search/get tools
-  const memoryStore2 = new MarkdownMemoryStore();
-  tools.register({
-    name: 'memory_search',
-    toolset: 'memory',
-    description: 'Search persistent memory entries by keyword',
-    isAsync: true,
-    schema: {
-      type: 'function',
-      function: {
-        name: 'memory_search',
-        description: 'Search persistent memory entries by keyword',
-        parameters: {
-          type: 'object',
-          properties: {
-            query: { type: 'string', description: 'Search query' },
-            maxResults: { type: 'number', description: 'Max results (default 5)' },
-            memoryType: { type: 'string', description: 'Filter by type: user, project, feedback, reference' },
-          },
-          required: ['query'],
-        },
-      },
-    },
-    handler: (args: Record<string, unknown>) => createMemorySearchHandler(memoryStore2)(args),
-  });
-  tools.register({
-    name: 'memory_get',
-    toolset: 'memory',
-    description: 'Read a specific memory entry by name',
-    isAsync: true,
-    schema: {
-      type: 'function',
-      function: {
-        name: 'memory_get',
-        description: 'Read a specific memory entry by name',
-        parameters: {
-          type: 'object',
-          properties: {
-            name: { type: 'string', description: 'Memory entry name' },
-          },
-          required: ['name'],
-        },
-      },
-    },
-    handler: (args: Record<string, unknown>) => createMemoryGetHandler(memoryStore2)(args),
-  });
-
-  const skills = createSkillRegistry();
-  tools.register(createSkillLoadTool(skills));
-  tools.register(createSkillTool(skills));
-  const skillExecutor = new SkillExecutor(skills);
-
-  // MCP client — wire resource tools + dynamic tool exposure
-  const mcpClient = new MCPClient();
-  tools.register(createListMcpResourcesTool(mcpClient));
-  tools.register(createReadMcpResourceTool(mcpClient));
-  tools.register(createMcpStatusTool(mcpClient));
-  tools.register(createMcpHealthcheckTool(mcpClient));
-  const projectRoot = findProjectRoot();
-  const mcpServers = [
-    ...collectUserMcpServers(projectRoot),
-    ...collectPluginMcpServers(projectRoot),
-  ];
-  if (mcpServers.length > 0) {
-    await connectMcpServers(mcpClient, mcpServers);
-  }
-  for (const mcpTool of createMcpToolEntries(mcpClient)) {
-    tools.register(mcpTool);
-  }
-
-  // Subagent pool — wire Agent tool
-  const subagentPool = new SubagentPool();
-  subagentPool.setRunner(async (config: SubagentConfig) => {
-    const subTools = new ToolRegistry();
-    const whitelist = toolWhitelistForType(config.agentType);
-    for (const tool of allBuiltinTools) {
-      if (!whitelist || whitelist.includes(tool.name)) {
-        subTools.register(tool);
-      }
-    }
-    subTools.register(createSkillLoadTool(skills));
-    subTools.register(createSkillTool(skills));
-
-    const subRuntime2 = createToolRuntime(subTools, { permissionMode: 'workspace_write' });
-    const subLoop = new AgentLoop({
-      model: { model: options.model, reasoningEffort: options.reasoningEffort },
-      maxTurns: config.budgetSteps ?? 5,
-      tools: subTools,
-      toolRuntime: subRuntime2,
-      provider,
-      skillRegistry: skills,
-      skillExecutor: new SkillExecutor(skills),
-      hooks: new HookRegistry(),
-    });
-
-    const result = await subLoop.runTurn(config.task);
-    return {
-      agentId: config.agentId,
-      status: result.ok ? ('completed' as const) : ('failed' as const),
-      answer: result.finalAnswer,
-      turnsUsed: result.toolCalls.length,
-    };
-  });
-  tools.register(createAgentTool(subagentPool));
-
-  const runtime = createToolRuntime(tools, {
+  const ctx = bootstrap(options);
+  const oneShotConfig = loadJarvisConfig();
+  const runtime = createToolRuntime(ctx.tools, {
     permissionMode: 'workspace_write',
-    sandbox: userConfig.sandbox,
+    sandbox: oneShotConfig.sandbox,
     projectRoot: process.cwd(),
   });
 
@@ -675,12 +569,12 @@ export async function runOneShot(options: CLIOptions): Promise<string> {
     model: { model: options.model, reasoningEffort: options.reasoningEffort },
     maxTurns: options.maxTurns,
     systemPrompt: options.systemPrompt,
-    tools,
+    tools: ctx.tools,
     toolRuntime: runtime,
-    provider,
-    skillRegistry: skills,
-    skillExecutor,
-    hooks: new HookRegistry(),
+    provider: ctx.provider,
+    skillRegistry: ctx.skills,
+    skillExecutor: new SkillExecutor(ctx.skills),
+    hooks: ctx.hooks,
   });
 
   const result = await loop.runTurn(options.oneShot ?? 'Hello');
@@ -717,7 +611,7 @@ export async function main(argv: string[] = process.argv): Promise<void> {
     return;
   }
 
-  // Interactive mode: launch TUI
+  // Interactive mode: launch TUI (main-screen or fullscreen)
   try {
     const { renderTUI } = await import('@jarvis/tui');
     await renderTUI({
@@ -728,6 +622,7 @@ export async function main(argv: string[] = process.argv): Promise<void> {
       maxTurns: options.maxTurns,
       systemPrompt: options.systemPrompt,
       forceOnboarding: wantsConfigure,
+      mainScreen: options.mainScreen,
     });
   } catch (err) {
     if ((err as NodeJS.ErrnoException).code === 'ERR_MODULE_NOT_FOUND') {

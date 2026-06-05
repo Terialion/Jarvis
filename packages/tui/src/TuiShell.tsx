@@ -4,16 +4,26 @@ import { KeybindingSetup } from "./vendor/ui/keybindings/KeybindingProviderSetup
 
 type TuiShellProps = {
   children: React.ReactNode;
+  /** When true, skip alternate screen — render on main screen with native scrollback. */
+  mainScreen?: boolean;
 };
 
 /**
- * Fullscreen shell for the interactive TUI.
+ * Shell for the interactive TUI.
  *
- * Onboarding can stay on the main screen, but once the user enters the
- * normal chat workflow we switch to alt-screen ownership with shared
- * keybinding resolution and mouse tracking.
+ * By default wraps children in AlternateScreen (fullscreen with mouse tracking).
+ * When mainScreen is true, renders directly on the main screen — output goes to
+ * stdout, native terminal scrollback works, no alternate buffer.
  */
-export function TuiShell({ children }: TuiShellProps): React.ReactNode {
+export function TuiShell({ children, mainScreen }: TuiShellProps): React.ReactNode {
+  if (mainScreen) {
+    return (
+      <KeybindingSetup>
+        {children}
+      </KeybindingSetup>
+    );
+  }
+
   return (
     <KeybindingSetup>
       <AlternateScreen mouseTracking>{children}</AlternateScreen>

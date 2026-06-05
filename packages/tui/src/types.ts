@@ -14,6 +14,8 @@ export interface TUIOptions {
   forceOnboarding?: boolean;
   presentationMode?: TuiPresentationMode;
   debugHooks?: TUIDebugHooks;
+  /** When true, render on the main screen (no alternate buffer). Native terminal scrollback works. */
+  mainScreen?: boolean;
 }
 
 export type TUIDebugEvent =

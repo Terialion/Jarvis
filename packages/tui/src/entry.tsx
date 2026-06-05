@@ -54,7 +54,7 @@ function BootApp({ options }: { options: TUIOptions }) {
   }
 
   return (
-    <TuiShell>
+    <TuiShell mainScreen={runtimeOptions.mainScreen}>
       <App options={runtimeOptions} />
     </TuiShell>
   );
