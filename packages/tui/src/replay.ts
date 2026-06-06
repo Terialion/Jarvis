@@ -524,6 +524,11 @@ export async function runReplay(options: ReplayOptions): Promise<void> {
   await sleep(remainingWait);
   writeArtifacts(outputDir, stdout, stderr, snapshots, options, debugEvents);
   root.unmount();
+  await Promise.race([
+    root.waitUntilExit(),
+    sleep(2000),
+  ]);
+  root.cleanup();
   stdin.end();
   stdin.destroy();
   stdout.end();
@@ -542,12 +547,13 @@ const isMain = process.argv[1] && (
 
 if (isMain) {
   loadProjectEnv();
-  runReplay(parseReplayArgs()).catch((error) => {
-    const message = error instanceof Error ? error.stack ?? error.message : String(error);
-    process.stderr.write(`${message}\n`);
-    process.exit(1);
-  });
-  process.on("beforeExit", () => {
-    process.exit(0);
-  });
+  runReplay(parseReplayArgs())
+    .then(() => {
+      process.exit(0);
+    })
+    .catch((error) => {
+      const message = error instanceof Error ? error.stack ?? error.message : String(error);
+      process.stderr.write(`${message}\n`);
+      process.exit(1);
+    });
 }

@@ -5,6 +5,7 @@
 import type { ToolResult } from '@jarvis/shared';
 import { ToolRegistry, type ToolContext } from './registry.js';
 import { checkCommand, createSandboxPolicy, type SandboxPolicyConfig, type SandboxConfig } from './sandbox-policy.js';
+import { PermissionStateMachine } from './permission-state.js';
 
 // ============================================================================
 // PermissionManager — per-tool approval mode gating
@@ -47,6 +48,126 @@ export function mapUserPermissionMode(userMode: string): PermissionMode {
 
 /** Risk levels for tool categorization */
 export type ToolRiskLevel = 'read_only' | 'write_approval_required' | 'caution' | 'command' | 'network' | 'credentialed';
+
+// ============================================================================
+// Command grouping — semantic classification of bash commands
+// ============================================================================
+
+export type CommandGroup = 'read' | 'write' | 'git_read' | 'git_write' | 'network' | 'package' | 'system';
+
+export interface CommandClassification {
+  group: CommandGroup;
+  risk: 'safe' | 'caution' | 'dangerous' | 'blocked';
+  reason?: string;
+}
+
+/** Classify a bash command into a semantic group with risk level. */
+export function classifyBashCommand(command: string): CommandClassification {
+  const stripped = command
+    .trim()
+    .replace(/^(\w+=\S+\s+)+/, '')
+    .replace(/^time\s+/, '')
+    .replace(/^nice\s+(-\d+\s+)?/, '');
+  const first = stripped.split(/\s+/)[0]?.toLowerCase() ?? '';
+
+  // Blocked patterns (always denied)
+  if (/rm\s+-[a-z]*r[a-z]*f[a-z]*\s+\/\s*(?:$|[;&|])/.test(command) ||
+      /rm\s+-[a-z]*f[a-z]*r[a-z]*\s+\/\s*(?:$|[;&|])/.test(command)) {
+    return { group: 'system', risk: 'blocked', reason: 'rm -rf / (root filesystem wipe)' };
+  }
+  if (/\bmkfs\b/.test(stripped)) return { group: 'system', risk: 'blocked', reason: 'formatting filesystem' };
+  if (/dd\s+.*if=.*of=\/dev\//.test(stripped)) return { group: 'system', risk: 'blocked', reason: 'raw write to block device' };
+  if (/[:(][\s)]*[{][\s)]*[|:]/i.test(stripped)) return { group: 'system', risk: 'blocked', reason: 'fork bomb' };
+  if (/\bshutdown\b|\breboot\b|\binit\s+0/.test(stripped)) return { group: 'system', risk: 'blocked', reason: 'system shutdown/reboot' };
+
+  // Dangerous patterns
+  if (/\bsudo\b/.test(stripped)) return { group: 'system', risk: 'dangerous', reason: 'privilege escalation (sudo)' };
+  if (/\bcurl\b.+\|\s*(?:ba)?sh\b/i.test(stripped)) return { group: 'network', risk: 'dangerous', reason: 'curl piped to shell' };
+  if (/\bwget\b.+\|\s*(?:ba)?sh\b/i.test(stripped)) return { group: 'network', risk: 'dangerous', reason: 'wget piped to shell' };
+  if (/\b(?:nc|ncat|netcat)\s+-[a-z]*l/.test(stripped)) return { group: 'network', risk: 'dangerous', reason: 'network listener' };
+
+  // Git read commands
+  if (/^git\b/.test(first)) {
+    const sub = stripped.split(/\s+/)[1] ?? '';
+    if (['status', 'log', 'diff', 'show', 'branch', 'tag', 'remote', 'describe', 'rev-parse'].includes(sub)) {
+      return { group: 'git_read', risk: 'safe' };
+    }
+    return { group: 'git_write', risk: sub === 'push' && /--force/.test(stripped) ? 'dangerous' : 'caution' };
+  }
+
+  // Read commands
+  if (['cat', 'head', 'tail', 'less', 'more', 'file', 'stat', 'du', 'df', 'wc',
+       'find', 'grep', 'rg', 'ag', 'fd', 'which', 'type', 'where', 'echo', 'pwd',
+       'whoami', 'date', 'env', 'printenv', 'uname', 'ls', 'tree', 'realpath'].includes(first)) {
+    return { group: 'read', risk: 'safe' };
+  }
+
+  // Write commands
+  if (['cp', 'mv', 'mkdir', 'touch', 'tee', 'install', 'ln', 'chmod', 'chown'].includes(first)) {
+    const risk = /chmod\s+.*777/.test(stripped) || /chown\s+.*-R/.test(stripped) ? 'dangerous' : 'caution';
+    return { group: 'write', risk };
+  }
+  if (first === 'rm') return { group: 'write', risk: /-[a-z]*r/.test(stripped) ? 'dangerous' : 'caution' };
+
+  // Package managers
+  if (['npm', 'yarn', 'pnpm', 'pip', 'pip3', 'cargo', 'apt', 'apt-get', 'brew', 'brew'].includes(first)) {
+    const sub = stripped.split(/\s+/)[1] ?? '';
+    if (['install', 'ci', 'add', 'publish', 'update', 'upgrade'].includes(sub)) {
+      return { group: 'package', risk: 'caution' };
+    }
+    return { group: 'package', risk: 'safe' };
+  }
+
+  // Network commands
+  if (['curl', 'wget', 'ssh', 'scp', 'rsync'].includes(first)) {
+    return { group: 'network', risk: 'caution' };
+  }
+  if (['docker'].includes(first)) {
+    const sub = stripped.split(/\s+/)[1] ?? '';
+    if (['pull', 'push'].includes(sub)) return { group: 'network', risk: 'caution' };
+    return { group: 'system', risk: 'caution' };
+  }
+
+  // Build/run tools
+  if (['node', 'npx', 'python', 'python3', 'tsc', 'vitest', 'jest', 'cargo',
+       'make', 'cmake', 'go', 'rustc', 'gcc', 'g++'].includes(first)) {
+    return { group: 'system', risk: 'caution' };
+  }
+
+  return { group: 'system', risk: 'caution' };
+}
+
+// ============================================================================
+// Permission rules — fine-grained tool/pattern allow/deny
+// ============================================================================
+
+export interface PermissionRule {
+  /** Unique rule id */
+  id: string;
+  /** Tool name: 'bash' | 'write_file' | 'edit_file' | '*' (all tools) */
+  tool: string;
+  /** Glob-style pattern to match against argsKey. Omit = match all. */
+  pattern?: string;
+  /** 'allow' = auto-approve, 'deny' = hard block */
+  action: 'allow' | 'deny';
+  /** 'session' = this session only, 'persistent' = saved to disk */
+  scope: 'session' | 'persistent';
+}
+
+/** Convert a glob pattern to a regex. Supports * and **. */
+function globToRegex(glob: string): RegExp {
+  const escaped = glob
+    .replace(/[.+^${}()|[\]\\]/g, '\\$&')
+    .replace(/\*\*/g, '{{GLOBSTAR}}')
+    .replace(/\*/g, '[^/]*')
+    .replace(/\{\{GLOBSTAR\}\}/g, '.*');
+  return new RegExp(`^${escaped}$`, 'i');
+}
+
+/** Match a string against a glob pattern. */
+function matchesGlob(value: string, pattern: string): boolean {
+  return globToRegex(pattern).test(value);
+}
 
 export interface PermissionCheckResult {
   allowed: boolean;
@@ -109,10 +230,101 @@ export class PermissionManager {
   };
 
   private riskMap: Record<string, ToolRiskLevel>;
+  private rules: PermissionRule[] = [];
 
   constructor(riskMap?: Record<string, ToolRiskLevel>) {
     this.riskMap = riskMap ?? DEFAULT_RISK_MAP;
     this.config.approvedPatterns = [];
+  }
+
+  // ---- Rule management ----
+
+  /** Add a permission rule. Returns the rule id. */
+  addRule(rule: Omit<PermissionRule, 'id'>): string {
+    const id = `rule_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+    const fullRule: PermissionRule = { ...rule, id };
+    this.rules.push(fullRule);
+    if (rule.scope === 'persistent') {
+      this.persistRule(fullRule);
+    }
+    return id;
+  }
+
+  /** Remove a rule by id. */
+  removeRule(id: string): boolean {
+    const idx = this.rules.findIndex((r) => r.id === id);
+    if (idx === -1) return false;
+    const rule = this.rules[idx];
+    this.rules.splice(idx, 1);
+    if (rule?.scope === 'persistent') {
+      this.removePersistedRule(id);
+    }
+    return true;
+  }
+
+  /** Get all rules. */
+  getRules(): PermissionRule[] {
+    return [...this.rules];
+  }
+
+  /** Clear all session rules (keep persistent). */
+  clearSessionRules(): void {
+    this.rules = this.rules.filter((r) => r.scope === 'persistent');
+  }
+
+  /** Load persisted rules from ~/.jarvis/settings.local.json. */
+  loadPersistedRules(): void {
+    try {
+      const { existsSync, readFileSync } = require('node:fs');
+      const { join } = require('node:path');
+      const home = process.env['HOME'] ?? process.env['USERPROFILE'] ?? '';
+      const settingsPath = join(home, '.jarvis', 'settings.local.json');
+      if (!existsSync(settingsPath)) return;
+      const settings = JSON.parse(readFileSync(settingsPath, 'utf-8'));
+      const rules = (settings['permission_rules'] as PermissionRule[]) ?? [];
+      for (const r of rules) {
+        if (r.id && r.tool && r.action && !this.rules.some((existing) => existing.id === r.id)) {
+          this.rules.push({ ...r, scope: 'persistent' });
+        }
+      }
+    } catch { /* best-effort */ }
+  }
+
+  /** Persist a rule to disk. */
+  private persistRule(rule: PermissionRule): void {
+    try {
+      const { existsSync, readFileSync, writeFileSync, mkdirSync } = require('node:fs');
+      const { join } = require('node:path');
+      const home = process.env['HOME'] ?? process.env['USERPROFILE'] ?? '';
+      const dir = join(home, '.jarvis');
+      const settingsPath = join(dir, 'settings.local.json');
+      mkdirSync(dir, { recursive: true });
+      let settings: Record<string, unknown> = {};
+      if (existsSync(settingsPath)) {
+        settings = JSON.parse(readFileSync(settingsPath, 'utf-8'));
+      }
+      const rules = (settings['permission_rules'] as PermissionRule[]) ?? [];
+      if (!rules.some((r) => r.id === rule.id)) {
+        rules.push(rule);
+        settings['permission_rules'] = rules;
+        writeFileSync(settingsPath, JSON.stringify(settings, null, 2), 'utf-8');
+      }
+    } catch { /* best-effort */ }
+  }
+
+  /** Remove a persisted rule from disk. */
+  private removePersistedRule(id: string): void {
+    try {
+      const { existsSync, readFileSync, writeFileSync } = require('node:fs');
+      const { join } = require('node:path');
+      const home = process.env['HOME'] ?? process.env['USERPROFILE'] ?? '';
+      const settingsPath = join(home, '.jarvis', 'settings.local.json');
+      if (!existsSync(settingsPath)) return;
+      const settings = JSON.parse(readFileSync(settingsPath, 'utf-8'));
+      const rules = (settings['permission_rules'] as PermissionRule[]) ?? [];
+      settings['permission_rules'] = rules.filter((r) => r.id !== id);
+      writeFileSync(settingsPath, JSON.stringify(settings, null, 2), 'utf-8');
+    } catch { /* best-effort */ }
   }
 
   /** Set the permission mode. */
@@ -223,6 +435,8 @@ export class PermissionManager {
   /**
    * Check whether a tool can execute without approval.
    * Returns { allowed, needsApproval, reason }.
+   *
+   * Flow: bypass → approveAll → explicit approvals → deny list → rules → mode logic
    */
   check(toolName: string, argsKey?: string): PermissionCheckResult {
     // Bypass mode: everything auto-approved
@@ -250,6 +464,26 @@ export class PermissionManager {
       return { allowed: false, reason: `Tool "${toolName}" has been denied for this session.` };
     }
 
+    // ---- Rule-based check (deny rules first, then allow rules) ----
+    const ruleResult = this.checkRules(toolName, argsKey);
+    if (ruleResult) return ruleResult;
+
+    // ---- Bash command grouping (for bash tool with command args) ----
+    if (toolName === 'bash' && argsKey) {
+      const classification = classifyBashCommand(argsKey);
+      if (classification.risk === 'blocked') {
+        return { allowed: false, reason: `BLOCKED: ${classification.reason}` };
+      }
+      // In plan/questioning mode, block all non-read bash
+      if (this.config.mode === 'plan' && classification.group !== 'read') {
+        return {
+          allowed: false,
+          reason: `Command (${classification.group}) blocked in plan mode.`,
+        };
+      }
+    }
+
+    // ---- Mode-based check ----
     const risk = this.riskMap[toolName]
       ?? (toolName.startsWith('mcp__') ? 'caution' : 'write_approval_required');
 
@@ -285,6 +519,40 @@ export class PermissionManager {
         return { allowed: true };
     }
   }
+
+  /**
+   * Check tool against permission rules (deny first, then allow).
+   * Returns null if no rule matches (fall through to mode logic).
+   */
+  private checkRules(toolName: string, argsKey?: string): PermissionCheckResult | null {
+    // Check deny rules first (highest priority after explicit deny)
+    for (const rule of this.rules) {
+      if (rule.action !== 'deny') continue;
+      if (this.ruleMatches(rule, toolName, argsKey)) {
+        return { allowed: false, reason: `Blocked by rule: ${rule.tool}${rule.pattern ? `(${rule.pattern})` : ''}` };
+      }
+    }
+    // Check allow rules
+    for (const rule of this.rules) {
+      if (rule.action !== 'allow') continue;
+      if (this.ruleMatches(rule, toolName, argsKey)) {
+        return { allowed: true };
+      }
+    }
+    return null;
+  }
+
+  /** Check if a rule matches the given tool + args. */
+  private ruleMatches(rule: PermissionRule, toolName: string, argsKey?: string): boolean {
+    // Tool name match (wildcard * matches all)
+    if (rule.tool !== '*' && rule.tool !== toolName) return false;
+    // Pattern match (if specified, must match argsKey)
+    if (rule.pattern && argsKey) {
+      return matchesGlob(argsKey, rule.pattern);
+    }
+    // No pattern = match all instances of this tool
+    return true;
+  }
 }
 
 // ============================================================================
@@ -308,6 +576,8 @@ export interface ToolRuntimeOptions {
   approvalGate?: ApprovalGate;
   /** Callback when a tool needs user approval. Returns true to allow, false to deny. */
   onApprovalNeeded?: (request: ApprovalRequest) => Promise<boolean>;
+  /** Optional permission state machine for context-aware gating */
+  stateMachine?: PermissionStateMachine;
 }
 
 /**
@@ -320,6 +590,7 @@ export class ToolRuntime {
   private permissionManager?: PermissionManager;
   private approvalGate?: ApprovalGate;
   private onApprovalNeeded?: ToolRuntimeOptions['onApprovalNeeded'];
+  private stateMachine?: PermissionStateMachine;
 
   constructor(registry: ToolRegistry, options: ToolRuntimeOptions = {}) {
     this.registry = registry;
@@ -327,6 +598,7 @@ export class ToolRuntime {
     this.permissionManager = options.permissionManager;
     this.approvalGate = options.approvalGate;
     this.onApprovalNeeded = options.onApprovalNeeded;
+    this.stateMachine = options.stateMachine;
   }
 
   /** Get the permission manager (for external configuration). */
@@ -337,6 +609,11 @@ export class ToolRuntime {
   /** Get the approval gate (for external configuration). */
   getApprovalGate(): ApprovalGate | undefined {
     return this.approvalGate;
+  }
+
+  /** Get the permission state machine (for external configuration). */
+  getStateMachine(): PermissionStateMachine | undefined {
+    return this.stateMachine;
   }
 
   /**
@@ -350,6 +627,19 @@ export class ToolRuntime {
   ): Promise<ToolResult> {
     const callId = `call_${crypto.randomUUID()}`;
     const start = performance.now();
+
+    // Fire state machine events based on tool calls
+    if (this.stateMachine) {
+      if (name === 'ask_user_question') {
+        this.stateMachine.transition({ type: 'ask_user_question' });
+      } else if (name === 'enter_plan_mode') {
+        this.stateMachine.transition({ type: 'enter_plan_mode' });
+      } else if (name === 'exit_plan_mode') {
+        this.stateMachine.transition({ type: 'exit_plan_mode' });
+      } else {
+        this.stateMachine.transition({ type: 'tool_call', toolName: name });
+      }
+    }
 
     // Permission check
     if (this.permissionManager) {
@@ -582,6 +872,15 @@ export function createToolRuntime(
   const internalMode = mapUserPermissionMode(options.permissionMode ?? 'workspace_write');
   const permManager = new PermissionManager();
   permManager.setMode(internalMode);
+  // Load persisted rules and patterns
+  permManager.loadPersistedRules();
+  permManager.loadPersistedPatterns();
+
+  // Create state machine wired to the permission manager
+  const stateMachine = new PermissionStateMachine({
+    permissionManager: permManager,
+    initialMode: internalMode,
+  });
 
   const sandboxPolicy = options.projectRoot
     ? createSandboxPolicy(options.projectRoot, options.sandbox) ?? undefined
@@ -597,6 +896,7 @@ export function createToolRuntime(
     permissionManager: permManager,
     approvalGate,
     onApprovalNeeded: options.onApprovalNeeded,
+    stateMachine,
   });
 }
 

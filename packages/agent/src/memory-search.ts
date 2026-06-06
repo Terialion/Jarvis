@@ -198,6 +198,7 @@ export function getMemoryByName(
 export interface MemoryStoreAdapter {
   loadAll(): Promise<MemoryEntry[]>;
   write(entry: MemoryEntry): Promise<string>;
+  delete?(name: string): Promise<void>;
 }
 
 /**
@@ -259,6 +260,64 @@ export function createMemoryGetHandler(memoryStore: MemoryStoreAdapter) {
       `${entry.decayWeight < 0.3 ? '  <note>This memory has low recency weight — it may be outdated.</note>\n' : ''}` +
       `</entry>`,
     );
+  };
+}
+
+/**
+ * Create a handler for the memory_write tool.
+ * Allows the agent to proactively save important information to persistent memory.
+ */
+export function createMemoryWriteHandler(memoryStore: MemoryStoreAdapter) {
+  return async (args: Record<string, unknown>): Promise<string> => {
+    const name = String(args['name'] ?? '').trim();
+    const content = String(args['content'] ?? '').trim();
+    const description = String(args['description'] ?? '').trim();
+    const memoryType = String(args['memoryType'] ?? 'user').trim() as 'user' | 'feedback' | 'project' | 'reference';
+    const tagsRaw = args['tags'];
+    const tags = Array.isArray(tagsRaw)
+      ? tagsRaw.map((t) => String(t).trim()).filter(Boolean)
+      : typeof tagsRaw === 'string'
+        ? tagsRaw.split(',').map((t) => t.trim()).filter(Boolean)
+        : undefined;
+
+    if (!name) return 'Error: name parameter is required.';
+    if (!content) return 'Error: content parameter is required.';
+
+    // Validate memoryType
+    const validTypes = ['user', 'feedback', 'project', 'reference'];
+    if (!validTypes.includes(memoryType)) {
+      return `Error: memoryType must be one of: ${validTypes.join(', ')}. Got: ${memoryType}`;
+    }
+
+    try {
+      await memoryStore.write({ name, description, memoryType, tags, content });
+      invalidateMemoryIndex();
+      return `Memory "${name}" saved successfully (${memoryType}${tags?.length ? ', tags: ' + tags.join(', ') : ''}).`;
+    } catch (err) {
+      return `Error saving memory: ${err instanceof Error ? err.message : String(err)}`;
+    }
+  };
+}
+
+/**
+ * Create a handler for the memory_delete tool.
+ * Allows the agent to delete outdated or conflicting memories.
+ */
+export function createMemoryDeleteHandler(memoryStore: MemoryStoreAdapter) {
+  return async (args: Record<string, unknown>): Promise<string> => {
+    const name = String(args['name'] ?? '').trim();
+    const reason = String(args['reason'] ?? '').trim();
+
+    if (!name) return 'Error: name parameter is required.';
+    if (!memoryStore.delete) return 'Error: memory deletion not supported by this store.';
+
+    try {
+      await memoryStore.delete(name);
+      invalidateMemoryIndex();
+      return `Memory "${name}" deleted.${reason ? ` Reason: ${reason}` : ''}`;
+    } catch (err) {
+      return `Error deleting memory: ${err instanceof Error ? err.message : String(err)}`;
+    }
   };
 }
 

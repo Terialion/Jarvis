@@ -53,8 +53,14 @@ export function discoverPluginMcpServers(projectRoot: string): Array<{ id: strin
 
 export function discoverUserMcpServers(projectRoot: string): Array<{ id: string; plugin?: string; config: McpServerConfig }> {
   const result: Array<{ id: string; plugin?: string; config: McpServerConfig }> = [];
-  const userPath = join(process.env['USERPROFILE'] ?? '', '.jarvis', 'mcp.json');
-  if (existsSync(userPath)) {
+  // Support both file names: mcp_server_config.json (CLI convention) and mcp.json
+  const jarvisDir = join(process.env['USERPROFILE'] ?? '', '.jarvis');
+  const candidates = [
+    join(jarvisDir, 'mcp_server_config.json'),
+    join(jarvisDir, 'mcp.json'),
+  ];
+  for (const userPath of candidates) {
+    if (!existsSync(userPath)) continue;
     try {
       const raw = JSON.parse(readFileSync(userPath, 'utf-8'));
       const servers = raw?.mcpServers ?? raw?.servers ?? {};
@@ -62,6 +68,7 @@ export function discoverUserMcpServers(projectRoot: string): Array<{ id: string;
         result.push({ id, config: cfg as McpServerConfig });
       }
     } catch { /* ignore */ }
+    break; // Use first found file
   }
   return result;
 }

@@ -21,26 +21,6 @@ export type PermissionRequestProps = {
   preview?: React.ReactNode;
 };
 
-function PermissionHeader({ toolName, width }: { toolName: string; width: number }) {
-  const label = ` ${toolName} `;
-  const labelLen = toolName.length + 2;
-  const leftLen = 3;
-  const rightLen = Math.max(0, width - leftLen - labelLen);
-  return (
-    <Text>
-      <Text dimColor>{"─".repeat(leftLen)}</Text>
-      <Text bold color="cyan">
-        {label}
-      </Text>
-      <Text dimColor>{"─".repeat(rightLen)}</Text>
-    </Text>
-  );
-}
-
-function HorizontalRule({ width }: { width: number }) {
-  return <Text dimColor>{"─".repeat(width)}</Text>;
-}
-
 export function BashPermissionContent({ command }: { command: string }): React.ReactNode {
   return (
     <Box flexDirection="column">
@@ -91,6 +71,7 @@ export function FileEditPermissionContent({
 type OptionDef = {
   value: PermissionAction;
   label: string;
+  key: string;
 };
 
 export function PermissionRequest({
@@ -107,16 +88,15 @@ export function PermissionRequest({
   const terminalWidth = Math.min((terminalSize?.columns ?? 80) - 2, 80);
 
   const options = useMemo<OptionDef[]>(() => {
-    const opts: OptionDef[] = [{ value: "allow", label: "Yes, allow this action" }];
+    const opts: OptionDef[] = [{ value: "allow", label: "Yes, allow", key: "y" }];
     if (showAlwaysAllow) {
-      // Truncate long patterns (e.g., bash commands) for readability
-      const truncated = patternLabel && patternLabel.length > 60
-        ? patternLabel.slice(0, 57) + '...'
+      const truncated = patternLabel && patternLabel.length > 40
+        ? patternLabel.slice(0, 37) + '...'
         : patternLabel;
       const target = truncated ? `${toolName} (${truncated})` : toolName;
-      opts.push({ value: "always_allow", label: `Yes, and always allow ${target}` });
+      opts.push({ value: "always_allow", label: `Always allow ${target}`, key: "a" });
     }
-    opts.push({ value: "deny", label: "No, deny" });
+    opts.push({ value: "deny", label: "No, deny", key: "n" });
     return opts;
   }, [showAlwaysAllow, toolName, patternLabel]);
 
@@ -161,51 +141,51 @@ export function PermissionRequest({
   });
 
   return (
-    <Box flexDirection="column">
-      <PermissionHeader toolName={toolName} width={terminalWidth} />
-
-      <Box marginTop={1} marginLeft={2} flexDirection="column">
+    <Box flexDirection="column" paddingX={1}>
+      {/* Compact header: tool name + description on one line */}
+      <Box>
+        <Text bold color="cyan">{toolName}</Text>
+        <Text dimColor> — </Text>
         <Text>{description}</Text>
       </Box>
 
+      {/* Details (command, file path) */}
       {details && (
-        <Box marginTop={1} marginLeft={4}>
+        <Box marginLeft={2} marginTop={0}>
           <Text color="yellow">{details}</Text>
         </Box>
       )}
 
+      {/* Diff preview */}
       {children && (
-        <Box marginTop={1} marginLeft={2} flexDirection="column">
+        <Box marginLeft={2} marginTop={0} flexDirection="column">
           {children}
         </Box>
       )}
 
       {preview && (
-        <Box marginTop={1} marginLeft={2} flexDirection="column">
+        <Box marginLeft={2} marginTop={0} flexDirection="column">
           {preview}
         </Box>
       )}
 
-      <Box marginTop={1}>
-        <HorizontalRule width={terminalWidth} />
-      </Box>
-
+      {/* Options: vertical list with key shortcuts */}
       <Box marginTop={1} flexDirection="column">
         {options.map((opt, i) => {
           const isFocused = i === focusIndex;
           return (
             <Box key={opt.value}>
-              <Text color={isFocused ? "cyan" : undefined}>{isFocused ? "❯" : " "} </Text>
+              <Text color={isFocused ? "cyan" : undefined}>{isFocused ? "❯" : " "}</Text>
               <Text color={isFocused ? "cyan" : undefined} bold={isFocused}>
-                {i + 1}. {opt.label}
+                {opt.key}
+              </Text>
+              <Text dimColor>{") "}</Text>
+              <Text color={isFocused ? "cyan" : undefined}>
+                {opt.label}
               </Text>
             </Box>
           );
         })}
-      </Box>
-
-      <Box marginTop={1}>
-        <Text dimColor>Enter to confirm · Esc to deny</Text>
       </Box>
     </Box>
   );

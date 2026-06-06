@@ -9,7 +9,7 @@ import type { Message, MessageContent } from './vendor/ui/MessageList.js';
 import type { StatusLineSegment } from './vendor/ui/StatusLine.js';
 import { WelcomeScreen } from './vendor/ui/WelcomeScreen.js';
 import { loadSettings, saveSettings, type UserSettings } from './settings-store.js';
-import { AgentLoop, AgentEventBus, TokenTracker, formatTokensCompact, estimateTokens, validateContextWindow, resolveContextWindow, getAllModels, parseModelName, findModel, buildSystemPrompt, createMemorySearchHandler, createMemoryGetHandler, type ThreadEvent, type ModelInfo } from '@jarvis/agent';
+import { AgentLoop, AgentEventBus, TokenTracker, formatTokensCompact, estimateTokens, validateContextWindow, resolveContextWindow, getAllModels, parseModelName, findModel, buildSystemPrompt, createMemorySearchHandler, createMemoryGetHandler, createMemoryWriteHandler, createMemoryDeleteHandler, type ThreadEvent, type ModelInfo } from '@jarvis/agent';
 import {
   ToolRegistry,
   allBuiltinTools,
@@ -30,8 +30,9 @@ import {
   createWebFetchHandler,
   tryCreateTavilySearch,
   tryCreateTavilyFetch,
+  PermissionStateMachine,
 } from '@jarvis/tools';
-import type { AskQuestionDef, PlanReviewRequest } from '@jarvis/tools';
+import type { AskQuestionDef, PlanReviewRequest, PermissionState } from '@jarvis/tools';
 import type { PlanReviewDecision } from './vendor/ui/PlanReview';
 import { SkillRegistry, SkillExecutor } from '@jarvis/skills';
 import { SessionStore, MarkdownMemoryStore } from '@jarvis/store';
@@ -130,6 +131,8 @@ export function App({ options }: { options: TUIOptions }): React.ReactNode {
   const taskCountRef = useRef<{ pending: number; in_progress: number; completed: number }>({ pending: 0, in_progress: 0, completed: 0 });
   const abortRef = useRef<AbortController | null>(null);
   const permManagerRef = useRef<import('@jarvis/tools').PermissionManager | null>(null);
+  const stateMachineRef = useRef<PermissionStateMachine | null>(null);
+  const [permissionState, setPermissionState] = useState<PermissionState>('idle');
   const [modeVersion, setModeVersion] = useState(0);
   const [modelVersion, setModelVersion] = useState(0);
 
@@ -452,7 +455,9 @@ export function App({ options }: { options: TUIOptions }): React.ReactNode {
     permissionModeRef.current = next;
     saveSettings({ permission_mode: next as UserSettings['permission_mode'] });
     setModeVersion((v) => v + 1);
-    // Update the active PermissionManager without rebuilding the agent
+    // Update the state machine's base mode (it will sync to PermissionManager)
+    stateMachineRef.current?.setBaseMode(next);
+    // Also directly update PermissionManager in case state machine is not active
     permManagerRef.current?.setMode(next);
   }, []);
 
@@ -491,8 +496,9 @@ export function App({ options }: { options: TUIOptions }): React.ReactNode {
       streamAccumRef.current = '';
       streamFlushRef.current = null;
       if (chunk) {
+        const decoded = decodeHtmlEntities(chunk);
         setStreamingContent((prev) => {
-          const next = (prev ?? '') + chunk;
+          const next = (prev ?? '') + decoded;
           streamingContentRef.current = next;
           return next;
         });
@@ -748,6 +754,53 @@ export function App({ options }: { options: TUIOptions }): React.ReactNode {
           },
           handler: (args: Record<string, unknown>) => createMemoryGetHandler(memoryStore)(args),
         });
+        tools.register({
+          name: 'memory_write',
+          toolset: 'memory',
+          description: 'Save important information to persistent memory (user preferences, project facts, decisions, schedules)',
+          isAsync: true,
+          schema: {
+            type: 'function',
+            function: {
+              name: 'memory_write',
+              description: 'Save important information to persistent memory. Use this proactively when the user mentions preferences, schedules, ideas, corrections, or important facts.',
+              parameters: {
+                type: 'object',
+                properties: {
+                  name: { type: 'string', description: 'Short kebab-case name for this memory (e.g., prefers-vim, deploy-friday, identity-timezone)' },
+                  description: { type: 'string', description: 'One-line summary of what this memory contains' },
+                  content: { type: 'string', description: 'The full memory content in markdown' },
+                  memoryType: { type: 'string', description: 'Category: user (identity, preferences, habits, schedule, ideas), project (facts, architecture, conventions), feedback (corrections), reference (external info)' },
+                  tags: { type: 'array', items: { type: 'string' }, description: 'Fine-grained tags: identity, preferences, habits, schedule, ideas, code-style, architecture, conventions, research' },
+                },
+                required: ['name', 'content'],
+              },
+            },
+          },
+          handler: (args: Record<string, unknown>) => createMemoryWriteHandler(memoryStore)(args),
+        });
+        tools.register({
+          name: 'memory_delete',
+          toolset: 'memory',
+          description: 'Delete an outdated or conflicting memory entry',
+          isAsync: true,
+          schema: {
+            type: 'function',
+            function: {
+              name: 'memory_delete',
+              description: 'Delete a memory entry by name. Use when you find conflicting memories or when the user corrects outdated information.',
+              parameters: {
+                type: 'object',
+                properties: {
+                  name: { type: 'string', description: 'Name of the memory entry to delete' },
+                  reason: { type: 'string', description: 'Why this memory is being deleted (for audit)' },
+                },
+                required: ['name'],
+              },
+            },
+          },
+          handler: (args: Record<string, unknown>) => createMemoryDeleteHandler(memoryStore)(args),
+        });
       }
       toolsRef.current = tools;
 
@@ -927,17 +980,17 @@ export function App({ options }: { options: TUIOptions }): React.ReactNode {
           }
           // Skip DSML tool call tags leaked into visible text
           if (token.includes('｜')) return;
-          // Decode HTML entities that models emit (e.g. &quot; &amp; &#39;)
-          const decoded = decodeHtmlEntities(token);
           // Buffer tokens and flush periodically (append mode)
-          streamAccumRef.current += decoded;
+          streamAccumRef.current += token;
           if (!streamFlushRef.current) {
             streamFlushRef.current = setTimeout(() => {
               const chunk = streamAccumRef.current;
               streamAccumRef.current = '';
               streamFlushRef.current = null;
+              // Decode HTML entities on the full buffer (entities may span multiple tokens)
+              const decoded = decodeHtmlEntities(chunk);
               setStreamingContent((prev) => {
-                const next = (prev ?? '') + chunk;
+                const next = (prev ?? '') + decoded;
                 streamingContentRef.current = next;
                 return next;
               });
@@ -1031,8 +1084,12 @@ export function App({ options }: { options: TUIOptions }): React.ReactNode {
             onApprovalNeeded: handleApprovalNeeded,
           });
           permManagerRef.current = runtime.getPermissionManager() ?? null;
-          // Load persisted approval patterns from .jarvis/settings.local.json
-          permManagerRef.current?.loadPersistedPatterns();
+          stateMachineRef.current = runtime.getStateMachine() ?? null;
+          // Subscribe to state changes for UI updates
+          stateMachineRef.current?.onStateChange((newState) => {
+            setPermissionState(newState);
+            setModeVersion((v) => v + 1);
+          });
           return runtime;
         })(),
       });
@@ -1076,6 +1133,8 @@ export function App({ options }: { options: TUIOptions }): React.ReactNode {
     };
     setMessages((prev) => [...prev, userMsg]);
     setIsLoading(true);
+    // Fire state machine transition for user submit
+    stateMachineRef.current?.transition({ type: 'user_submit' });
     setStreamingContent(null);
     setStreamingThinking(null);
     streamingContentRef.current = null;
@@ -1362,6 +1421,8 @@ export function App({ options }: { options: TUIOptions }): React.ReactNode {
       commitStreaming();
       abortRef.current = null;
       setIsLoading(false);
+      // Fire state machine transition for turn completion
+      stateMachineRef.current?.transition({ type: 'turn_complete' });
       setStreamingContent(null);
       streamAccumRef.current = '';
       if (streamFlushRef.current) { clearTimeout(streamFlushRef.current); streamFlushRef.current = null; }
@@ -1400,6 +1461,7 @@ export function App({ options }: { options: TUIOptions }): React.ReactNode {
           maxTurns: options.maxTurns,
           outputStyleRef,
           permissionModeRef,
+          permManagerRef,
           mcpClientRef: mcpRef,
           mcpStatusesRef,
           mcpConfiguredRef,
@@ -1453,6 +1515,7 @@ export function App({ options }: { options: TUIOptions }): React.ReactNode {
       gitBranch,
       effort: reasoningEffortRef.current,
       permissionMode: permissionModeRef.current,
+      permissionState: permissionState !== 'idle' ? permissionState : undefined,
       isLoading,
       hasQuestion: askQuestions !== null,
       totalTokens: liveUsage?.usedTokens ?? (tracker?.turnCount ? tracker.currentContextTokens : undefined),
@@ -1541,6 +1604,19 @@ export function App({ options }: { options: TUIOptions }): React.ReactNode {
       clearTimeout(streamFlushRef.current);
       streamFlushRef.current = null;
     }
+    // Clear any pending dialog states (permission, questions, plan review)
+    setPermissionRequest(undefined);
+    permissionResolveRef.current?.(false);
+    permissionResolveRef.current = null;
+    setAskQuestions(null);
+    askResolveRef.current?.({});
+    askResolveRef.current = null;
+    askRejectRef.current = null;
+    setPlanReview(null);
+    planReviewResolveRef.current?.('cancel');
+    planReviewResolveRef.current = null;
+    // Reset state machine to idle so input is enabled
+    stateMachineRef.current?.transition({ type: 'turn_complete' });
     streamAccumRef.current = '';
     // Stop elapsed timer
     if (elapsedTimerRef.current) {
@@ -1566,6 +1642,8 @@ export function App({ options }: { options: TUIOptions }): React.ReactNode {
       askResolveRef.current = null;
       askRejectRef.current = null;
       setAskQuestions(null);
+      // Fire state machine transition: user answered the question
+      stateMachineRef.current?.transition({ type: 'user_answer' });
     },
     [],
   );
@@ -1583,12 +1661,20 @@ export function App({ options }: { options: TUIOptions }): React.ReactNode {
     planReviewResolveRef.current?.(choice);
     planReviewResolveRef.current = null;
     setPlanReview(null);
+    // Fire state machine transition based on user's plan review decision
+    if (choice === 'proceed') {
+      stateMachineRef.current?.transition({ type: 'user_approve_plan' });
+    } else {
+      stateMachineRef.current?.transition({ type: 'user_reject_plan' });
+    }
   }, [planReviewIndex]);
 
   const handlePlanReviewCancel = useCallback(() => {
     planReviewResolveRef.current?.("cancel");
     planReviewResolveRef.current = null;
     setPlanReview(null);
+    // Fire state machine transition: user cancelled plan review
+    stateMachineRef.current?.transition({ type: 'user_reject_plan' });
   }, []);
 
   useEffect(() => {

@@ -21,6 +21,8 @@ export interface StatusSegmentInput {
   elapsedMs: number;
   effort?: string;
   permissionMode?: string;
+  /** Current permission state (only shown when not idle) */
+  permissionState?: string;
   sessionId?: string | null;
   /** Agent counts: total, running, completed */
   agentCounts?: { total: number; running: number; completed: number };
@@ -72,14 +74,35 @@ const MODE_COLORS: Record<string, Color> = {
   'plan': 'cyan',
 };
 
+const STATE_LABELS: Record<string, string> = {
+  'exploring': 'exploring',
+  'planning': 'planning',
+  'awaiting_review': 'review',
+  'questioning': 'question',
+  'awaiting_confirm': 'confirm',
+  'executing': 'executing',
+};
+
+const STATE_COLORS: Record<string, Color> = {
+  'exploring': 'cyan',
+  'planning': 'cyan',
+  'awaiting_review': 'yellow',
+  'questioning': 'yellow',
+  'awaiting_confirm': 'yellow',
+  'executing': 'green',
+};
+
 export function buildStatusSegments(input: StatusSegmentInput): StatusLineSegment[] {
   const modeLabel = input.permissionMode ? (MODE_LABELS[input.permissionMode] ?? input.permissionMode) : undefined;
   const modeColor = input.permissionMode ? (MODE_COLORS[input.permissionMode] ?? 'blue') : 'blue';
+  const stateLabel = input.permissionState ? (STATE_LABELS[input.permissionState] ?? input.permissionState) : undefined;
+  const stateColor = input.permissionState ? (STATE_COLORS[input.permissionState] ?? 'cyan') : 'cyan';
   const segments: StatusLineSegment[] = [
     { content: `project ${getProjectLabel(input.cwd)}`, color: "cyan" },
     { content: `model ${input.model}`, color: "white" },
     ...(input.effort && input.effort !== "auto" ? [{ content: `effort ${input.effort}`, color: "cyan" as const }] : []),
     ...(modeLabel ? [{ content: `mode ${modeLabel}`, color: modeColor }] : []),
+    ...(stateLabel ? [{ content: `perm ${stateLabel}`, color: stateColor }] : []),
     { content: `state ${formatRunState(input)}`, color: input.isLoading ? "yellow" : "green" },
   ];
 

@@ -18,6 +18,8 @@ export interface MemoryEntry {
   description: string;
   /** Category: user, feedback, project, reference. */
   memoryType: 'user' | 'feedback' | 'project' | 'reference';
+  /** Fine-grained tags for categorization within type (e.g., identity, preferences, habits, schedule, ideas, code-style, architecture). */
+  tags?: string[];
   /** Markdown body content. */
   content: string;
   /** File path — set during load. */
@@ -134,6 +136,14 @@ export class MarkdownMemoryStore {
   readonly indexPath: string;
   private readonly _writeLock = new Mutex();
 
+  /** Subdirectories for each memory type. */
+  private static readonly TYPE_DIRS: Record<string, string> = {
+    user: 'user',
+    project: 'project',
+    feedback: 'feedback',
+    reference: 'reference',
+  };
+
   constructor(baseDir: string = '~/.jarvis/memory') {
     this.baseDir = resolveHome(baseDir);
     this.indexPath = path.join(this.baseDir, 'MEMORY.md');
@@ -141,7 +151,7 @@ export class MarkdownMemoryStore {
 
   // ── Read ────────────────────────────────────────────────────────────
 
-  /** Load all memory entries from markdown files. */
+  /** Load all memory entries from markdown files (subdirectories + root for migration). */
   async loadAll(): Promise<MemoryEntry[]> {
     const entries: MemoryEntry[] = [];
     try {
@@ -150,34 +160,66 @@ export class MarkdownMemoryStore {
       // Directory may already exist
     }
 
-    let files: string[];
-    try {
-      files = await fs.readdir(this.baseDir);
-    } catch {
-      return entries;
-    }
-
-    for (const file of files.sort()) {
-      if (!file.endsWith('.md')) continue;
-      if (file === 'MEMORY.md' || file === 'index.md') continue;
-
-      const filePath = path.join(this.baseDir, file);
+    // 1. Load from type subdirectories (user/, project/, feedback/, reference/)
+    for (const [, subDir] of Object.entries(MarkdownMemoryStore.TYPE_DIRS)) {
+      const dirPath = path.join(this.baseDir, subDir);
       try {
-        const text = await fs.readFile(filePath, 'utf-8');
-        const { meta, body } = parseFrontmatter(text);
-        if (meta.name) {
-          entries.push({
-            name: meta.name,
-            description: meta.description || '',
-            memoryType: (meta.type as MemoryEntry['memoryType']) || 'project',
-            content: body,
-            filePath,
-          });
+        const files = await fs.readdir(dirPath);
+        for (const file of files.sort()) {
+          if (!file.endsWith('.md')) continue;
+          const filePath = path.join(dirPath, file);
+          try {
+            const text = await fs.readFile(filePath, 'utf-8');
+            const { meta, body } = parseFrontmatter(text);
+            if (meta.name) {
+              const tags = meta.tags ? meta.tags.split(',').map((t: string) => t.trim()).filter(Boolean) : undefined;
+              entries.push({
+                name: meta.name,
+                description: meta.description || '',
+                memoryType: (meta.type as MemoryEntry['memoryType']) || 'project',
+                tags,
+                content: body,
+                filePath,
+              });
+            }
+          } catch { /* skip unreadable */ }
         }
-      } catch {
-        // Skip unreadable files (matches Python behavior)
-      }
+      } catch { /* dir doesn't exist yet, ok */ }
     }
+
+    // 2. Load from root directory (backward compatibility with old flat structure)
+    try {
+      const files = await fs.readdir(this.baseDir);
+      for (const file of files.sort()) {
+        if (!file.endsWith('.md')) continue;
+        if (file === 'MEMORY.md' || file === 'index.md') continue;
+        // Skip if it's a directory name (shouldn't happen, but be safe)
+        const filePath = path.join(this.baseDir, file);
+        try {
+          const stat = await fs.stat(filePath);
+          if (!stat.isFile()) continue;
+        } catch { continue; }
+        // Skip if this entry already loaded from a subdirectory
+        const alreadyLoaded = entries.some((e) => e.filePath === filePath);
+        if (alreadyLoaded) continue;
+        try {
+          const text = await fs.readFile(filePath, 'utf-8');
+          const { meta, body } = parseFrontmatter(text);
+          if (meta.name) {
+            const tags = meta.tags ? meta.tags.split(',').map((t: string) => t.trim()).filter(Boolean) : undefined;
+            entries.push({
+              name: meta.name,
+              description: meta.description || '',
+              memoryType: (meta.type as MemoryEntry['memoryType']) || 'project',
+              tags,
+              content: body,
+              filePath,
+            });
+          }
+        } catch { /* skip unreadable */ }
+      }
+    } catch { /* ignore */ }
+
     return entries;
   }
 
@@ -200,13 +242,17 @@ export class MarkdownMemoryStore {
     return Math.max(0.1, 1.0 - (daysSince / halfLifeDays) * 0.9);
   }
 
-  /** Write a memory entry to a .md file and update MEMORY.md index. */
+  /** Write a memory entry to a .md file (in type subdirectory) and update MEMORY.md index. */
   async write(entry: MemoryEntry): Promise<string> {
     await this._writeLock.acquire();
     try {
       const safeName = this.sanitizeName(entry.name);
+      const typeDir = MarkdownMemoryStore.TYPE_DIRS[entry.memoryType] ?? 'project';
+      const dirPath = path.join(this.baseDir, typeDir);
       const fileName = `${safeName}.md`;
-      const filePath = path.join(this.baseDir, fileName);
+      const filePath = path.join(dirPath, fileName);
+      // Relative path for index: "user/prefers-vim.md"
+      const indexFileName = `${typeDir}/${fileName}`;
 
       const contentHash = MarkdownMemoryStore.hashContent(entry.content);
       const now = new Date().toISOString();
@@ -219,16 +265,19 @@ export class MarkdownMemoryStore {
           name: entry.name,
           description: entry.description,
           type: entry.memoryType,
+          ...(entry.tags?.length ? { tags: entry.tags.join(', ') } : {}),
           content_hash: contentHash,
           updated_at: now,
         };
-        await fs.mkdir(this.baseDir, { recursive: true });
+        await fs.mkdir(dirPath, { recursive: true });
         await fs.writeFile(
           filePath,
           formatFrontmatter(existingMeta, entry.content),
           'utf-8',
         );
-        await this._updateIndex(entry, fileName);
+        await this._updateIndex(entry, indexFileName);
+        // Clean up old flat file if it exists (migration)
+        await this._removeOldFlatFile(safeName);
         return filePath;
       }
 
@@ -236,18 +285,21 @@ export class MarkdownMemoryStore {
         name: entry.name,
         description: entry.description,
         type: entry.memoryType,
+        ...(entry.tags?.length ? { tags: entry.tags.join(', ') } : {}),
         content_hash: contentHash,
         updated_at: now,
       };
 
-      await fs.mkdir(this.baseDir, { recursive: true });
+      await fs.mkdir(dirPath, { recursive: true });
       await fs.writeFile(
         filePath,
         formatFrontmatter(meta, entry.content),
         'utf-8',
       );
 
-      await this._updateIndex(entry, fileName);
+      await this._updateIndex(entry, indexFileName);
+      // Clean up old flat file if it exists (migration)
+      await this._removeOldFlatFile(safeName);
       return filePath;
     } finally {
       this._writeLock.release();
@@ -292,13 +344,25 @@ export class MarkdownMemoryStore {
     try {
       const safeName = this.sanitizeName(name);
       const fileName = `${safeName}.md`;
-      const filePath = path.join(this.baseDir, fileName);
 
-      await fs.unlink(filePath).catch(() => {
-        /* ok if doesn't exist */
-      });
+      // Try to find the file in subdirectories first, then root
+      let deleted = false;
+      for (const [, subDir] of Object.entries(MarkdownMemoryStore.TYPE_DIRS)) {
+        const filePath = path.join(this.baseDir, subDir, fileName);
+        try {
+          await fs.unlink(filePath);
+          deleted = true;
+          await this._removeFromIndex(`${subDir}/${fileName}`);
+          break;
+        } catch { /* not in this subdir */ }
+      }
 
-      await this._removeFromIndex(fileName);
+      // Fallback: try root directory (old flat structure)
+      if (!deleted) {
+        const filePath = path.join(this.baseDir, fileName);
+        await fs.unlink(filePath).catch(() => {});
+        await this._removeFromIndex(fileName);
+      }
     } finally {
       this._writeLock.release();
     }
@@ -321,6 +385,20 @@ export class MarkdownMemoryStore {
   /** Sanitize a name for use as a filename. */
   sanitizeName(name: string): string {
     return name.replace(/[/\\ :]/g, '_').replace(/\s+/g, '_');
+  }
+
+  // ── Migration helper ────────────────────────────────────────────────
+
+  /** Remove old flat-structure file if it exists (migration to subdirectories). */
+  private async _removeOldFlatFile(safeName: string): Promise<void> {
+    const oldPath = path.join(this.baseDir, `${safeName}.md`);
+    try {
+      const stat = await fs.stat(oldPath);
+      if (stat.isFile()) {
+        await fs.unlink(oldPath);
+        await this._removeFromIndex(`${safeName}.md`);
+      }
+    } catch { /* no old file, ok */ }
   }
 
   // ── Index management ────────────────────────────────────────────────

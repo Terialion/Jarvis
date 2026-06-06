@@ -16,6 +16,7 @@ export {
   ApprovalGate,
   PermissionManager,
   mapUserPermissionMode,
+  classifyBashCommand,
   createToolRuntime,
   type ToolRuntimeOptions,
   type CreateToolRuntimeOptions,
@@ -24,6 +25,10 @@ export {
   type UserPermissionMode,
   type PermissionCheckResult,
   type ApprovalRequest,
+  type PermissionRule,
+  type CommandGroup,
+  type CommandClassification,
+  type ToolRiskLevel,
 } from './runtime.js';
 
 // Sandbox policy
@@ -35,6 +40,14 @@ export {
   type CommandRisk,
   type CommandCheckResult,
 } from './sandbox-policy.js';
+
+// Permission state machine
+export {
+  PermissionStateMachine,
+  type PermissionState,
+  type PermissionEvent,
+  type StateChangeCallback,
+} from './permission-state.js';
 
 // Builtin tools (individual entries + schemas)
 export { bashTool, bashSchema } from './builtin/bash.js';

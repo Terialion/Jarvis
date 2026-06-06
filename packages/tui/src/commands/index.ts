@@ -530,6 +530,64 @@ export const SLASH_COMMANDS: SlashCommandDef[] = [
     },
   },
   {
+    name: 'rules',
+    description: 'Manage permission rules (allow/deny tool patterns)',
+    usage: '/rules [list|add|remove|clear]',
+    handler: (args, ctx) => {
+      const pm = ctx.permManagerRef.current;
+      if (!pm) return 'Permission manager not available.';
+
+      const sub = (args[0] ?? 'list').toLowerCase();
+
+      if (sub === 'list') {
+        const rules = pm.getRules();
+        if (rules.length === 0) return 'No permission rules configured.\n\nUsage:\n  /rules add bash "git diff *" allow\n  /rules add write_file "*.ts" allow\n  /rules remove <id>\n  /rules clear (session rules only)';
+        const lines = rules.map((r, i) => {
+          const scope = r.scope === 'persistent' ? ' [persistent]' : ' [session]';
+          return `  ${i + 1}. ${r.action.toUpperCase()} ${r.tool}${r.pattern ? `(${r.pattern})` : ''}${scope}  id=${r.id}`;
+        });
+        return `Permission rules (${rules.length}):\n\n${lines.join('\n')}`;
+      }
+
+      if (sub === 'add') {
+        // /rules add <tool> [pattern] [allow|deny]
+        if (args.length < 2) return 'Usage: /rules add <tool> [pattern] [allow|deny]\nExample: /rules add bash "git diff *" allow';
+        const tool = args[1];
+        let pattern: string | undefined;
+        let action: 'allow' | 'deny' = 'allow';
+        let scope: 'session' | 'persistent' = 'session';
+
+        // Parse remaining args
+        for (let i = 2; i < args.length; i++) {
+          const arg = args[i];
+          if (arg === 'allow' || arg === 'deny') {
+            action = arg;
+          } else if (arg === 'persistent' || arg === 'forever') {
+            scope = 'persistent';
+          } else if (!pattern) {
+            pattern = arg;
+          }
+        }
+
+        const id = pm.addRule({ tool: tool!, pattern, action, scope });
+        return `Rule added: ${action.toUpperCase()} ${tool}${pattern ? `(${pattern})` : ''} (${scope}) id=${id}`;
+      }
+
+      if (sub === 'remove') {
+        if (args.length < 2) return 'Usage: /rules remove <id>';
+        const removed = pm.removeRule(args[1]);
+        return removed ? `Rule ${args[1]} removed.` : `Rule ${args[1]} not found.`;
+      }
+
+      if (sub === 'clear') {
+        pm.clearSessionRules();
+        return 'Session rules cleared (persistent rules kept).';
+      }
+
+      return 'Usage: /rules [list|add|remove|clear]';
+    },
+  },
+  {
     name: 'skills',
     description: 'List available skills with descriptions',
     usage: '/skills [search]',

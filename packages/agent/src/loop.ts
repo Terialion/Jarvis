@@ -127,12 +127,6 @@ function normalizeSkillName(value: string): string {
 // AgentLoop
 // ============================================================================
 
-const SENSITIVE_MARKERS = [
-  '.env', 'api key', 'api token', 'access token', 'bearer token',
-  'auth token', 'password', 'id_rsa', 'client secret', 'api secret',
-  'secret key', 'jarvis_llm_api_key',
-];
-
 export class AgentLoop {
   private config: Required<Omit<AgentLoopConfig, 'tools' | 'toolRuntime' | 'eventBus' | 'provider' | 'skillRegistry' | 'skillExecutor' | 'hooks' | 'sessionStore' | 'memoryStore' | 'contextStore' | 'tokenTracker' | 'onToken' | 'onReasoningDelta' | 'onToolStart' | 'onToolEnd' | 'onThreadEvent' | 'mailbox'>> & {
     tools?: ToolRegistry;
@@ -803,17 +797,6 @@ export class AgentLoop {
       turn_id: turnId,
     });
 
-    // Safety check
-    if (this._isSensitiveRequest(userInput)) {
-      return this._completeEarly({
-        sessionId, turnId, events, availableSkills, loadedSkills, skillResultsLog, skillsUsed,
-        finalAnswer: "I can't print .env files or API keys because they may contain secrets.",
-        stopReason: 'safety_refusal',
-        outputType: 'refusal',
-        toolCallsLog, toolResultsLog,
-      });
-    }
-
     // Build context
     const turnContext = await this.contextBuilder.buildContext({
       sessionId,
@@ -1151,11 +1134,8 @@ export class AgentLoop {
               messages.push({
                 role: 'user',
                 content: [
-                  '你的回复只是描述了你要做什么，但没有真正调用工具。',
-                  '你必须直接调用工具函数——不要只是说"我来做X"。现在就调用工具。',
-                  '',
                   'Your last response described what you intend to do but did NOT actually call any tool.',
-                  'You MUST call the appropriate tool function directly — do NOT just say what you will do.',
+                  'You MUST call the appropriate tool function directly - do NOT just say what you will do.',
                   'Use the tool now.',
                 ].join('\n'),
               });
@@ -1433,6 +1413,20 @@ export class AgentLoop {
             });
             this.config.onToolEnd?.(call.callId, call.name, result);
 
+            const interactiveStop = this._extractInteractiveStopFromToolResult(call.name, result.content);
+            if (interactiveStop) {
+              finalAnswer = interactiveStop.finalAnswer;
+              stopReason = interactiveStop.stopReason;
+              outputType = 'answer';
+              failureTracker.recordSuccess(result.name);
+              anyOkThisStep = true;
+              const entry = seenCalls.get(call.name) || [];
+              entry.push({ argsFrozen, result: resultDict });
+              seenCalls.set(call.name, entry);
+              messages.push({ role: 'tool', tool_call_id: call.callId, content: this._observationText(result) });
+              break;
+            }
+
             // skill.load / Skill handling
             if ((call.name === 'skill.load' || call.name === 'Skill') && result.ok) {
               const resultMeta = (result as unknown as { metadata?: Record<string, unknown> }).metadata;
@@ -1526,6 +1520,10 @@ export class AgentLoop {
 
         if (requestForcedSynthesis) {
           continue;
+        }
+
+        if (['waiting_for_plan_edits', 'plan_cancelled', 'question_cancelled'].includes(stopReason)) {
+          break;
         }
 
         if (['approval_required', 'timeout', 'consecutive_rejections'].includes(stopReason)) {
@@ -1946,11 +1944,6 @@ export class AgentLoop {
       mcp_tools_tokens: mcpToolsTokens,
       estimated_total_tokens: estimatedTotalTokens,
     };
-  }
-
-  private _isSensitiveRequest(text: string): boolean {
-    const lowered = text.toLowerCase();
-    return SENSITIVE_MARKERS.some((m) => lowered.includes(m));
   }
 
   private _completeEarly(params: {
@@ -2394,6 +2387,47 @@ export class AgentLoop {
       }
     }
     return String(content || '').slice(0, limit);
+  }
+
+  private _extractInteractiveStopFromToolResult(
+    toolName: string,
+    rawContent: string,
+  ): { stopReason: string; finalAnswer: string } | null {
+    let parsed: Record<string, unknown> | null = null;
+    try {
+      parsed = JSON.parse(rawContent);
+    } catch {
+      return null;
+    }
+
+    if (toolName === 'exit_plan_mode') {
+      const status = typeof parsed?.['status'] === 'string' ? parsed['status'] : '';
+      const message = typeof parsed?.['message'] === 'string' ? parsed['message'] : rawContent;
+      if (status === 'needs_edit') {
+        return {
+          stopReason: 'waiting_for_plan_edits',
+          finalAnswer: message,
+        };
+      }
+      if (status === 'cancelled') {
+        return {
+          stopReason: 'plan_cancelled',
+          finalAnswer: message,
+        };
+      }
+    }
+
+    if (toolName === 'ask_user_question') {
+      const error = typeof parsed?.['error'] === 'string' ? parsed['error'] : '';
+      if (error.toLowerCase().includes('question cancelled')) {
+        return {
+          stopReason: 'question_cancelled',
+          finalAnswer: error,
+        };
+      }
+    }
+
+    return null;
   }
 
   private _fallbackFinalAnswer(

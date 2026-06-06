@@ -171,6 +171,8 @@ export type {
 export {
   createMemorySearchHandler,
   createMemoryGetHandler,
+  createMemoryWriteHandler,
+  createMemoryDeleteHandler,
   buildMemoryIndex,
   searchMemory,
   getMemoryByName,

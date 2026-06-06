@@ -238,16 +238,19 @@ export function REPL({
   const [toolResultsExpanded, setToolResultsExpanded] = useState(false);
   const [followOutput, setFollowOutput] = useState(true);
   const [scrollPositionKind, setScrollPositionKind] = useState<"following" | "history" | "selection">("following");
+  const [showExitHint, setShowExitHint] = useState(false);
+  const exitHintTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const submittingRef = useRef(false);
   const hasSelection = useHasSelection();
   const { clearSelection, copySelectionNoClear, shiftSelection, captureScrolledRows } = useSelection();
 
   const history = externalHistory ?? internalHistory;
+  const interactivePromptActive = !!askUserQuestion || !!permissionRequest || !!planReview;
   const overlaysOpen =
     searchOpen || modelSelectorOpen || effortSelectorOpen || helpPopupOpen || !!contextPanel || !!mcpPanel;
   const viewportHotkeysActive = !overlaysOpen && !agentsFocused;
 
-  useRegisterKeybindingContext("Chat", !overlaysOpen && !planReview);
+  useRegisterKeybindingContext("Chat", !overlaysOpen && !interactivePromptActive);
   useRegisterKeybindingContext("Scroll", viewportHotkeysActive);
 
   const stopFollowingOutput = useCallback(
@@ -309,12 +312,34 @@ export function REPL({
     stopFollowingOutput(hasSelection ? "selection" : "history");
   }, [hasSelection, stopFollowingOutput]);
 
+  // Cleanup exit hint timer on unmount
+  useEffect(() => () => { if (exitHintTimerRef.current) clearTimeout(exitHintTimerRef.current); }, []);
+
+  // Detect user-initiated scrolls (mouse wheel, trackpad) and break followOutput
   useEffect(() => {
+    const handle = scrollRef.current;
+    if (!handle) return;
+    return handle.subscribe(() => {
+      // After any imperative scroll, check if we're still at the bottom
+      const remaining = Math.max(0, handle.getScrollHeight() - handle.getViewportHeight() - handle.getScrollTop());
+      if (remaining > 3 && followOutput) {
+        stopFollowingOutput("history");
+      }
+    });
+  }, [followOutput, stopFollowingOutput]);
+
+  useEffect(() => {
+    if (interactivePromptActive && !hasSelection) {
+      stopFollowingOutput("history");
+      return;
+    }
     if (hasSelection) {
       stopFollowingOutput("selection");
       return;
     }
-    if (!followOutput && getRemainingScrollDistance() <= 2) {
+    // Only auto-resume following when NOT loading (user explicitly scrolled to bottom)
+    // During streaming, let the user scroll freely without being pulled back
+    if (!followOutput && !isLoading && getRemainingScrollDistance() <= 2) {
       resumeFollowingOutput();
       return;
     }
@@ -323,7 +348,7 @@ export function REPL({
       return;
     }
     setScrollPositionKind("history");
-  }, [followOutput, getRemainingScrollDistance, hasSelection, resumeFollowingOutput, stopFollowingOutput]);
+  }, [followOutput, getRemainingScrollDistance, hasSelection, interactivePromptActive, resumeFollowingOutput, stopFollowingOutput]);
 
   useKeybindings(
     {
@@ -446,6 +471,9 @@ export function REPL({
         copySelectionNoClear();
         return;
       }
+      if (askUserQuestion || permissionRequest) {
+        return;
+      }
       // Agents panel focus mode 鈥?route keys to panel
       if (agentsFocused && agentsPanelVisible) {
         if (_input === "q" || key.escape || (key.ctrl && _input === "g")) {
@@ -481,10 +509,19 @@ export function REPL({
         const now = Date.now();
         if (lastCtrlCPressRef.current > 0 && now - lastCtrlCPressRef.current < 1000) {
           lastCtrlCPressRef.current = 0;
+          setShowExitHint(false);
+          if (exitHintTimerRef.current) { clearTimeout(exitHintTimerRef.current); exitHintTimerRef.current = null; }
           if (onExit) { onExit(); } else { exit(); }
           return;
         }
         lastCtrlCPressRef.current = now;
+        // Show exit hint for 1 second
+        setShowExitHint(true);
+        if (exitHintTimerRef.current) clearTimeout(exitHintTimerRef.current);
+        exitHintTimerRef.current = setTimeout(() => {
+          setShowExitHint(false);
+          exitHintTimerRef.current = null;
+        }, 1000);
         if (isLoading && onInterrupt) {
           onInterrupt();
         } else {
@@ -498,8 +535,12 @@ export function REPL({
         onInterrupt?.();
         return;
       }
-      // Any other key resets the double-press timer
+      // Any other key resets the double-press timer and clears exit hint
       lastCtrlCPressRef.current = 0;
+      if (showExitHint) {
+        setShowExitHint(false);
+        if (exitHintTimerRef.current) { clearTimeout(exitHintTimerRef.current); exitHintTimerRef.current = null; }
+      }
 
       if (key.ctrl && _input === "d") {
         if (onExit) {
@@ -536,7 +577,6 @@ export function REPL({
   const showPermission = !!permissionRequest;
   const messageAreaFlexGrow = showWelcome ? 0 : 1;
   const contentAreaFlexGrow = showWelcome ? 0 : 1;
-  const planSidebarWidth = 52;
   const codexState = useMemo(
     () =>
       buildCodexTimelineState({
@@ -696,15 +736,6 @@ export function REPL({
         <Box flexDirection="column" flexGrow={messageAreaFlexGrow}>
           {transcriptBody}
         </Box>
-
-        {planReview && (
-          <Box width={planSidebarWidth} flexShrink={0} marginLeft={1}>
-            <PlanReview
-              plan={planReview}
-              selectedIndex={planReviewIndex}
-            />
-          </Box>
-        )}
       </Box>
 
       <AgentsPanel
@@ -778,66 +809,91 @@ export function REPL({
         />
       )}
 
+      {/* Input area: approval/question/plan replaces the prompt bar (CC-style) */}
+      <Divider />
+      <Box flexDirection="column" minHeight={1}>
+        {askUserQuestion ? (
+          <AskUserQuestion
+            questions={askUserQuestion.questions}
+            onSubmit={askUserQuestion.onSubmit}
+            onCancel={askUserQuestion.onCancel}
+          />
+        ) : showPermission ? (
+          <PermissionRequest
+            toolName={permissionRequest.toolName}
+            description={permissionRequest.description}
+            details={permissionRequest.details}
+            patternLabel={permissionRequest.patternLabel}
+            preview={permissionRequest.preview}
+            onDecision={permissionRequest.onDecision}
+          />
+        ) : planReview ? (
+          <PlanReview
+            plan={planReview}
+            selectedIndex={planReviewIndex}
+          />
+        ) : (
+          <PromptInput
+            value={inputValue}
+            onChange={setInputValue}
+            onSubmit={handleSubmit}
+            prefix={prefix}
+            placeholder={placeholder}
+            disabled={overlaysOpen}
+            isLoading={isLoading}
+            commands={promptCommands}
+            history={history}
+            fileEntries={fileEntries}
+            onFileSearch={onFileSearch}
+          />
+        )}
+      </Box>
+
       <Divider />
 
-      {askUserQuestion ? (
-        <AskUserQuestion
-          questions={askUserQuestion.questions}
-          onSubmit={askUserQuestion.onSubmit}
-          onCancel={askUserQuestion.onCancel}
-        />
-      ) : showPermission ? (
-        <PermissionRequest
-          toolName={permissionRequest.toolName}
-          description={permissionRequest.description}
-          details={permissionRequest.details}
-          patternLabel={permissionRequest.patternLabel}
-          preview={permissionRequest.preview}
-          onDecision={permissionRequest.onDecision}
-        />
-      ) : (
-        <PromptInput
-          value={inputValue}
-          onChange={setInputValue}
-          onSubmit={handleSubmit}
-          prefix={prefix}
-          placeholder={placeholder}
-          disabled={overlaysOpen || !!planReview}
-          isLoading={isLoading}
-          commands={promptCommands}
-          history={history}
-          fileEntries={fileEntries}
-          onFileSearch={onFileSearch}
-        />
-      )}
-
-      <Divider />
-
-      {resolvedSegments.length > 0 && <StatusLine segments={resolvedSegments} />}
-      {combinedStatusDetailLines.length > 0 && (
-        <Box flexDirection="column" paddingX={1}>
-          {combinedStatusDetailLines.map((line, index) => (
-            line.segments && line.segments.length > 0 ? (
-              <Box key={`${index}:segments`} flexDirection="row">
-                {line.segments.map((segment, segmentIndex) => (
-                  <React.Fragment key={`${index}:${segmentIndex}:${segment.content}`}>
-                    {segmentIndex > 0 && <Text dimColor>{' | '}</Text>}
-                    <Text dimColor={line.emphasis ? false : true} color={segment.color}>
-                      {segment.content}
-                    </Text>
-                  </React.Fragment>
-                ))}
-              </Box>
-            ) : (
-              <Text key={`${index}:${line.content ?? ''}`} dimColor={line.emphasis ? false : true} color={line.color}>
-                {line.content ?? ""}
-              </Text>
-            )
-          ))}
+      {/* Status bar — replaced by exit hint when Ctrl-C pressed */}
+      {showExitHint ? (
+        <Box paddingX={1}>
+          <Text color="yellow" bold>Press Ctrl-C again to exit</Text>
+          <Text dimColor> · any other key to cancel</Text>
         </Box>
+      ) : (
+        <>
+          {resolvedSegments.length > 0 && <StatusLine segments={resolvedSegments} />}
+          {combinedStatusDetailLines.length > 0 && (
+            <Box flexDirection="column" paddingX={1}>
+              {combinedStatusDetailLines.map((line, index) => (
+                line.segments && line.segments.length > 0 ? (
+                  <Box key={`${index}:segments`} flexDirection="row">
+                    {line.segments.map((segment, segmentIndex) => (
+                      <React.Fragment key={`${index}:${segmentIndex}:${segment.content}`}>
+                        {segmentIndex > 0 && <Text dimColor>{' | '}</Text>}
+                        <Text dimColor={line.emphasis ? false : true} color={segment.color}>
+                          {segment.content}
+                        </Text>
+                      </React.Fragment>
+                    ))}
+                  </Box>
+                ) : (
+                  <Text key={`${index}:${line.content ?? ''}`} dimColor={line.emphasis ? false : true} color={line.color}>
+                    {line.content ?? ""}
+                  </Text>
+                )
+              ))}
+            </Box>
+          )}
+        </>
       )}
     </Box>
   );
+
+  // Manual scroll-to-bottom: only when followOutput is true (user hasn't scrolled up)
+  // Replaces stickyScroll which was resetting scroll position to top on content change
+  useEffect(() => {
+    if (followOutput && !hasSelection && !interactivePromptActive) {
+      scrollRef.current?.scrollToBottom();
+    }
+  }, [streamingContent, messages.length, followOutput, hasSelection, interactivePromptActive]);
 
   return (
     <Box flexDirection="column" flexGrow={1}>
@@ -845,7 +901,7 @@ export function REPL({
         ref={scrollRef}
         flexDirection="column"
         flexGrow={1}
-        stickyScroll={followOutput && !hasSelection}
+        stickyScroll={false}
       >
         {shellScrollableBody}
       </ScrollBox>

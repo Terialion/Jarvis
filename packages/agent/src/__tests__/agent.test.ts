@@ -808,6 +808,88 @@ describe('AgentLoop', () => {
     expect(result.answer).toBe('Done');
   });
 
+  it('stops the turn when exit_plan_mode requests plan edits', async () => {
+    const registry = new ToolRegistry();
+    registry.register({
+      name: 'exit_plan_mode',
+      toolset: 'interactive',
+      schema: {
+        type: 'function',
+        function: {
+          name: 'exit_plan_mode',
+          description: 'Exit plan mode for user review',
+          parameters: { type: 'object', properties: {} },
+        },
+      },
+      handler: () => JSON.stringify({
+        plan_mode: false,
+        status: 'needs_edit',
+        message: '**User requested edits to this plan.** Ask the user what changes they would like.',
+      }),
+    });
+
+    const mockProvider = createMockProvider([
+      {
+        content: '',
+        toolCalls: [{ name: 'exit_plan_mode', arguments: {}, callId: 'call_plan' }],
+        finishReason: 'tool_calls',
+      },
+      { content: 'This should never be generated', finishReason: 'stop' },
+    ]);
+
+    const loop = new AgentLoop({
+      model: { model: 'test-model' },
+      tools: registry,
+      provider: mockProvider as unknown as LLMProvider,
+    });
+
+    const result = await loop.runTurn('Review this plan');
+
+    expect(result.stopReason).toBe('waiting_for_plan_edits');
+    expect(result.finalAnswer).toContain('User requested edits to this plan');
+    expect(mockProvider.chat).toHaveBeenCalledTimes(1);
+  });
+
+  it('stops the turn when ask_user_question is cancelled', async () => {
+    const registry = new ToolRegistry();
+    registry.register({
+      name: 'ask_user_question',
+      toolset: 'interactive',
+      schema: {
+        type: 'function',
+        function: {
+          name: 'ask_user_question',
+          description: 'Ask the user a question',
+          parameters: { type: 'object', properties: {} },
+        },
+      },
+      handler: () => JSON.stringify({
+        error: 'Question cancelled: User cancelled',
+      }),
+    });
+
+    const mockProvider = createMockProvider([
+      {
+        content: '',
+        toolCalls: [{ name: 'ask_user_question', arguments: {}, callId: 'call_question' }],
+        finishReason: 'tool_calls',
+      },
+      { content: 'This should never be generated', finishReason: 'stop' },
+    ]);
+
+    const loop = new AgentLoop({
+      model: { model: 'test-model' },
+      tools: registry,
+      provider: mockProvider as unknown as LLMProvider,
+    });
+
+    const result = await loop.runTurn('Ask me something');
+
+    expect(result.stopReason).toBe('question_cancelled');
+    expect(result.finalAnswer).toContain('Question cancelled');
+    expect(mockProvider.chat).toHaveBeenCalledTimes(1);
+  });
+
   it('respects maxTurns limit', async () => {
     const registry = new ToolRegistry();
     registry.register({

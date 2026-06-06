@@ -68,6 +68,7 @@ export type Root = {
   render: (node: ReactNode) => void;
   unmount: () => void;
   waitUntilExit: () => Promise<void>;
+  cleanup: () => void;
 };
 
 /**
@@ -150,6 +151,7 @@ export async function createRoot({
     render: (node) => instance.render(node),
     unmount: () => instance.unmount(),
     waitUntilExit: () => instance.waitUntilExit(),
+    cleanup: () => instances.delete(stdout),
   };
 }
 

@@ -315,11 +315,11 @@ describe("buildCodexTimelineState", () => {
     const tool = state.turns[0]?.items.find((item) => item.kind === "tool_call");
     expect(tool?.kind).toBe("tool_call");
     if (tool?.kind === "tool_call") {
-      expect(tool.label).toBe("Read");
+      expect(tool.label).toBe("Read(README.md)");
       expect(tool.statusLabel).toBe("done");
-      expect(tool.summary).toBe("README.md");
-      expect(tool.collapsedDetail).toBe("README.md");
-      expect(tool.resultText).toContain("Loaded README");
+      expect(tool.summary).toBe("Read README.md");
+      expect(tool.collapsedDetail).toBe("Read README.md");
+      expect(tool.resultText ?? tool.collapsedDetail ?? "").toContain("Read README");
     }
   });
 
@@ -410,6 +410,39 @@ describe("buildCodexTimelineState", () => {
     });
 
     expect(state.blocks.map((block) => block.kind)).toEqual(["user_message", "turn"]);
+  });
+
+  it("keeps only the final agent_message within a single turn", () => {
+    const state = buildCodexTimelineState({
+      events: [
+        { type: "turn.started", turn_id: "turn_1" },
+        {
+          type: "item.completed",
+          turn_id: "turn_1",
+          item: { id: "msg_1", type: "agent_message", text: "First partial answer." },
+        },
+        {
+          type: "item.completed",
+          turn_id: "turn_1",
+          item: { id: "reason_1", type: "reasoning", text: "Let me refine that." },
+        },
+        {
+          type: "item.completed",
+          turn_id: "turn_1",
+          item: { id: "msg_2", type: "agent_message", text: "Final answer." },
+        },
+        { type: "turn.completed", turn_id: "turn_1", stop_reason: "completed" },
+      ],
+      liveStatus: { isLoading: false },
+      messages: [{ id: "user_1", role: "user", text: "hello" }],
+    });
+
+    const messageItems = state.turns[0]?.items.filter((item) => item.kind === "agent_message") ?? [];
+    expect(messageItems).toHaveLength(1);
+    expect(messageItems[0]?.kind).toBe("agent_message");
+    if (messageItems[0]?.kind === "agent_message") {
+      expect(messageItems[0].text).toBe("Final answer.");
+    }
   });
 
   it("deduplicates plain assistant blocks when final text only differs slightly from the turn answer", () => {

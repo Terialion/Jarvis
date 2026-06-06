@@ -15,7 +15,7 @@ import { SubagentPool, toolWhitelistForType, type SubagentConfig } from '@jarvis
 import { MCPClient, connectMcpServers, type McpServerConfig } from '@jarvis/mcp';
 import { PluginRegistry } from '@jarvis/plugins';
 import { MarkdownMemoryStore } from '@jarvis/store';
-import { createMemorySearchHandler, createMemoryGetHandler } from '@jarvis/agent';
+import { createMemorySearchHandler, createMemoryGetHandler, createMemoryWriteHandler, createMemoryDeleteHandler } from '@jarvis/agent';
 import { SlashCommandRegistry, registerBuiltinCommands } from './commands.js';
 import type { CommandContext } from './commands.js';
 import {
@@ -422,6 +422,53 @@ export function bootstrap(options: CLIOptions): CLIContext {
       },
     },
     handler: (args: Record<string, unknown>) => createMemoryGetHandler(memoryStore)(args),
+  });
+  tools.register({
+    name: 'memory_write',
+    toolset: 'memory',
+    description: 'Save important information to persistent memory (user preferences, project facts, decisions, schedules)',
+    isAsync: true,
+    schema: {
+      type: 'function',
+      function: {
+        name: 'memory_write',
+        description: 'Save important information to persistent memory. Use this proactively when the user mentions preferences, schedules, ideas, corrections, or important facts.',
+        parameters: {
+          type: 'object',
+          properties: {
+            name: { type: 'string', description: 'Short kebab-case name for this memory (e.g., prefers-vim, deploy-friday, identity-timezone)' },
+            description: { type: 'string', description: 'One-line summary of what this memory contains' },
+            content: { type: 'string', description: 'The full memory content in markdown' },
+            memoryType: { type: 'string', description: 'Category: user (identity, preferences, habits, schedule, ideas), project (facts, architecture, conventions), feedback (corrections), reference (external info)' },
+            tags: { type: 'array', items: { type: 'string' }, description: 'Fine-grained tags: identity, preferences, habits, schedule, ideas, code-style, architecture, conventions, research' },
+          },
+          required: ['name', 'content'],
+        },
+      },
+    },
+    handler: (args: Record<string, unknown>) => createMemoryWriteHandler(memoryStore)(args),
+  });
+  tools.register({
+    name: 'memory_delete',
+    toolset: 'memory',
+    description: 'Delete an outdated or conflicting memory entry',
+    isAsync: true,
+    schema: {
+      type: 'function',
+      function: {
+        name: 'memory_delete',
+        description: 'Delete a memory entry by name. Use when you find conflicting memories or when the user corrects outdated information.',
+        parameters: {
+          type: 'object',
+          properties: {
+            name: { type: 'string', description: 'Name of the memory entry to delete' },
+            reason: { type: 'string', description: 'Why this memory is being deleted (for audit)' },
+          },
+          required: ['name'],
+        },
+      },
+    },
+    handler: (args: Record<string, unknown>) => createMemoryDeleteHandler(memoryStore)(args),
   });
 
   // Skills

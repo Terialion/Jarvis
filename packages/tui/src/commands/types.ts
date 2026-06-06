@@ -2,7 +2,7 @@ import type React from 'react';
 import type { Message, MessageContent } from '../vendor/ui/MessageList.js';
 import type { ChatMessage, SlashResult } from '@jarvis/shared';
 import type { AgentLoop, TokenTracker } from '@jarvis/agent';
-import type { ToolRegistry } from '@jarvis/tools';
+import type { ToolRegistry, PermissionManager } from '@jarvis/tools';
 import type { SkillRegistry } from '@jarvis/skills';
 import type { SessionStore } from '@jarvis/store';
 import type { MCPClient, McpConnectionStatus, McpServerConfig } from '@jarvis/mcp';
@@ -43,6 +43,7 @@ export interface SlashCommandCtx {
   maxTurns: number;
   outputStyleRef: React.MutableRefObject<string>;
   permissionModeRef: React.MutableRefObject<string>;
+  permManagerRef: React.MutableRefObject<PermissionManager | null>;
   mcpClientRef: React.MutableRefObject<MCPClient | null>;
   mcpStatusesRef: React.MutableRefObject<McpConnectionStatus[]>;
   mcpConfiguredRef: React.MutableRefObject<Array<{ id: string; plugin?: string; config: McpServerConfig }>>;

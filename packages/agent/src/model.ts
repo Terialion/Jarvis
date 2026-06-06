@@ -339,7 +339,19 @@ export class LLMProvider {
     }
     this.applyReasoningEffort(params);
 
-    const response = await this.client.chat.completions.create(params, { signal });
+    let response: OpenAI.Chat.Completions.ChatCompletion;
+    try {
+      response = await this.client.chat.completions.create(params, { signal });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      if (msg.includes('context_length_exceeded') || msg.includes('maximum context length')) {
+        throw new Error(`Input too long for model ${this.config.model}. Try using /compact to reduce conversation history.`);
+      }
+      if (msg.includes('429') || msg.includes('rate_limit')) {
+        throw new Error(`Rate limited by API. Please wait a moment and try again.`);
+      }
+      throw err;
+    }
     return this._normalizeResponse(response, safeToCanonical);
   }
 
@@ -489,7 +501,33 @@ export class LLMProvider {
     }
     this.applyReasoningEffort(params);
 
-    const stream = await this.client.chat.completions.create(params, { signal });
+    // Stream idle timeout: abort if no chunk received within 60s
+    const STREAM_IDLE_MS = 60_000;
+    const idleAbort = new AbortController();
+    let idleTimer: ReturnType<typeof setTimeout> | null = null;
+    const resetIdle = () => {
+      if (idleTimer) clearTimeout(idleTimer);
+      idleTimer = setTimeout(() => idleAbort.abort(), STREAM_IDLE_MS);
+    };
+    // Merge idle abort with caller's signal
+    const mergedSignal = signal
+      ? AbortSignal.any([signal, idleAbort.signal])
+      : idleAbort.signal;
+
+    let stream: AsyncIterable<OpenAI.Chat.Completions.ChatCompletionChunk>;
+    try {
+      stream = await this.client.chat.completions.create(params, { signal: mergedSignal });
+    } catch (err) {
+      // Surface API errors (context window exceeded, rate limit, auth, etc.)
+      const msg = err instanceof Error ? err.message : String(err);
+      if (msg.includes('context_length_exceeded') || msg.includes('maximum context length')) {
+        throw new Error(`Input too long for model ${this.config.model}. Try using /compact to reduce conversation history.`);
+      }
+      if (msg.includes('429') || msg.includes('rate_limit')) {
+        throw new Error(`Rate limited by API. Please wait a moment and try again.`);
+      }
+      throw err;
+    }
 
     let content = '';
     let reasoningContent = ''; // fallback for models that only use reasoning_content
@@ -499,8 +537,11 @@ export class LLMProvider {
     >();
     let finishReason: LLMResponse['finishReason'] = 'stop';
     let usage: TokenUsage | undefined;
+    resetIdle();
 
+    try {
     for await (const chunk of stream) {
+      resetIdle();
       const delta = chunk.choices?.[0]?.delta;
       const chunkFinishReason = chunk.choices?.[0]?.finish_reason;
 
@@ -565,6 +606,9 @@ export class LLMProvider {
               : 0,
         };
       }
+    }
+    } finally {
+      if (idleTimer) clearTimeout(idleTimer);
     }
 
     const toolCalls: ToolCall[] = [];

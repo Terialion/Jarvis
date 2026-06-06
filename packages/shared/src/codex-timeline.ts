@@ -327,6 +327,15 @@ function buildTaskItem(snapshot: CodexTaskSnapshot): CodexTimelineItemView {
   };
 }
 
+function collapseSupersededAgentMessages(items: CodexTimelineItemView[]): CodexTimelineItemView[] {
+  let lastAgentMessageIndex = -1;
+  for (let i = 0; i < items.length; i++) {
+    if (items[i]?.kind === 'agent_message') lastAgentMessageIndex = i;
+  }
+  if (lastAgentMessageIndex === -1) return items;
+  return items.filter((item, index) => item.kind !== 'agent_message' || index === lastAgentMessageIndex);
+}
+
 function materializeTaskSnapshots(turns: TimelineTurnState[], taskSnapshots: CodexTaskSnapshot[]): void {
   if (taskSnapshots.length === 0) return;
   const turnMap = new Map(turns.map((turn) => [turn.turnId, turn] as const));
@@ -464,11 +473,11 @@ export function buildCodexTimelineState({
       turnSnapshotById.get(turn.turnId)?.elapsedMs ??
       (turn.status === 'running' ? liveStatus.elapsedMs : undefined);
 
-    const items = turn.itemOrder
+    const items = collapseSupersededAgentMessages(turn.itemOrder
       .map((itemId) => turn.itemState.get(itemId))
       .filter((item): item is ThreadItem => Boolean(item))
       .map((item) => buildItemView(item, snapshotById.get(item.id), turnElapsedMs))
-      .filter((item): item is CodexTimelineItemView => Boolean(item));
+      .filter((item): item is CodexTimelineItemView => Boolean(item)));
 
     if (turn.status === 'failed' && turn.errorMessage && !items.some((item) => item.kind === 'error')) {
       items.push({

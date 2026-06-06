@@ -1,6 +1,6 @@
-import { Box, TerminalSizeContext, Text, useInput } from '../ink-renderer/index.js';
+import { Box, Text, useInput } from '../ink-renderer/index.js';
 import type React from 'react';
-import { useCallback, useContext, useState } from 'react';
+import { useCallback, useState } from 'react';
 import type { AskQuestionDef } from '@jarvis/tools';
 
 export type AskUserQuestionProps = {
@@ -9,51 +9,20 @@ export type AskUserQuestionProps = {
   onCancel: () => void;
 };
 
-/** Formats a multiSelect answer as comma-separated labels. */
 function formatMultiAnswer(labels: string[]): string {
   return labels.join(', ');
 }
-
-// ============================================================================
-// Shared header component (matches PermissionRequest style)
-// ============================================================================
-
-function QuestionHeader({ label, width }: { label: string; width: number }) {
-  const text = ` ${label} `;
-  const textLen = label.length + 2;
-  const leftLen = 3;
-  const rightLen = Math.max(0, width - leftLen - textLen);
-  return (
-    <Text>
-      <Text dimColor>{'─'.repeat(leftLen)}</Text>
-      <Text bold color="cyan">
-        {text}
-      </Text>
-      <Text dimColor>{'─'.repeat(rightLen)}</Text>
-    </Text>
-  );
-}
-
-function HorizontalRule({ width }: { width: number }) {
-  return <Text dimColor>{'─'.repeat(width)}</Text>;
-}
-
-// ============================================================================
-// Single question block (inline options, no sub-box)
-// ============================================================================
 
 function QuestionBlock({
   question,
   qIndex,
   total,
   onSubmit,
-  terminalWidth,
 }: {
   question: AskQuestionDef;
   qIndex: number;
   total: number;
   onSubmit: (answer: string) => void;
-  terminalWidth: number;
 }) {
   const [focusIndex, setFocusIndex] = useState(0);
   const [selected, setSelected] = useState<Set<number>>(new Set());
@@ -64,7 +33,7 @@ function QuestionBlock({
   const confirm = useCallback(() => {
     if (isMulti) {
       const labels = [...selected].sort().map((i) => options[i]!.label);
-      if (labels.length === 0) return; // require at least one selection
+      if (labels.length === 0) return;
       onSubmit(formatMultiAnswer(labels));
     } else {
       onSubmit(options[focusIndex]!.label);
@@ -88,10 +57,8 @@ function QuestionBlock({
         });
       }
     } else if (input === 'y' && !isMulti) {
-      // Quick-select first option
       onSubmit(options[0]!.label);
     } else if (input === 'n' && !isMulti && options.length >= 2) {
-      // Quick-select last option (usually "No" / cancel)
       onSubmit(options[options.length - 1]!.label);
     } else if (input >= '1' && input <= '9' && !isMulti) {
       const idx = parseInt(input, 10) - 1;
@@ -101,29 +68,24 @@ function QuestionBlock({
     }
   });
 
-  const headerText = question.header
-    ? `${question.header} (${qIndex + 1}/${total})`
-    : `Q${qIndex + 1}/${total}`;
-
   return (
-    <Box flexDirection="column">
-      <QuestionHeader label={headerText} width={terminalWidth} />
-
-      <Box marginTop={1} marginLeft={2}>
+    <Box flexDirection="column" paddingX={1}>
+      {/* Compact header: question on one line */}
+      <Box>
+        <Text bold color="cyan">{question.header ?? 'Question'}</Text>
+        {total > 1 && <Text dimColor> ({qIndex + 1}/{total})</Text>}
+        <Text dimColor> — </Text>
         <Text>{question.question}</Text>
       </Box>
 
-      <Box marginTop={1}>
-        <HorizontalRule width={terminalWidth} />
-      </Box>
-
+      {/* Options */}
       <Box marginTop={1} flexDirection="column">
         {options.map((opt, i) => {
           const isFocused = i === focusIndex;
           const isSelected = isMulti && selected.has(i);
 
           if (isMulti) {
-            const marker = isSelected ? '◉' : '○';
+            const marker = isSelected ? '[x]' : '[ ]';
             return (
               <Box key={i}>
                 <Text color={isFocused ? 'cyan' : undefined}>
@@ -133,7 +95,7 @@ function QuestionBlock({
                   {i + 1}. {opt.label}
                 </Text>
                 {opt.description ? (
-                  <Text dimColor={!isFocused}> — {opt.description}</Text>
+                  <Text dimColor={!isFocused}> - {opt.description}</Text>
                 ) : null}
               </Box>
             );
@@ -148,14 +110,15 @@ function QuestionBlock({
                 {i + 1}. {opt.label}
               </Text>
               {opt.description ? (
-                <Text dimColor={!isFocused}> — {opt.description}</Text>
+                <Text dimColor={!isFocused}> - {opt.description}</Text>
               ) : null}
             </Box>
           );
         })}
       </Box>
 
-      <Box marginTop={1}>
+      {/* Hint */}
+      <Box marginTop={0}>
         {isMulti ? (
           <Text dimColor>
             Space to toggle · Enter to confirm ({selected.size} selected) · Esc to cancel
@@ -168,10 +131,6 @@ function QuestionBlock({
   );
 }
 
-// ============================================================================
-// AskUserQuestion — multi-question flow with PermissionRequest-style UI
-// ============================================================================
-
 export function AskUserQuestion({
   questions,
   onSubmit,
@@ -179,9 +138,6 @@ export function AskUserQuestion({
 }: AskUserQuestionProps): React.ReactNode {
   const [currentQ, setCurrentQ] = useState(0);
   const [answers, setAnswers] = useState<Record<string, string>>({});
-
-  const terminalSize = useContext(TerminalSizeContext);
-  const terminalWidth = Math.min((terminalSize?.columns ?? 80) - 2, 80);
 
   const handleAnswer = useCallback(
     (answer: string) => {
@@ -196,7 +152,6 @@ export function AskUserQuestion({
     [answers, currentQ, questions, onSubmit],
   );
 
-  // Escape cancels the entire flow
   useInput((_input, key) => {
     if (key.escape) {
       onCancel();
@@ -206,14 +161,11 @@ export function AskUserQuestion({
   const question = questions[currentQ]!;
 
   return (
-    <Box flexDirection="column" marginLeft={2}>
-      <QuestionBlock
-        question={question}
-        qIndex={currentQ}
-        total={questions.length}
-        onSubmit={handleAnswer}
-        terminalWidth={terminalWidth}
-      />
-    </Box>
+    <QuestionBlock
+      question={question}
+      qIndex={currentQ}
+      total={questions.length}
+      onSubmit={handleAnswer}
+    />
   );
 }
