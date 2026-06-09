@@ -68,6 +68,7 @@ import {
   startSelection,
   updateSelection,
 } from "./selection";
+import { shouldTranslateSelectionOnFollow } from "./selection-follow.js";
 import {
   SYNC_OUTPUT_SUPPORTED,
   supportsExtendedKeys,
@@ -563,15 +564,14 @@ export default class Ink {
     const follow = consumeFollowScroll();
     if (
       follow &&
-      this.selection.anchor &&
-      // Only translate if the selection is ON scrollbox content. Selections
-      // in the footer/prompt/StickyPromptHeader are on static text — the
-      // scroll doesn't move what's under them. Without this guard, a
-      // footer selection would be shifted by -delta then clamped to
-      // viewportBottom, teleporting it into the scrollbox. Mirror the
-      // bounds check the deleted check() in ScrollKeybindingHandler had.
-      this.selection.anchor.row >= follow.viewportTop &&
-      this.selection.anchor.row <= follow.viewportBottom
+      shouldTranslateSelectionOnFollow({
+        selectionModeActive: hasSelection(this.selection),
+        hasAnchor: Boolean(this.selection.anchor),
+        anchorRow: this.selection.anchor?.row ?? null,
+        focusRow: this.selection.focus?.row ?? null,
+        viewportTop: follow.viewportTop,
+        viewportBottom: follow.viewportBottom,
+      })
     ) {
       const { delta, viewportTop, viewportBottom } = follow;
       // captureScrolledRows and shift* are a pair: capture grabs rows about

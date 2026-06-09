@@ -9,7 +9,7 @@ import type { Message, MessageContent } from './vendor/ui/MessageList.js';
 import type { StatusLineSegment } from './vendor/ui/StatusLine.js';
 import { WelcomeScreen } from './vendor/ui/WelcomeScreen.js';
 import { loadSettings, saveSettings, type UserSettings } from './settings-store.js';
-import { AgentLoop, AgentEventBus, TokenTracker, formatTokensCompact, estimateTokens, validateContextWindow, resolveContextWindow, getAllModels, parseModelName, findModel, buildSystemPrompt, createMemorySearchHandler, createMemoryGetHandler, createMemoryWriteHandler, createMemoryDeleteHandler, type ThreadEvent, type ModelInfo } from '@jarvis/agent';
+import { AgentLoop, AgentEventBus, AgentMailbox, TokenTracker, formatTokensCompact, estimateTokens, validateContextWindow, resolveContextWindow, getAllModels, parseModelName, findModel, buildSystemPrompt, createMemorySearchHandler, createMemoryGetHandler, createMemoryWriteHandler, createMemoryDeleteHandler, type ThreadEvent, type ModelInfo } from '@jarvis/agent';
 import {
   ToolRegistry,
   allBuiltinTools,
@@ -36,7 +36,7 @@ import type { AskQuestionDef, PlanReviewRequest, PermissionState } from '@jarvis
 import type { PlanReviewDecision } from './vendor/ui/PlanReview';
 import { SkillRegistry, SkillExecutor } from '@jarvis/skills';
 import { SessionStore, MarkdownMemoryStore } from '@jarvis/store';
-import { SubagentPool, toolWhitelistForType, type SubagentConfig } from '@jarvis/subagents';
+import { SubagentPool, SubagentRunner } from '@jarvis/subagents';
 import { MCPClient, type McpConnectionStatus, type McpServerConfig } from '@jarvis/mcp';
 import { HookRegistry } from '@jarvis/hooks';
 import { buildInlinePlanReviewText, ConfigWatcher, JARVIS_REASONING_EFFORTS, type JarvisReasoningEffort } from '@jarvis/shared';
@@ -55,6 +55,7 @@ import { formatMcpDiagnostics, refreshMcpStatuses } from './utils/mcp-diagnostic
 import { extractModifiedFiles, safeJsonParse, computeFileChange, formatFileChangeSummary, FILE_MODIFYING_TOOLS, parseToolContent, type FileChange } from './utils/tool-formatters.js';
 import { estimateTokensFromText, estimateMemoryEntries, buildContextProgressBar, estimateTurnTokenCount, buildMcpFooterLines } from './utils/token-estimation.js';
 import { decodeHtmlEntities } from './vendor/ui/utils/markdown.js';
+import { TuiStreamAssembler } from './vendor/shared/stream-assembler.js';
 import { loadJarvisConfig } from '@jarvis/shared';
 import { resolveModelCredentials } from './utils/credentials.js';
 import { connectMcpServers } from '@jarvis/mcp';
@@ -91,6 +92,10 @@ function formatInlinePlanReview(plan: PlanReviewRequest): string {
   return lines.join('\n');
 }
 
+function createUiMessageId(prefix: string): string {
+  return `${prefix}_${crypto.randomUUID()}`;
+}
+
 export function App({ options }: { options: TUIOptions }): React.ReactNode {
   const [messages, setMessages] = useState<Message[]>([]);
   const [threadEvents, setThreadEvents] = useState<ThreadEvent[]>([]);
@@ -121,6 +126,7 @@ export function App({ options }: { options: TUIOptions }): React.ReactNode {
   const outputStyleRef = useRef<string>(savedSettings.output_style || 'default');
   const permissionModeRef = useRef<string>(savedSettings.permission_mode || 'workspace_write');
   const poolRef = useRef<SubagentPool | null>(null);
+  const mailboxRef = useRef<AgentMailbox>(new AgentMailbox());
   const mcpRef = useRef<MCPClient | null>(null);
   const mcpStatusesRef = useRef<McpConnectionStatus[]>([]);
   const mcpConfiguredRef = useRef<Array<{ id: string; plugin?: string; config: McpServerConfig }>>([]);
@@ -222,6 +228,9 @@ export function App({ options }: { options: TUIOptions }): React.ReactNode {
   }, []);
   const streamFlushRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const streamAccumRef = useRef<string>(''); // full accumulated content (OpenClaw replacement mode)
+  const streamAssemblerRef = useRef(new TuiStreamAssembler());
+  const streamingRunIdRef = useRef<string | null>(null);
+  const streamingSourceTextRef = useRef<string>('');
   const reasoningBufferRef = useRef<string>('');
   const reasoningFlushedRef = useRef(false);
   const reasoningDisplayThrottle = useRef<number>(0);
@@ -470,43 +479,146 @@ export function App({ options }: { options: TUIOptions }): React.ReactNode {
     });
   }, []);
 
-  // Commit current streaming content as an assistant message (CC/OpenClaw pattern:
-  // model text between tool calls should appear as separate messages)
-  const commitStreaming = useCallback((): string | null => {
-    const text = streamingContentRef.current;
-    if (text && text.trim()) {
+  const startStreamingRun = useCallback((prompt: string) => {
+    const runId = createUiMessageId('streamrun');
+    streamingRunIdRef.current = runId;
+    streamingSourceTextRef.current = '';
+    streamingContentRef.current = null;
+    setStreamingContent(null);
+    emitDebugEvent({
+      type: 'stream_run_started',
+      runId,
+      prompt,
+      timestamp: Date.now(),
+    });
+    return runId;
+  }, [emitDebugEvent]);
+
+  const flushStreamingChunk = useCallback(() => {
+    const runId = streamingRunIdRef.current;
+    if (!runId) return null;
+    if (!streamFlushRef.current && !streamAccumRef.current) {
+      return streamingContentRef.current;
+    }
+    if (streamFlushRef.current) {
+      clearTimeout(streamFlushRef.current);
+      streamFlushRef.current = null;
+    }
+    const chunk = streamAccumRef.current;
+    streamAccumRef.current = '';
+    if (!chunk) return streamingContentRef.current;
+
+    const decoded = decodeHtmlEntities(chunk);
+    streamingSourceTextRef.current += decoded;
+    const display = streamAssemblerRef.current.ingestDelta(
+      runId,
+      { content: [{ type: 'text', text: streamingSourceTextRef.current }] },
+      false,
+    );
+    if (display !== null) {
+      streamingContentRef.current = display;
+      setStreamingContent(display);
+      emitDebugEvent({
+        type: 'stream_chunk_flushed',
+        runId,
+        chunkLength: decoded.length,
+        displayLength: display.length,
+        sourceLength: streamingSourceTextRef.current.length,
+        timestamp: Date.now(),
+      });
+      return display;
+    }
+    return streamingContentRef.current;
+  }, [emitDebugEvent]);
+
+  const clearStreamingRun = useCallback((
+    reason: 'tool_boundary' | 'turn_complete' | 'error' | 'abort' | 'cleanup',
+  ) => {
+    const runId = streamingRunIdRef.current;
+    if (runId) {
+      streamAssemblerRef.current.drop(runId);
+      emitDebugEvent({
+        type: 'stream_cleared',
+        runId,
+        reason,
+        timestamp: Date.now(),
+      });
+    }
+    streamingRunIdRef.current = null;
+    streamingSourceTextRef.current = '';
+    streamingContentRef.current = null;
+    streamAccumRef.current = '';
+    if (streamFlushRef.current) {
+      clearTimeout(streamFlushRef.current);
+      streamFlushRef.current = null;
+    }
+    setStreamingContent(null);
+  }, [emitDebugEvent]);
+
+  const finalizeStreamingRun = useCallback((
+    reason: 'tool_boundary' | 'turn_complete' | 'error' | 'abort' | 'cleanup',
+    finalAnswer?: string | null,
+  ): string | null => {
+    const runId = streamingRunIdRef.current;
+    const finalText = decodeHtmlEntities((finalAnswer ?? '').trim());
+    flushStreamingChunk();
+
+    if (!runId) {
+      if (!finalText) return null;
+      const messageId = createUiMessageId('msg');
       const msg: Message = {
-        id: `msg_${Date.now()}`,
+        id: messageId,
         role: 'assistant',
-        content: [{ type: 'text' as const, text }],
+        content: [{ type: 'text' as const, text: finalText }],
         timestamp: Date.now(),
       };
       setMessages((prev) => [...prev, msg]);
-      streamingContentRef.current = null;
-      setStreamingContent(null);
-      return text;
+      emitDebugEvent({ type: 'message_id_emitted', messageId, kind: 'assistant', timestamp: Date.now() });
+      return finalText;
     }
-    return null;
-  }, []);
 
-  const drainAndCommit = useCallback((): string | null => {
-    if (streamFlushRef.current) {
-      clearTimeout(streamFlushRef.current);
-      const chunk = streamAccumRef.current;
-      streamAccumRef.current = '';
-      streamFlushRef.current = null;
-      if (chunk) {
-        const decoded = decodeHtmlEntities(chunk);
-        setStreamingContent((prev) => {
-          const next = (prev ?? '') + decoded;
-          streamingContentRef.current = next;
-          return next;
-        });
-      }
+    const streamedBeforeFinalize = streamingContentRef.current ?? '';
+    const finalized = streamAssemblerRef.current.finalize(
+      runId,
+      finalText
+        ? { content: [{ type: 'text', text: finalText }] }
+        : { content: [{ type: 'text', text: streamingSourceTextRef.current }] },
+      false,
+    );
+    const committedText = finalized.trim();
+    emitDebugEvent({
+      type: 'stream_finalized',
+      runId,
+      reason,
+      finalAnswerLength: finalText.length,
+      committedTextLength: committedText.length,
+      replacedStreamed: Boolean(finalText) && finalText.trim() !== streamedBeforeFinalize.trim(),
+      timestamp: Date.now(),
+    });
+    if (!committedText) {
+      clearStreamingRun(reason);
+      return null;
     }
-    return commitStreaming();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+
+    const messageId = createUiMessageId('msg');
+    const msg: Message = {
+      id: messageId,
+      role: 'assistant',
+      content: [{ type: 'text' as const, text: committedText }],
+      timestamp: Date.now(),
+    };
+    setMessages((prev) => [...prev, msg]);
+    emitDebugEvent({ type: 'message_id_emitted', messageId, kind: 'assistant', timestamp: Date.now() });
+    emitDebugEvent({
+      type: 'stream_committed',
+      runId,
+      messageId,
+      textLength: committedText.length,
+      timestamp: Date.now(),
+    });
+    clearStreamingRun(reason);
+    return committedText;
+  }, [clearStreamingRun, emitDebugEvent, flushStreamingChunk]);
 
   // Set up the AskUserQuestion bridge for the tool
   useEffect(() => {
@@ -868,6 +980,7 @@ export function App({ options }: { options: TUIOptions }): React.ReactNode {
       // Subagent pool — wire Agent tool with agent store updates
       if (!poolRef.current) {
         poolRef.current = new SubagentPool();
+        poolRef.current.setParentMailbox(mailboxRef.current);
 
         // Wire pool status updates to agent store for TUI panel
         poolRef.current.onStatusUpdate = (entry) => {
@@ -881,49 +994,65 @@ export function App({ options }: { options: TUIOptions }): React.ReactNode {
               parentId: entry.parentId ?? existing?.parentId ?? null,
               task: entry.task ?? existing?.task,
               startedAt: existing?.startedAt ?? Date.now(),
+              reviewStatus: entry.reviewStatus ?? existing?.reviewStatus,
+              confidence: entry.confidence ?? existing?.confidence,
+              findingsCount: entry.findingsCount ?? existing?.findingsCount,
             });
           });
         };
-        const provider = new LLMProvider({
-          model: modelRef.current,
-          apiKey: apiKeyRef.current,
-          baseURL: baseURLRef.current,
-          reasoningEffort: reasoningEffortRef.current as ModelReasoningEffort,
-        });
-        poolRef.current.setRunner(async (config: SubagentConfig) => {
-          const subTools = new ToolRegistry();
-          const whitelist = toolWhitelistForType(config.agentType);
-          for (const tool of allBuiltinTools) {
-            if (!whitelist || whitelist.includes(tool.name)) {
-              subTools.register(tool);
+        const subagentRunner = new SubagentRunner({
+          createAgentLoop: ({
+            agentId,
+            allowedTools,
+            maxSteps,
+            depth,
+            mailbox,
+            systemPrompt,
+          }) => {
+            const subTools = new ToolRegistry();
+            for (const tool of allBuiltinTools) {
+              if (!allowedTools || allowedTools.includes(tool.name)) {
+                subTools.register(tool);
+              }
             }
-          }
-          subTools.register(createSkillLoadTool(skillsRef.current!));
-          subTools.register(createSkillTool(skillsRef.current!));
+            subTools.register(createSkillLoadTool(skillsRef.current!));
+            subTools.register(createSkillTool(skillsRef.current!));
 
-          const subLoop = new AgentLoop({
-            model: {
-              model: modelRef.current,
-              apiKey: apiKeyRef.current,
-              baseURL: baseURLRef.current,
-              reasoningEffort: reasoningEffortRef.current as ModelReasoningEffort,
-            },
-            maxTurns: config.budgetSteps ?? 5,
-            tools: subTools,
-            provider,
-            skillRegistry: skillsRef.current!,
-            skillExecutor: executorRef.current!,
-            hooks: new HookRegistry(),
-          });
+            const subRuntime = createToolRuntime(subTools, {
+              permissionMode: permissionModeRef.current,
+              sandbox: loadJarvisConfig().sandbox,
+              projectRoot: process.cwd(),
+            });
 
-          const result = await subLoop.runTurn(config.task);
-          return {
-            agentId: config.agentId,
-            status: result.ok ? ('completed' as const) : ('failed' as const),
-            answer: result.finalAnswer,
-            turnsUsed: result.toolCalls.length,
-          };
+            return new AgentLoop({
+              model: {
+                model: modelRef.current,
+                apiKey: apiKeyRef.current,
+                baseURL: baseURLRef.current,
+                reasoningEffort: reasoningEffortRef.current as ModelReasoningEffort,
+              },
+              maxTurns: maxSteps,
+              maxSteps,
+              systemPrompt,
+              tools: subTools,
+              toolRuntime: subRuntime,
+              provider: new LLMProvider({
+                model: modelRef.current,
+                apiKey: apiKeyRef.current,
+                baseURL: baseURLRef.current,
+                reasoningEffort: reasoningEffortRef.current as ModelReasoningEffort,
+              }),
+              skillRegistry: skillsRef.current!,
+              skillExecutor: executorRef.current!,
+              hooks: new HookRegistry(),
+              mailbox,
+              permissionMode: permissionModeRef.current,
+              projectRoot: process.cwd(),
+              eventBus: new AgentEventBus(),
+            });
+          },
         });
+        poolRef.current.setRunner((config, mailbox) => subagentRunner.run(config, mailbox));
       }
       tools.register(createAgentTool(poolRef.current));
 
@@ -969,12 +1098,14 @@ export function App({ options }: { options: TUIOptions }): React.ReactNode {
             reasoningFlushedRef.current = true;
             setStreamingThinking(null);
             if (thinkingText.length > 20) {
+              const messageId = createUiMessageId('thinking');
               setMessages((prev) => [...prev, {
-                id: `thinking_${Date.now()}`,
+                id: messageId,
                 role: 'assistant',
                 content: [{ type: 'thinking' as const, text: thinkingText.slice(0, 65536) }],
                 timestamp: Date.now(),
               }]);
+              emitDebugEvent({ type: 'message_id_emitted', messageId, kind: 'thinking', timestamp: Date.now() });
             }
             setSpinnerStatus('drafting the response');
           }
@@ -984,16 +1115,7 @@ export function App({ options }: { options: TUIOptions }): React.ReactNode {
           streamAccumRef.current += token;
           if (!streamFlushRef.current) {
             streamFlushRef.current = setTimeout(() => {
-              const chunk = streamAccumRef.current;
-              streamAccumRef.current = '';
-              streamFlushRef.current = null;
-              // Decode HTML entities on the full buffer (entities may span multiple tokens)
-              const decoded = decodeHtmlEntities(chunk);
-              setStreamingContent((prev) => {
-                const next = (prev ?? '') + decoded;
-                streamingContentRef.current = next;
-                return next;
-              });
+              flushStreamingChunk();
             }, 50);
           }
         },
@@ -1030,7 +1152,8 @@ export function App({ options }: { options: TUIOptions }): React.ReactNode {
             timestamp: Date.now(),
           });
           setSpinnerRunning(toolName);
-          drainAndCommit(); // Drain flush buffer then commit text before tool
+          finalizeStreamingRun('tool_boundary');
+          startStreamingRun(`tool:${toolName}`);
           const argRecord = typeof args === 'object' && args !== null
             ? (args as Record<string, unknown>)
             : undefined;
@@ -1075,6 +1198,7 @@ export function App({ options }: { options: TUIOptions }): React.ReactNode {
             return m;
           }));
         },
+        mailbox: mailboxRef.current,
         sessionStore: sessionStoreRef.current ?? undefined,
         toolRuntime: (() => {
           const runtime = createToolRuntime(tools, {
@@ -1126,28 +1250,27 @@ export function App({ options }: { options: TUIOptions }): React.ReactNode {
     });
 
     const userMsg: Message = {
-      id: `msg_${Date.now()}`,
+      id: createUiMessageId('msg'),
       role: 'user',
       content: prompt,
       timestamp: Date.now(),
     };
-    setMessages((prev) => [...prev, userMsg]);
-    setIsLoading(true);
-    // Fire state machine transition for user submit
-    stateMachineRef.current?.transition({ type: 'user_submit' });
-    setStreamingContent(null);
-    setStreamingThinking(null);
-    streamingContentRef.current = null;
-    setSpinnerVerb('Concocting');
-    setSpinnerStatus(undefined);
-    setSpinnerDetails([]);
-    setSpinnerCompleted([]);
-    setSpinnerRunning(undefined);
-    streamAccumRef.current = ''; // Clear accumulated content
-    reasoningBufferRef.current = '';
-    reasoningDisplayThrottle.current = 0;
-    reasoningFlushedRef.current = false;
-    if (streamFlushRef.current) { clearTimeout(streamFlushRef.current); streamFlushRef.current = null; }
+      setMessages((prev) => [...prev, userMsg]);
+      emitDebugEvent({ type: 'message_id_emitted', messageId: userMsg.id, kind: 'user', timestamp: Date.now() });
+      setIsLoading(true);
+      // Fire state machine transition for user submit
+      stateMachineRef.current?.transition({ type: 'user_submit' });
+      clearStreamingRun('cleanup');
+      setStreamingThinking(null);
+      setSpinnerVerb('Concocting');
+      setSpinnerStatus(undefined);
+      setSpinnerDetails([]);
+      setSpinnerCompleted([]);
+      setSpinnerRunning(undefined);
+      reasoningBufferRef.current = '';
+      reasoningDisplayThrottle.current = 0;
+      reasoningFlushedRef.current = false;
+      startStreamingRun(prompt);
 
     // Create abort controller for this run
     const abort = new AbortController();
@@ -1228,25 +1351,23 @@ export function App({ options }: { options: TUIOptions }): React.ReactNode {
         }
       }
 
-      // Drain and commit any remaining streaming text BEFORE building
-      // the final message (so we know if text was already committed)
-      const committedStreamingText = drainAndCommit();
-      const normalizedCommittedText = committedStreamingText?.trim() ?? '';
       const finalAnswer = typeof result.finalAnswer === 'string' ? result.finalAnswer.trim() : '';
 
       // Check if the result is a failure (e.g., model call failed)
       if (!result.ok || result.status === 'failed') {
+        finalizeStreamingRun('error');
         const errorContent: MessageContent = {
           type: 'error',
           message: decodeHtmlEntities(finalAnswer) || 'Model call failed',
         };
         const errMsg: Message = {
-          id: `msg_${Date.now()}`,
+          id: createUiMessageId('msg'),
           role: 'assistant',
           content: [errorContent],
           timestamp: Date.now(),
         };
         setMessages((prev) => [...prev, errMsg]);
+        emitDebugEvent({ type: 'message_id_emitted', messageId: errMsg.id, kind: 'error', timestamp: Date.now() });
 
         // Emit debug event for failure
         emitDebugEvent({
@@ -1261,6 +1382,9 @@ export function App({ options }: { options: TUIOptions }): React.ReactNode {
         // Skip normal message processing
         return;
       }
+
+      // Finalize the current streaming run before building any non-text blocks.
+      const committedStreamingText = finalizeStreamingRun('turn_complete', result.finalAnswer);
 
       const content: MessageContent[] = [];
       let taskSnapshot: CodexTaskSnapshot | null = null;
@@ -1302,9 +1426,6 @@ export function App({ options }: { options: TUIOptions }): React.ReactNode {
       // Preserve the final answer unless the trailing streamed text already
       // rendered the same content. Decode HTML entities that models
       // (especially DeepSeek) emit in text — &quot; &amp; &lt; etc.
-      if (finalAnswer && finalAnswer !== normalizedCommittedText) {
-        content.push({ type: 'text', text: decodeHtmlEntities(result.finalAnswer) });
-      }
 
       // Append file change summary if any files were modified
       if (fileChanges.length > 0) {
@@ -1317,12 +1438,13 @@ export function App({ options }: { options: TUIOptions }): React.ReactNode {
 
       if (content.length > 0) {
         const assistantMsg: Message = {
-          id: `msg_${Date.now()}`,
+          id: createUiMessageId('msg'),
           role: 'assistant',
           content,
           timestamp: Date.now(),
         };
         setMessages((prev) => [...prev, assistantMsg]);
+        emitDebugEvent({ type: 'message_id_emitted', messageId: assistantMsg.id, kind: 'assistant', timestamp: Date.now() });
       }
 
       if (taskSnapshot) {
@@ -1409,23 +1531,21 @@ export function App({ options }: { options: TUIOptions }): React.ReactNode {
         ? { type: 'text', text: 'Conversation interrupted.' }
         : { type: 'error', message: err instanceof Error ? err.message : String(err) };
       const errMsg: Message = {
-        id: `msg_${Date.now()}`,
+        id: createUiMessageId('msg'),
         role: 'assistant',
         content: [errorContent],
         timestamp: Date.now(),
       };
       setMessages((prev) => [...prev, errMsg]);
+      emitDebugEvent({ type: 'message_id_emitted', messageId: errMsg.id, kind: 'error', timestamp: Date.now() });
     } finally {
       // Cleanup: commit any remaining text (handles error/abort path —
-      // on success path this is a no-op since drainAndCommit already ran)
-      commitStreaming();
+      finalizeStreamingRun(abortRef.current ? 'abort' : 'cleanup');
       abortRef.current = null;
       setIsLoading(false);
       // Fire state machine transition for turn completion
       stateMachineRef.current?.transition({ type: 'turn_complete' });
-      setStreamingContent(null);
-      streamAccumRef.current = '';
-      if (streamFlushRef.current) { clearTimeout(streamFlushRef.current); streamFlushRef.current = null; }
+      clearStreamingRun('cleanup');
       // Stop elapsed timer
       if (elapsedTimerRef.current) {
         clearInterval(elapsedTimerRef.current);
@@ -1595,15 +1715,9 @@ export function App({ options }: { options: TUIOptions }): React.ReactNode {
     }
     // Reset loading state so input stays responsive while agent winds down
     setIsLoading(false);
-    setStreamingContent(null);
+    clearStreamingRun('abort');
     setStreamingThinking(null);
-    streamingContentRef.current = null;
     setSpinnerRunning(undefined);
-    // Clear flush buffer
-    if (streamFlushRef.current) {
-      clearTimeout(streamFlushRef.current);
-      streamFlushRef.current = null;
-    }
     // Clear any pending dialog states (permission, questions, plan review)
     setPermissionRequest(undefined);
     permissionResolveRef.current?.(false);
@@ -1617,7 +1731,6 @@ export function App({ options }: { options: TUIOptions }): React.ReactNode {
     planReviewResolveRef.current = null;
     // Reset state machine to idle so input is enabled
     stateMachineRef.current?.transition({ type: 'turn_complete' });
-    streamAccumRef.current = '';
     // Stop elapsed timer
     if (elapsedTimerRef.current) {
       clearInterval(elapsedTimerRef.current);
@@ -1625,7 +1738,7 @@ export function App({ options }: { options: TUIOptions }): React.ReactNode {
     }
     setElapsedMs(elapsedRef.current);
     runStatsRef.current = null;
-  }, [pushSpinnerDetail]);
+  }, [clearStreamingRun, pushSpinnerDetail]);
 
   // Exit handler — clean shutdown (Ctrl+C double-tap or Ctrl+D)
   const handleExit = useCallback(() => {
@@ -1704,6 +1817,13 @@ export function App({ options }: { options: TUIOptions }): React.ReactNode {
       onSubmit={onSubmit}
       onInterrupt={handleInterrupt}
       onExit={handleExit}
+      onViewportDebugEvent={(event) =>
+        emitDebugEvent({
+          type: "viewport_state",
+          ...event,
+          timestamp: Date.now(),
+        })
+      }
       model={modelRef.current}
       statusSegments={statusSegments}
       statusDetailLines={statusDetailLines}

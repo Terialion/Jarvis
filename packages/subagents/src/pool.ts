@@ -240,10 +240,21 @@ export class SubagentPool {
 
         // Auto-deliver result to parent mailbox (Codex completion watcher pattern)
         if (this.parentMailbox) {
-          const summary = result.answer || result.error || '(no output)';
+          const summary = result.payload?.summary || result.answer || result.error || '(no output)';
           this.parentMailbox.deliver(
             config.agentId,
-            `[Subagent ${result.status}]\nTask: ${config.task.slice(0, 100)}\nResult: ${summary.slice(0, 500)}`,
+            {
+              kind: result.reviewResult ? 'review' : 'result',
+              summary: `[Subagent ${result.status}] ${summary.slice(0, 500)}`,
+              payload: {
+                agentId: config.agentId,
+                status: result.status,
+                task: config.task,
+                payload: result.payload,
+                reviewStatus: result.reviewStatus,
+                reviewResult: result.reviewResult,
+              },
+            },
             true,
           );
         }
@@ -266,7 +277,17 @@ export class SubagentPool {
   }
 
   /** External callback for TUI agent store updates. */
-  onStatusUpdate?: (entry: { agentId: string; status: string; role?: string; depth?: number; task?: string; parentId?: string }) => void;
+  onStatusUpdate?: (entry: {
+    agentId: string;
+    status: string;
+    role?: string;
+    depth?: number;
+    task?: string;
+    parentId?: string;
+    reviewStatus?: string;
+    confidence?: number;
+    findingsCount?: number;
+  }) => void;
 
   private _updateStatus(
     agentId: string,
@@ -286,6 +307,9 @@ export class SubagentPool {
       depth: cfg?.depth,
       task: cfg?.task,
       parentId: cfg?.parentId,
+      reviewStatus: result?.reviewStatus,
+      confidence: result?.reviewResult?.confidence ?? result?.payload?.confidence,
+      findingsCount: result?.reviewResult?.findings?.length,
     });
   }
 }

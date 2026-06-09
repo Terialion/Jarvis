@@ -12,22 +12,25 @@ export interface AgentStatusEntry {
   toolCount?: number;
   elapsedMs?: number;
   startedAt?: number;
+  reviewStatus?: string;
+  confidence?: number;
+  findingsCount?: number;
 }
 
 function statusGlyph(status: string): { glyph: string; color: string } {
   switch (status) {
     case "running":
-      return { glyph: "●", color: "#E6B450" };
+      return { glyph: "o", color: "#E6B450" };
     case "pending":
-      return { glyph: "○", color: "#808080" };
+      return { glyph: ".", color: "#808080" };
     case "completed":
-      return { glyph: "✓", color: "#5FAF5F" };
+      return { glyph: "*", color: "#5FAF5F" };
     case "failed":
-      return { glyph: "✕", color: "#D75F5F" };
+      return { glyph: "x", color: "#D75F5F" };
     case "cancelled":
-      return { glyph: "◌", color: "#D7AF00" };
+      return { glyph: "-", color: "#D7AF00" };
     default:
-      return { glyph: "○", color: "#808080" };
+      return { glyph: ".", color: "#808080" };
   }
 }
 
@@ -94,7 +97,6 @@ export function AgentsPanel({ agents, visible, focused }: AgentsPanelProps): Rea
 
   const rows = useMemo(() => treeToRows(buildTree(agents), 0), [agents]);
 
-  // Handle j/k navigation when panel is focused
   useEffect(() => {
     const id = setInterval(() => setNow(Date.now()), 1000);
     return () => clearInterval(id);
@@ -106,8 +108,6 @@ export function AgentsPanel({ agents, visible, focused }: AgentsPanelProps): Rea
     }
   }, [rows.length, selectedIndex]);
 
-  // Handle j/k navigation when panel is focused — isActive must stay true
-  // because toggling isActive changes hook count (React invariant violation)
   useInput((_input, key) => {
     if (!focused) return;
     if (_input === "j" || key.downArrow) {
@@ -174,15 +174,20 @@ export function AgentsPanel({ agents, visible, focused }: AgentsPanelProps): Rea
           const { glyph, color } = statusGlyph(node.agent.status);
           const indent = "  ".repeat(depth);
           const connector =
-            depth > 0 ? (index < rows.length - 1 && rows[index + 1]?.depth >= depth ? "├─ " : "└─ ") : "";
+            depth > 0 ? (index < rows.length - 1 && rows[index + 1]?.depth >= depth ? "|- " : "`- ") : "";
           const selected = index === selectedIndex;
           const elapsed = node.agent.startedAt ? now - node.agent.startedAt : undefined;
           const taskPreview = compactTask(node.agent.task, 64);
-          const toolsInfo = node.agent.toolCount ? ` · ${node.agent.toolCount}t` : "";
+          const extras = [
+            node.agent.toolCount ? `${node.agent.toolCount}t` : "",
+            node.agent.reviewStatus ? `review:${node.agent.reviewStatus}` : "",
+            typeof node.agent.confidence === "number" ? `conf:${Math.round(node.agent.confidence * 100)}%` : "",
+            node.agent.findingsCount ? `findings:${node.agent.findingsCount}` : "",
+          ].filter(Boolean).join(" · ");
 
           return (
             <Box key={id}>
-              {selected ? <Text color="#E6B450">› </Text> : <Text>  </Text>}
+              {selected ? <Text color="#E6B450">{'>'}</Text> : <Text>  </Text>}
               <Text color={color}>{glyph}</Text>
               <Text> {indent}{connector}</Text>
               <Text bold={selected} color={selected ? "#E6B450" : undefined}>
@@ -192,8 +197,8 @@ export function AgentsPanel({ agents, visible, focused }: AgentsPanelProps): Rea
               {elapsed && node.agent.status === "running" && (
                 <Text dimColor> {formatElapsed(elapsed)}</Text>
               )}
-              <Text dimColor>{toolsInfo}</Text>
-              {taskPreview && <Text dimColor> · {node.agent.agentId.slice(-8)}</Text>}
+              {extras ? <Text dimColor> · {extras}</Text> : null}
+              {taskPreview ? <Text dimColor> · {node.agent.agentId.slice(-8)}</Text> : null}
             </Box>
           );
         })}

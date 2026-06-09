@@ -6,17 +6,16 @@ import {
   useHasSelection,
   useInput,
   useSelection,
-  ScrollBox,
   type ScrollBoxHandle,
 } from "../ink-renderer/index.js";
 import { AgentsPanel, type AgentStatusEntry } from "./AgentsPanel";
 import React from "react";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from "react";
 import { AskUserQuestion } from "./AskUserQuestion";
 import { PlanReview } from "./PlanReview";
 import type { AskQuestionDef } from "@jarvis/tools";
 import type { ThreadEvent, ModelInfo } from "@jarvis/agent";
-import { CodexTimeline } from "../../presentation/CodexTimeline.js";
+import { buildCodexTranscriptItems } from "../../presentation/CodexTimeline.js";
 import { HelpPopup, type HelpCommandEntry } from "./HelpPopup";
 import { ShellTextPanel } from "./ShellTextPanel";
 import {
@@ -40,6 +39,19 @@ import type { SearchMatch } from "./SearchOverlay";
 import type { TuiPresentationMode } from "../../presentation/contracts.js";
 import { useRegisterKeybindingContext } from "./keybindings/KeybindingContext";
 import { useKeybindings } from "./keybindings/useKeybinding";
+import { shouldResumeLiveOutputFromBottomAction } from "./viewport-mode.js";
+import { buildViewportFooterView } from "./viewport-footer.js";
+import { FullscreenLayout } from "./FullscreenLayout.js";
+import {
+  useSetBottomFloat,
+  useSetBottomReplacement,
+  useSetPromptModal,
+  useSetPromptOverlay,
+} from "./PromptOverlayContext.js";
+import { TranscriptViewport, type TranscriptItem } from "./TranscriptViewport.js";
+import { createViewportState, reduceViewportState } from "./viewport-controller.js";
+import { ViewportProvider, useViewportContext } from "./ViewportContext.js";
+import { useCopyOnSelect } from "./useCopyOnSelect.js";
 
 type REPLCommand = {
   name: string;
@@ -74,6 +86,23 @@ export type REPLProps = {
   onExit?: () => void;
   /** Called when user requests interrupt (Esc while loading, or first Ctrl+C). */
   onInterrupt?: () => void;
+  onViewportDebugEvent?: (event: {
+    mode: "following" | "history" | "selection";
+    followOutput: boolean;
+    hasSelection: boolean;
+    interactivePromptActive: boolean;
+    isLoading: boolean;
+    scrollTop: number;
+    scrollHeight: number;
+    viewportHeight: number;
+    pendingScrollDelta: number;
+    remainingScrollDistance: number;
+    clampMin?: number;
+    clampMax?: number;
+    transcriptTotalHeight?: number;
+    transcriptRangeStart?: number;
+    transcriptRangeEnd?: number;
+  }) => void;
 
   messages: Message[];
   isLoading?: boolean;
@@ -159,6 +188,7 @@ export function REPL({
   onSubmit,
   onExit,
   onInterrupt,
+  onViewportDebugEvent,
   messages,
   isLoading = false,
   streamingContent,
@@ -224,6 +254,13 @@ export function REPL({
 }: REPLProps): React.ReactNode {
   const { exit } = useApp();
   const scrollRef = useRef<ScrollBoxHandle | null>(null);
+  const transcriptMetricsRef = useRef<{
+    clampMin?: number;
+    clampMax?: number;
+    totalHeight: number;
+    startIndex: number;
+    endIndex: number;
+  } | null>(null);
   const [inputValue, setInputValue] = useState("");
   const [showAgents, setShowAgents] = useState(false);
   // Auto-show agents panel when agents are active, hide when all done
@@ -236,16 +273,19 @@ export function REPL({
   const [activeSearchMatch, setActiveSearchMatch] = useState<SearchMatch | null>(null);
   const [thinkingExpanded, setThinkingExpanded] = useState(false);
   const [toolResultsExpanded, setToolResultsExpanded] = useState(false);
-  const [followOutput, setFollowOutput] = useState(true);
-  const [scrollPositionKind, setScrollPositionKind] = useState<"following" | "history" | "selection">("following");
+  const [viewportState, dispatchViewport] = useReducer(reduceViewportState, undefined, createViewportState);
   const [showExitHint, setShowExitHint] = useState(false);
   const exitHintTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const scrollDrainTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const submittingRef = useRef(false);
+  const lastViewportDebugRef = useRef<string>("");
   const hasSelection = useHasSelection();
   const { clearSelection, copySelectionNoClear, shiftSelection, captureScrolledRows } = useSelection();
 
   const history = externalHistory ?? internalHistory;
   const interactivePromptActive = !!askUserQuestion || !!permissionRequest || !!planReview;
+  const followOutput = viewportState.followOutput;
+  const scrollPositionKind = viewportState.mode;
   const overlaysOpen =
     searchOpen || modelSelectorOpen || effortSelectorOpen || helpPopupOpen || !!contextPanel || !!mcpPanel;
   const viewportHotkeysActive = !overlaysOpen && !agentsFocused;
@@ -255,56 +295,71 @@ export function REPL({
 
   const stopFollowingOutput = useCallback(
     (kind: "history" | "selection" = "history") => {
-      setFollowOutput(false);
-      setScrollPositionKind(kind);
+      if (kind === "selection") {
+        dispatchViewport({ type: "selection_changed", hasSelection: true });
+        return;
+      }
+      dispatchViewport({ type: "user_scrolled" });
     },
     [],
   );
 
+  const getEffectiveViewportTop = useCallback((handle: ScrollBoxHandle) => {
+    const maxScroll = Math.max(0, handle.getScrollHeight() - handle.getViewportHeight());
+    if (followOutput || handle.isSticky()) return maxScroll;
+    return Math.max(0, Math.min(maxScroll, handle.getScrollTop() + handle.getPendingDelta()));
+  }, [followOutput]);
+
   const getRemainingScrollDistance = useCallback(() => {
     const handle = scrollRef.current;
     if (!handle) return Number.POSITIVE_INFINITY;
-    return Math.max(0, handle.getScrollHeight() - handle.getViewportHeight() - handle.getScrollTop());
-  }, []);
+    return Math.max(0, handle.getScrollHeight() - handle.getViewportHeight() - getEffectiveViewportTop(handle));
+  }, [getEffectiveViewportTop]);
 
   const resumeFollowingOutput = useCallback(() => {
     scrollRef.current?.scrollToBottom();
-    setFollowOutput(true);
-    setScrollPositionKind("following");
+    dispatchViewport({ type: "resume_follow" });
   }, []);
+
+  const handleViewportBottomAction = useCallback(() => {
+    if (!shouldResumeLiveOutputFromBottomAction(hasSelection)) {
+      scrollRef.current?.scrollToBottom();
+      dispatchViewport({ type: "bottom_action" });
+      return;
+    }
+
+    dispatchViewport({ type: "bottom_action" });
+    resumeFollowingOutput();
+  }, [hasSelection, resumeFollowingOutput]);
 
   const handleViewportScrollBy = useCallback(
     (dy: number) => {
+      const handle = scrollRef.current;
+      if (!handle || dy === 0) return;
+      const maxScroll = Math.max(0, handle.getScrollHeight() - handle.getViewportHeight());
+      const currentTop = getEffectiveViewportTop(handle);
+      const targetTop = Math.max(0, Math.min(maxScroll, currentTop + dy));
+      const actualDelta = targetTop - currentTop;
+
       // Shift text selection to track the scrolled content
-      if (hasSelection && dy !== 0) {
+      if (hasSelection && actualDelta !== 0) {
         const maxRow = process.stdout.rows ?? 40;
         // Capture rows scrolling out of view so they remain copyable
-        if (dy > 0) {
+        if (actualDelta > 0) {
           // Content moves up: rows at the top scroll out
-          captureScrolledRows(0, dy - 1, "above");
+          captureScrolledRows(0, actualDelta - 1, "above");
         } else {
           // Content moves down: rows at the bottom scroll out
-          captureScrolledRows(maxRow + dy, maxRow - 1, "below");
+          captureScrolledRows(maxRow + actualDelta, maxRow - 1, "below");
         }
         // Shift selection: content at row R moves to row R-dy
-        shiftSelection(-dy, 0, maxRow);
+        shiftSelection(-actualDelta, 0, maxRow);
       }
-      scrollRef.current?.scrollBy(dy);
+      handle.scrollTo(targetTop);
       const nextKind = hasSelection ? "selection" : "history";
       stopFollowingOutput(nextKind);
-      if (dy > 0) {
-        setTimeout(() => {
-          if (hasSelection) return;
-          const remaining = getRemainingScrollDistance();
-          if (remaining <= 2) {
-            resumeFollowingOutput();
-          } else {
-            setScrollPositionKind(nextKind);
-          }
-        }, 0);
-      }
     },
-    [captureScrolledRows, getRemainingScrollDistance, hasSelection, resumeFollowingOutput, shiftSelection, stopFollowingOutput],
+    [captureScrolledRows, getEffectiveViewportTop, hasSelection, shiftSelection, stopFollowingOutput],
   );
 
   const handleViewportScrollToTop = useCallback(() => {
@@ -312,8 +367,14 @@ export function REPL({
     stopFollowingOutput(hasSelection ? "selection" : "history");
   }, [hasSelection, stopFollowingOutput]);
 
-  // Cleanup exit hint timer on unmount
-  useEffect(() => () => { if (exitHintTimerRef.current) clearTimeout(exitHintTimerRef.current); }, []);
+  // Cleanup timers on unmount
+  useEffect(
+    () => () => {
+      if (exitHintTimerRef.current) clearTimeout(exitHintTimerRef.current);
+      if (scrollDrainTimerRef.current) clearTimeout(scrollDrainTimerRef.current);
+    },
+    [],
+  );
 
   // Detect user-initiated scrolls (mouse wheel, trackpad) and break followOutput
   useEffect(() => {
@@ -321,34 +382,28 @@ export function REPL({
     if (!handle) return;
     return handle.subscribe(() => {
       // After any imperative scroll, check if we're still at the bottom
-      const remaining = Math.max(0, handle.getScrollHeight() - handle.getViewportHeight() - handle.getScrollTop());
+      const remaining = Math.max(
+        0,
+        handle.getScrollHeight() - handle.getViewportHeight() - getEffectiveViewportTop(handle),
+      );
       if (remaining > 3 && followOutput) {
-        stopFollowingOutput("history");
+        stopFollowingOutput(hasSelection ? "selection" : "history");
       }
+      dispatchViewport({ type: "scroll_draining_changed", scrollDraining: true });
+      if (scrollDrainTimerRef.current) clearTimeout(scrollDrainTimerRef.current);
+      scrollDrainTimerRef.current = setTimeout(() => {
+        dispatchViewport({ type: "scroll_draining_changed", scrollDraining: false });
+      }, 150);
     });
-  }, [followOutput, stopFollowingOutput]);
+  }, [followOutput, getEffectiveViewportTop, hasSelection, stopFollowingOutput]);
 
   useEffect(() => {
-    if (interactivePromptActive && !hasSelection) {
-      stopFollowingOutput("history");
-      return;
-    }
-    if (hasSelection) {
-      stopFollowingOutput("selection");
-      return;
-    }
-    // Only auto-resume following when NOT loading (user explicitly scrolled to bottom)
-    // During streaming, let the user scroll freely without being pulled back
-    if (!followOutput && !isLoading && getRemainingScrollDistance() <= 2) {
-      resumeFollowingOutput();
-      return;
-    }
-    if (followOutput) {
-      setScrollPositionKind("following");
-      return;
-    }
-    setScrollPositionKind("history");
-  }, [followOutput, getRemainingScrollDistance, hasSelection, interactivePromptActive, resumeFollowingOutput, stopFollowingOutput]);
+    dispatchViewport({ type: "selection_changed", hasSelection });
+  }, [hasSelection]);
+
+  useEffect(() => {
+    dispatchViewport({ type: "interactive_prompt_changed", interactivePromptActive });
+  }, [interactivePromptActive]);
 
   useKeybindings(
     {
@@ -370,7 +425,7 @@ export function REPL({
         handleViewportScrollToTop();
       },
       "scroll:bottom": () => {
-        resumeFollowingOutput();
+        handleViewportBottomAction();
       },
       "selection:copy": () => {
         if (!hasSelection) return false;
@@ -457,7 +512,7 @@ export function REPL({
           return;
         }
         if (key.end || (key.ctrl && key.end)) {
-          resumeFollowingOutput();
+          handleViewportBottomAction();
           return;
         }
       }
@@ -474,7 +529,7 @@ export function REPL({
       if (askUserQuestion || permissionRequest) {
         return;
       }
-      // Agents panel focus mode éˆ¥?route keys to panel
+      // Agents panel focus mode éˆ?route keys to panel
       if (agentsFocused && agentsPanelVisible) {
         if (_input === "q" || key.escape || (key.ctrl && _input === "g")) {
           setAgentsFocused(false);
@@ -559,11 +614,11 @@ export function REPL({
           setThinkingExpanded((prev) => !prev);
         }
       }
-      // Ctrl+G handled earlier for focus/panel toggle éˆ¥?skip here
+      // Ctrl+G handled earlier for focus/panel toggle éˆ?skip here
       if (key.ctrl && _input === "o") {
         setToolResultsExpanded((prev) => !prev);
       }
-      // Shift+Tab: cycle permission modes (suggest éˆ«?auto-edit éˆ«?full-auto éˆ«?suggest)
+      // Shift+Tab: cycle permission modes (suggest éˆ?auto-edit éˆ?full-auto éˆ?suggest)
       if (key.tab && key.shift) {
         onPermissionModeCycle?.();
       }
@@ -638,43 +693,54 @@ export function REPL({
     };
   }, [activeSearchMatch, codexState.searchDocuments, presentationMode, searchQuery]);
 
-  const finalViewportStatusLine = useMemo((): StatusDetailLine => {
-    if (scrollPositionKind === "selection") {
-      return {
-        content: "[Selection mode] Follow paused | Ctrl+C copies | Esc clears | End resumes live output",
-        color: "cyan",
-        emphasis: true,
-      };
-    }
-    if (scrollPositionKind === "history") {
-      return {
-        content: "[History mode] Follow paused | Scroll freely | End resumes live output",
-        color: "yellow",
-        emphasis: true,
-      };
-    }
-    return {
-      content: isLoading
-        ? "[Live mode] Following output | pinned to the newest live step"
-        : "[Live mode] Following output | pinned to the latest message",
-      color: "green",
-      emphasis: true,
-    };
-  }, [isLoading, scrollPositionKind]);
+  const finalViewportStatusLine = useMemo(
+    (): StatusDetailLine => buildViewportFooterView({ mode: scrollPositionKind, isLoading }),
+    [isLoading, scrollPositionKind],
+  );
 
   const combinedStatusDetailLines = useMemo(
     () => [finalViewportStatusLine, ...statusDetailLines],
     [finalViewportStatusLine, statusDetailLines],
   );
 
-  const transcriptBody = useMemo(
-    () => (
-      <>
-        {showWelcome && <Box marginBottom={0}>{welcome}</Box>}
+  const bottomReplacementNode = useMemo(() => {
+    if (!askUserQuestion && !showPermission && !planReview) {
+      return null;
+    }
 
-        {presentationMode === "codex" ? (
-          <CodexTimeline state={codexState} search={codexSearchState} detailsExpanded={toolResultsExpanded} />
-        ) : (
+    return (
+      <ReplBottomReplacement
+        askUserQuestion={askUserQuestion}
+        permissionRequest={showPermission ? permissionRequest : undefined}
+        planReview={planReview}
+        planReviewIndex={planReviewIndex}
+      />
+    );
+  }, [askUserQuestion, permissionRequest, planReview, planReviewIndex, showPermission]);
+
+  const transcriptItems = useMemo<TranscriptItem[]>(() => {
+    const items: TranscriptItem[] = [];
+
+    if (showWelcome && welcome) {
+      items.push({
+        id: "welcome",
+        estimatedHeight: 14,
+        render: () => <Box marginBottom={0}>{welcome}</Box>,
+      });
+    }
+
+    if (presentationMode === "codex") {
+      return buildCodexTranscriptItems({
+        state: codexState,
+        search: codexSearchState,
+        detailsExpanded: toolResultsExpanded,
+        welcome: showWelcome ? welcome : undefined,
+      });
+    } else {
+      items.push({
+        id: "message-list",
+        estimatedHeight: Math.max(12, messages.length * 6),
+        render: () => (
           <MessageList
             messages={messages}
             streamingContent={streamingContent}
@@ -686,226 +752,226 @@ export function REPL({
             searchQuery={searchQuery}
             activeSearchMatch={activeSearchMatch}
           />
-        )}
+        ),
+      });
 
-        {presentationMode !== "codex" && isLoading && !streamingContent && !streamingThinking && (
-          <Box marginTop={messages.length > 0 ? 1 : 0}>
-            {spinner ?? (
-              <Spinner
-                tokenCount={spinnerTokenCount}
-                verb={spinnerVerb}
-                status={spinnerStatus}
-                details={spinnerDetails}
-                running={spinnerRunning}
-                completed={spinnerCompleted}
-              />
-            )}
-          </Box>
-        )}
-      </>
+      if (isLoading && !streamingContent && !streamingThinking) {
+        items.push({
+          id: "spinner",
+          estimatedHeight: 5,
+          render: () => (
+            <Box marginTop={messages.length > 0 ? 1 : 0}>
+              {spinner ?? (
+                <Spinner
+                  tokenCount={spinnerTokenCount}
+                  verb={spinnerVerb}
+                  status={spinnerStatus}
+                  details={spinnerDetails}
+                  running={spinnerRunning}
+                  completed={spinnerCompleted}
+                />
+              )}
+            </Box>
+          ),
+        });
+      }
+    }
+
+    return items;
+  }, [
+    activeSearchMatch,
+    codexSearchState,
+    codexState,
+    isLoading,
+    messages,
+    presentationMode,
+    renderMessage,
+    searchQuery,
+    showWelcome,
+    spinner,
+    spinnerCompleted,
+    spinnerDetails,
+    spinnerRunning,
+    spinnerStatus,
+    spinnerTokenCount,
+    spinnerVerb,
+    streamingContent,
+    streamingElapsedMs,
+    streamingThinking,
+    thinkingExpanded,
+    toolResultsExpanded,
+    welcome,
+  ]);
+
+  const overlayNode = useMemo(
+    () => (
+      <ReplOverlaySurface
+        searchOpen={searchOpen}
+        setSearchOpen={setSearchOpen}
+        searchContents={searchContents}
+        setActiveSearchMatch={setActiveSearchMatch}
+        setSearchQuery={setSearchQuery}
+        agents={agents}
+        agentsPanelVisible={agentsPanelVisible}
+        agentsFocused={agentsFocused}
+        onCloseAgents={() => {
+          setShowAgents(false);
+          setAgentsFocused(false);
+        }}
+      />
+    ),
+    [agents, agentsFocused, agentsPanelVisible, searchContents, searchOpen],
+  );
+
+  const modalNode = useMemo(
+    () => (
+      <ReplModalSurface
+        modelSelectorOpen={modelSelectorOpen}
+        modelSelectorKnownModels={modelSelectorKnownModels}
+        modelSelectorCurrentModel={modelSelectorCurrentModel}
+        modelSelectorCurrentEffort={modelSelectorCurrentEffort}
+        effortSelectorLevels={effortSelectorLevels}
+        onModelSelect={onModelSelect}
+        onModelSelectorCancel={onModelSelectorCancel}
+        onModelEffortChange={onModelEffortChange}
+        effortSelectorOpen={effortSelectorOpen}
+        effortSelectorCurrent={effortSelectorCurrent}
+        onEffortSelect={onEffortSelect}
+        onEffortSelectorCancel={onEffortSelectorCancel}
+        onEffortSelectorChange={onEffortSelectorChange}
+        helpPopupOpen={helpPopupOpen}
+        helpPopupCommands={helpPopupCommands}
+        onHelpPopupClose={onHelpPopupClose}
+        contextPanel={contextPanel}
+        onContextPanelClose={onContextPanelClose}
+        mcpPanel={mcpPanel}
+        onMcpPanelClose={onMcpPanelClose}
+      />
     ),
     [
-      activeSearchMatch,
-      codexSearchState,
-      codexState,
-      isLoading,
-      messages,
-      presentationMode,
-      renderMessage,
-      searchQuery,
-      showWelcome,
-      spinner,
-      spinnerCompleted,
-      spinnerDetails,
-      spinnerRunning,
-      spinnerStatus,
-      spinnerTokenCount,
-      spinnerVerb,
-      streamingContent,
-      streamingElapsedMs,
-      streamingThinking,
-      thinkingExpanded,
-      toolResultsExpanded,
-      welcome,
+      contextPanel,
+      effortSelectorCurrent,
+      effortSelectorLevels,
+      effortSelectorOpen,
+      helpPopupCommands,
+      helpPopupOpen,
+      mcpPanel,
+      modelSelectorCurrentEffort,
+      modelSelectorCurrentModel,
+      modelSelectorKnownModels,
+      modelSelectorOpen,
+      onContextPanelClose,
+      onEffortSelect,
+      onEffortSelectorCancel,
+      onEffortSelectorChange,
+      onHelpPopupClose,
+      onMcpPanelClose,
+      onModelEffortChange,
+      onModelSelect,
+      onModelSelectorCancel,
     ],
   );
 
-  const shellScrollableBody = (
-    <Box flexDirection="column" width="100%">
-      <Box flexDirection="row" flexGrow={contentAreaFlexGrow}>
-        <Box flexDirection="column" flexGrow={messageAreaFlexGrow}>
-          {transcriptBody}
-        </Box>
-      </Box>
-
-      <AgentsPanel
-        agents={agents ?? []}
-        visible={agentsPanelVisible}
-        focused={agentsFocused}
-        onClose={() => { setShowAgents(false); setAgentsFocused(false); }}
-      />
-
-      {searchOpen && (
-        <SearchOverlay
-          isOpen={searchOpen}
-          onClose={() => setSearchOpen(false)}
-          onSearch={(q) => computeMatches(searchContents, q)}
-          onNavigate={setActiveSearchMatch}
-          onActiveMatchChange={setActiveSearchMatch}
-          onQueryChange={setSearchQuery}
-        />
-      )}
-
-      {modelSelectorOpen && modelSelectorKnownModels.length > 0 && (
-        <Box flexDirection="column" paddingX={1} borderStyle="round" borderColor="cyan">
-          <ModelSelector
-            currentModel={modelSelectorCurrentModel}
-            currentEffort={modelSelectorCurrentEffort}
-            effortLevels={effortSelectorLevels}
-            knownModels={modelSelectorKnownModels}
-            onSelect={(result: ModelSelectionResult) => onModelSelect?.(result)}
-            onCancel={() => onModelSelectorCancel?.()}
-            onEffortChange={(effort: string) => onModelEffortChange?.(effort)}
-          />
-        </Box>
-      )}
-
-      {effortSelectorOpen && (
-        <Box flexDirection="column" paddingX={1} borderStyle="round" borderColor="cyan">
-          <EffortSelector
-            currentEffort={effortSelectorCurrent}
-            levels={effortSelectorLevels}
-            onSelect={(effort: string) => onEffortSelect?.(effort)}
-            onCancel={() => onEffortSelectorCancel?.()}
-            onChange={(effort: string) => onEffortSelectorChange?.(effort)}
-          />
-        </Box>
-      )}
-
-      {helpPopupOpen && helpPopupCommands.length > 0 && (
-        <HelpPopup
-          commands={helpPopupCommands}
-          onClose={() => onHelpPopupClose?.()}
-        />
-      )}
-
-      {contextPanel && (
-        <ShellTextPanel
-          title={contextPanel.title}
-          subtitle={contextPanel.subtitle}
-          lines={contextPanel.lines}
-          accentColor="cyan"
-          onClose={() => onContextPanelClose?.()}
-        />
-      )}
-
-      {mcpPanel && (
-        <ShellTextPanel
-          title={mcpPanel.title}
-          subtitle={mcpPanel.subtitle}
-          lines={mcpPanel.lines}
-          accentColor="yellow"
-          onClose={() => onMcpPanelClose?.()}
-        />
-      )}
-
-      {/* Input area: approval/question/plan replaces the prompt bar (CC-style) */}
-      <Divider />
-      <Box flexDirection="column" minHeight={1}>
-        {askUserQuestion ? (
-          <AskUserQuestion
-            questions={askUserQuestion.questions}
-            onSubmit={askUserQuestion.onSubmit}
-            onCancel={askUserQuestion.onCancel}
-          />
-        ) : showPermission ? (
-          <PermissionRequest
-            toolName={permissionRequest.toolName}
-            description={permissionRequest.description}
-            details={permissionRequest.details}
-            patternLabel={permissionRequest.patternLabel}
-            preview={permissionRequest.preview}
-            onDecision={permissionRequest.onDecision}
-          />
-        ) : planReview ? (
-          <PlanReview
-            plan={planReview}
-            selectedIndex={planReviewIndex}
-          />
-        ) : (
-          <PromptInput
-            value={inputValue}
-            onChange={setInputValue}
-            onSubmit={handleSubmit}
-            prefix={prefix}
-            placeholder={placeholder}
-            disabled={overlaysOpen}
-            isLoading={isLoading}
-            commands={promptCommands}
-            history={history}
-            fileEntries={fileEntries}
-            onFileSearch={onFileSearch}
-          />
-        )}
-      </Box>
-
-      <Divider />
-
-      {/* Status bar â€” replaced by exit hint when Ctrl-C pressed */}
-      {showExitHint ? (
-        <Box paddingX={1}>
-          <Text color="yellow" bold>Press Ctrl-C again to exit</Text>
-          <Text dimColor> Â· any other key to cancel</Text>
-        </Box>
-      ) : (
-        <>
-          {resolvedSegments.length > 0 && <StatusLine segments={resolvedSegments} />}
-          {combinedStatusDetailLines.length > 0 && (
-            <Box flexDirection="column" paddingX={1}>
-              {combinedStatusDetailLines.map((line, index) => (
-                line.segments && line.segments.length > 0 ? (
-                  <Box key={`${index}:segments`} flexDirection="row">
-                    {line.segments.map((segment, segmentIndex) => (
-                      <React.Fragment key={`${index}:${segmentIndex}:${segment.content}`}>
-                        {segmentIndex > 0 && <Text dimColor>{' | '}</Text>}
-                        <Text dimColor={line.emphasis ? false : true} color={segment.color}>
-                          {segment.content}
-                        </Text>
-                      </React.Fragment>
-                    ))}
-                  </Box>
-                ) : (
-                  <Text key={`${index}:${line.content ?? ''}`} dimColor={line.emphasis ? false : true} color={line.color}>
-                    {line.content ?? ""}
-                  </Text>
-                )
-              ))}
-            </Box>
-          )}
-        </>
-      )}
-    </Box>
-  );
+  const viewportContextValue = {
+    ...viewportState,
+    dispatch: dispatchViewport,
+    stopFollowingOutput,
+    resumeFollowingOutput,
+    handleBottomAction: handleViewportBottomAction,
+  };
 
   // Manual scroll-to-bottom: only when followOutput is true (user hasn't scrolled up)
   // Replaces stickyScroll which was resetting scroll position to top on content change
   useEffect(() => {
-    if (followOutput && !hasSelection && !interactivePromptActive) {
+    if (followOutput && !hasSelection && !interactivePromptActive && !viewportState.scrollDraining) {
       scrollRef.current?.scrollToBottom();
     }
-  }, [streamingContent, messages.length, followOutput, hasSelection, interactivePromptActive]);
+  }, [streamingContent, messages.length, followOutput, hasSelection, interactivePromptActive, viewportState.scrollDraining]);
+
+  useEffect(() => {
+    if (!onViewportDebugEvent) return;
+    const handle = scrollRef.current;
+    const remainingScrollDistance = getRemainingScrollDistance();
+    const payload = {
+      mode: scrollPositionKind,
+      followOutput,
+      hasSelection,
+      interactivePromptActive,
+      isLoading,
+      scrollTop: handle?.getScrollTop() ?? 0,
+      scrollHeight: handle?.getScrollHeight() ?? 0,
+      viewportHeight: handle?.getViewportHeight() ?? 0,
+      pendingScrollDelta: handle?.getPendingDelta() ?? 0,
+      remainingScrollDistance,
+      clampMin: transcriptMetricsRef.current?.clampMin,
+      clampMax: transcriptMetricsRef.current?.clampMax,
+      transcriptTotalHeight: transcriptMetricsRef.current?.totalHeight,
+      transcriptRangeStart: transcriptMetricsRef.current?.startIndex,
+      transcriptRangeEnd: transcriptMetricsRef.current?.endIndex,
+    };
+    const snapshotKey = JSON.stringify(payload);
+    if (snapshotKey === lastViewportDebugRef.current) return;
+    lastViewportDebugRef.current = snapshotKey;
+    onViewportDebugEvent(payload);
+  }, [
+    followOutput,
+    getRemainingScrollDistance,
+    hasSelection,
+    interactivePromptActive,
+    isLoading,
+    messages.length,
+    onViewportDebugEvent,
+    scrollPositionKind,
+    streamingContent,
+    threadEvents.length,
+  ]);
 
   return (
-    <Box flexDirection="column" flexGrow={1}>
-      <ScrollBox
-        ref={scrollRef}
-        flexDirection="column"
-        flexGrow={1}
-        stickyScroll={false}
+    <ViewportProvider value={viewportContextValue}>
+      <FullscreenLayout
+        scrollable={
+          <TranscriptViewport
+            items={transcriptItems}
+            scrollRef={scrollRef}
+            selectionLocked={hasSelection}
+            followDisabled={!followOutput || viewportState.scrollDraining || interactivePromptActive}
+            onMetricsChange={(metrics) => {
+              transcriptMetricsRef.current = {
+                clampMin: metrics.clampMin,
+                clampMax: metrics.clampMax,
+                totalHeight: metrics.totalHeight,
+                startIndex: metrics.startIndex,
+                endIndex: metrics.endIndex,
+              };
+            }}
+          />
+        }
+        bottom={
+          <ReplBottomShell
+            inputValue={inputValue}
+            setInputValue={setInputValue}
+            handleSubmit={handleSubmit}
+            prefix={prefix}
+            placeholder={placeholder}
+            overlaysOpen={overlaysOpen}
+            isLoading={isLoading}
+            promptCommands={promptCommands}
+            history={history}
+            fileEntries={fileEntries}
+            onFileSearch={onFileSearch}
+            showExitHint={showExitHint}
+            resolvedSegments={resolvedSegments}
+            combinedStatusDetailLines={combinedStatusDetailLines}
+          />
+        }
       >
-        {shellScrollableBody}
-      </ScrollBox>
-    </Box>
+        <ReplOverlayRegistrations
+          overlayNode={overlayNode}
+          modalNode={modalNode}
+          bottomReplacementNode={bottomReplacementNode}
+        />
+      </FullscreenLayout>
+    </ViewportProvider>
   );
 }
 
@@ -913,4 +979,328 @@ function buildDefaultSegments(model?: string): StatusLineSegment[] {
   if (!model) return [];
   return [{ content: model, color: "green" }];
 }
+
+function ReplOverlayRegistrations({
+  overlayNode,
+  modalNode,
+  bottomReplacementNode,
+}: {
+  overlayNode: React.ReactNode;
+  modalNode: React.ReactNode;
+  bottomReplacementNode: React.ReactNode;
+}): React.ReactNode {
+  useSetPromptOverlay(overlayNode);
+  useSetPromptModal(modalNode);
+  useSetBottomReplacement(bottomReplacementNode);
+  useSetBottomFloat(null);
+  return null;
+}
+
+function ReplBottomShell({
+  inputValue,
+  setInputValue,
+  handleSubmit,
+  prefix,
+  placeholder,
+  overlaysOpen,
+  isLoading,
+  promptCommands,
+  history,
+  fileEntries,
+  onFileSearch,
+  showExitHint,
+  resolvedSegments,
+  combinedStatusDetailLines,
+}: {
+  inputValue: string;
+  setInputValue: (value: string) => void;
+  handleSubmit: (value: string) => void | Promise<void>;
+  prefix: string;
+  placeholder?: string;
+  overlaysOpen: boolean;
+  isLoading: boolean;
+  promptCommands: Array<{ name: string; description: string }>;
+  history: string[];
+  fileEntries?: import("./utils/fileScanner").FileEntry[];
+  onFileSearch?: (query: string) => void;
+  showExitHint: boolean;
+  resolvedSegments: StatusLineSegment[];
+  combinedStatusDetailLines: StatusDetailLine[];
+}): React.ReactNode {
+  const viewport = useViewportContext();
+  const footerLine: StatusDetailLine = useMemo(
+    () => ({
+      emphasis: true,
+      segments: buildViewportFooterView({ mode: viewport.mode, isLoading }).segments,
+    }),
+    [isLoading, viewport.mode],
+  );
+  const footerLines = useMemo(
+    () => [footerLine, ...combinedStatusDetailLines.slice(1)],
+    [combinedStatusDetailLines, footerLine],
+  );
+
+  return (
+    <>
+      <Divider />
+      <Box flexDirection="column" minHeight={1} flexShrink={0}>
+        <PromptInput
+          value={inputValue}
+          onChange={setInputValue}
+          onSubmit={(value) => {
+            void handleSubmit(value);
+          }}
+          prefix={prefix}
+          placeholder={placeholder}
+          disabled={overlaysOpen}
+          isLoading={isLoading}
+          commands={promptCommands}
+          history={history}
+          fileEntries={fileEntries}
+          onFileSearch={onFileSearch}
+        />
+      </Box>
+
+      <Divider />
+      {showExitHint ? (
+        <Box paddingX={1} flexShrink={0}>
+          <Text color="yellow" bold>Press Ctrl-C again to exit</Text>
+          <Text dimColor> | any other key to cancel</Text>
+        </Box>
+      ) : (
+        <>
+          {resolvedSegments.length > 0 && <StatusLine segments={resolvedSegments} />}
+          {footerLines.length > 0 && (
+            <Box flexDirection="column" paddingX={1} flexShrink={0}>
+              {footerLines.map((line, index) =>
+                line.segments && line.segments.length > 0 ? (
+                  <Box key={`${index}:segments`} flexDirection="row">
+                    {line.segments.map((segment, segmentIndex) => (
+                      <React.Fragment key={`${index}:${segmentIndex}:${segment.content}`}>
+                        {segmentIndex > 0 && <Text dimColor>{" | "}</Text>}
+                        <Text dimColor={line.emphasis ? false : true} color={segment.color}>
+                          {segment.content}
+                        </Text>
+                      </React.Fragment>
+                    ))}
+                  </Box>
+                ) : (
+                  <Text key={`${index}:${line.content ?? ""}`} dimColor={line.emphasis ? false : true} color={line.color}>
+                    {line.content ?? ""}
+                  </Text>
+                ),
+              )}
+            </Box>
+          )}
+        </>
+      )}
+    </>
+  );
+}
+
+function ReplBottomReplacement({
+  askUserQuestion,
+  permissionRequest,
+  planReview,
+  planReviewIndex,
+}: {
+  askUserQuestion?: AskUserQuestionState;
+  permissionRequest?: PermissionRequestState;
+  planReview?: import("@jarvis/tools").PlanReviewRequest | null;
+  planReviewIndex: number;
+}): React.ReactNode {
+  if (askUserQuestion) {
+    return (
+      <AskUserQuestion
+        questions={askUserQuestion.questions}
+        onSubmit={askUserQuestion.onSubmit}
+        onCancel={askUserQuestion.onCancel}
+      />
+    );
+  }
+
+  if (permissionRequest) {
+    return (
+      <PermissionRequest
+        toolName={permissionRequest.toolName}
+        description={permissionRequest.description}
+        details={permissionRequest.details}
+        patternLabel={permissionRequest.patternLabel}
+        preview={permissionRequest.preview}
+        onDecision={permissionRequest.onDecision}
+      />
+    );
+  }
+
+  if (planReview) {
+    return <PlanReview plan={planReview} selectedIndex={planReviewIndex} />;
+  }
+
+  return null;
+}
+
+function ReplOverlaySurface({
+  searchOpen,
+  setSearchOpen,
+  searchContents,
+  setActiveSearchMatch,
+  setSearchQuery,
+  agents,
+  agentsPanelVisible,
+  agentsFocused,
+  onCloseAgents,
+}: {
+  searchOpen: boolean;
+  setSearchOpen: (value: boolean) => void;
+  searchContents: string[];
+  setActiveSearchMatch: (match: SearchMatch | null) => void;
+  setSearchQuery: (query: string) => void;
+  agents?: AgentStatusEntry[];
+  agentsPanelVisible: boolean;
+  agentsFocused: boolean;
+  onCloseAgents: () => void;
+}): React.ReactNode {
+  if (searchOpen) {
+    return (
+      <SearchOverlay
+        isOpen={searchOpen}
+        onClose={() => setSearchOpen(false)}
+        onSearch={(q) => computeMatches(searchContents, q)}
+        onNavigate={setActiveSearchMatch}
+        onActiveMatchChange={setActiveSearchMatch}
+        onQueryChange={setSearchQuery}
+      />
+    );
+  }
+
+  if (agentsPanelVisible) {
+    return (
+      <AgentsPanel
+        agents={agents ?? []}
+        visible={agentsPanelVisible}
+        focused={agentsFocused}
+        onClose={onCloseAgents}
+      />
+    );
+  }
+
+  return null;
+}
+
+function ReplModalSurface({
+  modelSelectorOpen,
+  modelSelectorKnownModels,
+  modelSelectorCurrentModel,
+  modelSelectorCurrentEffort,
+  effortSelectorLevels,
+  onModelSelect,
+  onModelSelectorCancel,
+  onModelEffortChange,
+  effortSelectorOpen,
+  effortSelectorCurrent,
+  onEffortSelect,
+  onEffortSelectorCancel,
+  onEffortSelectorChange,
+  helpPopupOpen,
+  helpPopupCommands,
+  onHelpPopupClose,
+  contextPanel,
+  onContextPanelClose,
+  mcpPanel,
+  onMcpPanelClose,
+}: {
+  modelSelectorOpen: boolean;
+  modelSelectorKnownModels: ModelInfo[];
+  modelSelectorCurrentModel: string;
+  modelSelectorCurrentEffort: string;
+  effortSelectorLevels: readonly string[];
+  onModelSelect?: (result: ModelSelectionResult) => void;
+  onModelSelectorCancel?: () => void;
+  onModelEffortChange?: (effort: string) => void;
+  effortSelectorOpen: boolean;
+  effortSelectorCurrent: string;
+  onEffortSelect?: (effort: string) => void;
+  onEffortSelectorCancel?: () => void;
+  onEffortSelectorChange?: (effort: string) => void;
+  helpPopupOpen: boolean;
+  helpPopupCommands: HelpCommandEntry[];
+  onHelpPopupClose?: () => void;
+  contextPanel?: { title: string; subtitle?: string; lines: string[] } | null;
+  onContextPanelClose?: () => void;
+  mcpPanel?: { title: string; subtitle?: string; lines: string[] } | null;
+  onMcpPanelClose?: () => void;
+}): React.ReactNode {
+  if (modelSelectorOpen && modelSelectorKnownModels.length > 0) {
+    return (
+      <Box flexDirection="column" paddingX={1} borderStyle="round" borderColor="cyan" flexShrink={0}>
+        <ModelSelector
+          currentModel={modelSelectorCurrentModel}
+          currentEffort={modelSelectorCurrentEffort}
+          effortLevels={effortSelectorLevels}
+          knownModels={modelSelectorKnownModels}
+          onSelect={(result: ModelSelectionResult) => onModelSelect?.(result)}
+          onCancel={() => onModelSelectorCancel?.()}
+          onEffortChange={(effort: string) => onModelEffortChange?.(effort)}
+        />
+      </Box>
+    );
+  }
+
+  if (effortSelectorOpen) {
+    return (
+      <Box flexDirection="column" paddingX={1} borderStyle="round" borderColor="cyan" flexShrink={0}>
+        <EffortSelector
+          currentEffort={effortSelectorCurrent}
+          levels={effortSelectorLevels}
+          onSelect={(effort: string) => onEffortSelect?.(effort)}
+          onCancel={() => onEffortSelectorCancel?.()}
+          onChange={(effort: string) => onEffortSelectorChange?.(effort)}
+        />
+      </Box>
+    );
+  }
+
+  if (helpPopupOpen && helpPopupCommands.length > 0) {
+    return <HelpPopup commands={helpPopupCommands} onClose={() => onHelpPopupClose?.()} />;
+  }
+
+  if (contextPanel) {
+    return (
+      <ShellTextPanel
+        title={contextPanel.title}
+        subtitle={contextPanel.subtitle}
+        lines={contextPanel.lines}
+        accentColor="cyan"
+        onClose={() => onContextPanelClose?.()}
+      />
+    );
+  }
+
+  if (mcpPanel) {
+    return (
+      <ShellTextPanel
+        title={mcpPanel.title}
+        subtitle={mcpPanel.subtitle}
+        lines={mcpPanel.lines}
+        accentColor="yellow"
+        onClose={() => onMcpPanelClose?.()}
+      />
+    );
+  }
+
+  return null;
+}
+
+
+
+
+
+
+
+
+
+
+
+
+
 

@@ -116,15 +116,30 @@ export { normalizeMessages } from './normalizer.js';
 export type { MessageRecord } from './normalizer.js';
 
 // prompt-builder
-export { AGENT_SYSTEM_PROMPT, PromptBuilder, buildSystemPrompt } from './prompt-builder.js';
-export type { PromptMode } from './prompt-builder.js';
+export {
+  AGENT_SYSTEM_PROMPT,
+  PromptBuilder,
+  SYSTEM_PROMPT_DYNAMIC_BOUNDARY,
+  buildSystemPrompt,
+  buildSystemPromptResult,
+} from './prompt-builder.js';
+export type {
+  DynamicPromptContext,
+  PromptMode,
+  SystemPromptBuildResult,
+  SystemPromptSection,
+} from './prompt-builder.js';
 
 // cache-strategy
 export { supportsPromptCaching, markCacheable, injectCacheBreakpoints } from './cache-strategy.js';
 
 // fragment
 export {
+  ProjectContextFragment,
+  SettingsUpdateFragment,
   SkillsIndexFragment,
+  MemorySnapshotFragment,
+  MemoryIndexSummaryFragment,
   CompactionSummaryFragment,
   ConversationHistoryFragment,
   SkillContextFragment,
@@ -133,6 +148,13 @@ export {
   BaseFragment,
 } from './fragment.js';
 export type { ContextualFragment } from './fragment.js';
+export type {
+  PromptPart,
+  PromptPartBucket,
+  PromptPartCategory,
+  PromptPartMeta,
+  PromptPartRole,
+} from './prompt-parts.js';
 
 // compactor
 export {

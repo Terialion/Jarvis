@@ -9,6 +9,12 @@ import type {
   CodexTimelineTurnView,
 } from './codex-timeline-state.js';
 
+export type CodexTranscriptItem = {
+  id: string;
+  estimatedHeight?: number;
+  render: () => React.ReactNode;
+};
+
 function ItemHeader({
   marker,
   track = '|',
@@ -309,6 +315,200 @@ function TimelineItemView({
   }
 }
 
+export function CodexTimelineBlock({
+  block,
+  blockIndex = 0,
+  totalBlocks = 1,
+  search,
+  detailsExpanded = false,
+}: {
+  block: CodexTimelineState["blocks"][number];
+  blockIndex?: number;
+  totalBlocks?: number;
+  search?: CodexTimelineSearchState;
+  detailsExpanded?: boolean;
+}): React.ReactNode {
+  if (block.kind === 'user_message') {
+    const active = search?.activeDocumentId === block.id;
+    return (
+      <Box key={block.id} flexDirection="column" marginBottom={1}>
+        <Box>
+          <Text color={active ? '#7AA2F7' : '#5FA8D3'}>{'>'}</Text>
+          <Text color={active ? '#7AA2F7' : '#5FA8D3'} bold>{' You'}</Text>
+        </Box>
+        <SearchHit excerpt={active ? search.activeExcerpt : null} />
+        <Box marginLeft={2}>
+          <Markdown>{block.message.text}</Markdown>
+        </Box>
+      </Box>
+    );
+  }
+
+  if (block.kind === 'assistant_message') {
+    const active = search?.activeDocumentId === block.id;
+    return (
+      <Box key={block.id} flexDirection="column" marginBottom={1}>
+        <Box>
+          <Text color={active ? '#7AA2F7' : '#DA7756'}>{active ? '>' : 'o'}</Text>
+          <Text color={active ? '#7AA2F7' : '#DA7756'} bold>
+            {block.message.role === 'system' ? ' System' : ' Jarvis'}
+          </Text>
+        </Box>
+        <SearchHit excerpt={active ? search.activeExcerpt : null} />
+        <Box marginLeft={2}>
+          <Markdown>{block.message.text}</Markdown>
+        </Box>
+      </Box>
+    );
+  }
+
+  const turn = block.turn;
+  const turnActive = turn.items.some((item) => search?.activeDocumentId === `item:${turn.turnId}:${item.id}`);
+  return (
+    <Box
+      key={block.id}
+      flexDirection="column"
+      marginBottom={blockIndex === totalBlocks - 1 ? 0 : 1}
+    >
+      <TurnHeader turn={turn} active={turnActive} />
+      {turn.items.map((item) => {
+        const active = search?.activeDocumentId === `item:${turn.turnId}:${item.id}`;
+        return (
+          <TimelineItemView
+            key={item.id}
+            item={item}
+            active={active}
+            excerpt={active ? search?.activeExcerpt : null}
+            detailsExpanded={detailsExpanded}
+          />
+        );
+      })}
+    </Box>
+  );
+}
+
+function estimateItemHeight(item: CodexTimelineItemView): number {
+  switch (item.kind) {
+    case 'reasoning':
+      return 5;
+    case 'agent_message':
+      return 6;
+    case 'tool_call':
+      return item.previewLines && item.previewLines.length > 0 ? Math.max(6, 4 + item.previewLines.length) : 5;
+    case 'todo_list':
+      return Math.max(4, 2 + item.lines.length);
+    case 'progress':
+      return Math.max(4, 2 + item.lines.length);
+    case 'error':
+      return 4;
+    default:
+      return 5;
+  }
+}
+
+export function buildCodexTranscriptItems({
+  state,
+  search,
+  detailsExpanded = false,
+  welcome,
+}: {
+  state: CodexTimelineState;
+  search?: CodexTimelineSearchState;
+  detailsExpanded?: boolean;
+  welcome?: React.ReactNode;
+}): CodexTranscriptItem[] {
+  const items: CodexTranscriptItem[] = [];
+
+  if (welcome) {
+    items.push({
+      id: 'welcome',
+      estimatedHeight: 14,
+      render: () => <Box marginBottom={0}>{welcome}</Box>,
+    });
+  }
+
+  for (const [blockIndex, block] of state.blocks.entries()) {
+    if (block.kind === 'user_message') {
+      const active = search?.activeDocumentId === block.id;
+      items.push({
+        id: block.id,
+        estimatedHeight: 5,
+        render: () => (
+          <Box key={block.id} flexDirection="column" marginBottom={1}>
+            <Box>
+              <Text color={active ? '#7AA2F7' : '#5FA8D3'}>{'>'}</Text>
+              <Text color={active ? '#7AA2F7' : '#5FA8D3'} bold>{' You'}</Text>
+            </Box>
+            <SearchHit excerpt={active ? search?.activeExcerpt : null} />
+            <Box marginLeft={2}>
+              <Markdown>{block.message.text}</Markdown>
+            </Box>
+          </Box>
+        ),
+      });
+      continue;
+    }
+
+    if (block.kind === 'assistant_message') {
+      const active = search?.activeDocumentId === block.id;
+      items.push({
+        id: block.id,
+        estimatedHeight: 6,
+        render: () => (
+          <Box key={block.id} flexDirection="column" marginBottom={1}>
+            <Box>
+              <Text color={active ? '#7AA2F7' : '#DA7756'}>{active ? '>' : 'o'}</Text>
+              <Text color={active ? '#7AA2F7' : '#DA7756'} bold>
+                {block.message.role === 'system' ? ' System' : ' Jarvis'}
+              </Text>
+            </Box>
+            <SearchHit excerpt={active ? search?.activeExcerpt : null} />
+            <Box marginLeft={2}>
+              <Markdown>{block.message.text}</Markdown>
+            </Box>
+          </Box>
+        ),
+      });
+      continue;
+    }
+
+    const turn = block.turn;
+    const turnActive = turn.items.some((item) => search?.activeDocumentId === `item:${turn.turnId}:${item.id}`);
+    items.push({
+      id: `${block.id}:header`,
+      estimatedHeight: 2,
+      render: () => <TurnHeader turn={turn} active={turnActive} />,
+    });
+
+    for (const item of turn.items) {
+      const active = search?.activeDocumentId === `item:${turn.turnId}:${item.id}`;
+      items.push({
+        id: `${block.id}:item:${item.id}`,
+        estimatedHeight: estimateItemHeight(item),
+        render: () => (
+          <TimelineItemView
+            key={item.id}
+            item={item}
+            active={active}
+            excerpt={active ? search?.activeExcerpt : null}
+            detailsExpanded={detailsExpanded}
+          />
+        ),
+      });
+    }
+
+    if (blockIndex < state.blocks.length - 1) {
+      items.push({
+        id: `${block.id}:spacer`,
+        estimatedHeight: 1,
+        render: () => <Box marginBottom={1} />,
+      });
+    }
+  }
+
+  return items;
+}
+
 export function CodexTimeline({
   state,
   search,
@@ -320,65 +520,16 @@ export function CodexTimeline({
 }): React.ReactNode {
   return (
     <Box flexDirection="column">
-      {state.blocks.map((block, blockIndex) => {
-        if (block.kind === 'user_message') {
-          const active = search?.activeDocumentId === block.id;
-          return (
-            <Box key={block.id} flexDirection="column" marginBottom={1}>
-              <Box>
-                <Text color={active ? '#7AA2F7' : '#5FA8D3'}>{'>'}</Text>
-                <Text color={active ? '#7AA2F7' : '#5FA8D3'} bold>{' You'}</Text>
-              </Box>
-              <SearchHit excerpt={active ? search.activeExcerpt : null} />
-              <Box marginLeft={2}>
-                <Markdown>{block.message.text}</Markdown>
-              </Box>
-            </Box>
-          );
-        }
-
-        if (block.kind === 'assistant_message') {
-          const active = search?.activeDocumentId === block.id;
-          return (
-            <Box key={block.id} flexDirection="column" marginBottom={1}>
-              <Box>
-                <Text color={active ? '#7AA2F7' : '#DA7756'}>{active ? '>' : 'o'}</Text>
-                <Text color={active ? '#7AA2F7' : '#DA7756'} bold>
-                  {block.message.role === 'system' ? ' System' : ' Jarvis'}
-                </Text>
-              </Box>
-              <SearchHit excerpt={active ? search.activeExcerpt : null} />
-              <Box marginLeft={2}>
-                <Markdown>{block.message.text}</Markdown>
-              </Box>
-            </Box>
-          );
-        }
-
-        const turn = block.turn;
-        const turnActive = turn.items.some((item) => search?.activeDocumentId === `item:${turn.turnId}:${item.id}`);
-        return (
-          <Box
-            key={block.id}
-            flexDirection="column"
-            marginBottom={blockIndex === state.blocks.length - 1 ? 0 : 1}
-          >
-            <TurnHeader turn={turn} active={turnActive} />
-            {turn.items.map((item) => {
-              const active = search?.activeDocumentId === `item:${turn.turnId}:${item.id}`;
-              return (
-                <TimelineItemView
-                  key={item.id}
-                  item={item}
-                  active={active}
-                  excerpt={active ? search?.activeExcerpt : null}
-                  detailsExpanded={detailsExpanded}
-                />
-              );
-            })}
-          </Box>
-        );
-      })}
+      {state.blocks.map((block, blockIndex) => (
+        <CodexTimelineBlock
+          key={block.id}
+          block={block}
+          blockIndex={blockIndex}
+          totalBlocks={state.blocks.length}
+          search={search}
+          detailsExpanded={detailsExpanded}
+        />
+      ))}
     </Box>
   );
 }

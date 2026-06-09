@@ -7,11 +7,11 @@ import * as path from 'node:path';
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import { parseArgs } from 'node:util';
-import { LLMProvider, AgentLoop } from '@jarvis/agent';
+import { LLMProvider, AgentLoop, AgentMailbox } from '@jarvis/agent';
 import { ToolRegistry, allBuiltinTools, createToolRuntime, createSkillLoadTool, createSkillTool, createAgentTool, createListMcpResourcesTool, createReadMcpResourceTool, createMcpStatusTool, createMcpHealthcheckTool, createMcpToolEntries, webSearchTool, webFetchTool, createWebSearchTool, createWebFetchHandler, tryCreateTavilySearch, tryCreateTavilyFetch } from '@jarvis/tools';
 import { HookRegistry } from '@jarvis/hooks';
 import { SkillRegistry, SkillExecutor } from '@jarvis/skills';
-import { SubagentPool, toolWhitelistForType, type SubagentConfig } from '@jarvis/subagents';
+import { SubagentPool, SubagentRunner } from '@jarvis/subagents';
 import { MCPClient, connectMcpServers, type McpServerConfig } from '@jarvis/mcp';
 import { PluginRegistry } from '@jarvis/plugins';
 import { MarkdownMemoryStore } from '@jarvis/store';
@@ -49,6 +49,7 @@ export interface CLIOptions {
 export interface CLIContext {
   options: CLIOptions;
   provider: LLMProvider;
+  mailbox: AgentMailbox;
   tools: ToolRegistry;
   hooks: HookRegistry;
   commands: SlashCommandRegistry;
@@ -507,45 +508,53 @@ export function bootstrap(options: CLIOptions): CLIContext {
   }
 
   // Subagent pool — wire Agent tool for subagent spawning
-  const subagentPool = new SubagentPool();
-  // The runner is wired lazily: Agent tool calls submit() which delegates
-  // to a nested AgentLoop with restricted tools when the pool is active.
-  subagentPool.setRunner(async (config: SubagentConfig) => {
-    // Create a restricted toolset for the subagent
-    const subTools = new ToolRegistry();
-    const whitelist = toolWhitelistForType(config.agentType);
-    for (const tool of allBuiltinTools) {
-      if (!whitelist || whitelist.includes(tool.name)) {
-        subTools.register(tool);
-      }
-    }
-    subTools.register(createSkillLoadTool(skills));
-    subTools.register(createSkillTool(skills));
-
-    const subRuntime = createToolRuntime(subTools, { permissionMode: 'workspace_write' });
-    const subLoop = new AgentLoop({
-      model: { model: options.model, reasoningEffort: options.reasoningEffort },
-      maxTurns: config.budgetSteps ?? 5,
-      tools: subTools,
-      toolRuntime: subRuntime,
-      provider,
-      skillRegistry: skills,
-      skillExecutor: new SkillExecutor(skills),
-      hooks,
-    });
-
-    const result = await subLoop.runTurn(config.task);
-    return {
-      agentId: config.agentId,
-      status: result.ok ? 'completed' as const : 'failed' as const,
-      answer: result.finalAnswer,
-      turnsUsed: result.toolCalls.length,
-    };
-  });
-  tools.register(createAgentTool(subagentPool));
-
-  // Hook registry
   const hooks = new HookRegistry();
+  const mailbox = new AgentMailbox();
+  const subagentPool = new SubagentPool();
+  subagentPool.setParentMailbox(mailbox);
+  const subagentRunner = new SubagentRunner({
+    createAgentLoop: ({
+      agentId,
+      allowedTools,
+      maxSteps,
+      depth,
+      mailbox,
+      systemPrompt,
+    }) => {
+      const subTools = new ToolRegistry();
+      for (const tool of allBuiltinTools) {
+        if (!allowedTools || allowedTools.includes(tool.name)) {
+          subTools.register(tool);
+        }
+      }
+      subTools.register(createSkillLoadTool(skills));
+      subTools.register(createSkillTool(skills));
+
+      const subRuntime = createToolRuntime(subTools, { permissionMode: 'workspace_write' });
+      return new AgentLoop({
+        model: { model: options.model, reasoningEffort: options.reasoningEffort },
+        maxTurns: maxSteps,
+        maxSteps,
+        systemPrompt,
+        tools: subTools,
+        toolRuntime: subRuntime,
+        provider: new LLMProvider({
+          model: options.model,
+          apiKey: options.apiKey,
+          baseURL: options.baseURL,
+          reasoningEffort: options.reasoningEffort,
+        }),
+        skillRegistry: skills,
+        skillExecutor: new SkillExecutor(skills),
+        hooks,
+        mailbox,
+        permissionMode: 'workspace_write',
+        projectRoot: process.cwd(),
+      });
+    },
+  });
+  subagentPool.setRunner((config, mailbox) => subagentRunner.run(config, mailbox));
+  tools.register(createAgentTool(subagentPool));
 
   // Slash commands
   const commands = new SlashCommandRegistry();
@@ -566,7 +575,7 @@ export function bootstrap(options: CLIOptions): CLIContext {
     },
   };
 
-  return { options, provider, tools, hooks, commands, cmdContext, skills, mcpReady };
+  return { options, provider, mailbox, tools, hooks, commands, cmdContext, skills, mcpReady };
 }
 
 // ============================================================================
@@ -620,6 +629,7 @@ export async function runOneShot(options: CLIOptions): Promise<string> {
     tools: ctx.tools,
     toolRuntime: runtime,
     provider: ctx.provider,
+    mailbox: ctx.mailbox,
     skillRegistry: ctx.skills,
     skillExecutor: new SkillExecutor(ctx.skills),
     hooks: ctx.hooks,

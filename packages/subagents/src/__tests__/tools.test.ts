@@ -223,6 +223,7 @@ describe('spawn_agent', () => {
     expect(msgs.length).toBeGreaterThanOrEqual(1);
     if (msgs.length > 0) {
       expect(msgs[0].message).toContain('done');
+      expect(msgs[0].envelope?.kind).toBe('result');
     }
 
     // Verify registry entry
@@ -242,6 +243,74 @@ describe('spawn_agent', () => {
 
     const r1 = JSON.parse(await handler({}, {} as any));
     expect(r1.error).toContain('Missing required parameters');
+  });
+
+  it('passes review settings through and delivers review envelopes', async () => {
+    const registry = makeRegistry();
+    const pool = new SubagentPool();
+    const parentMailbox = new AgentMailbox();
+    let capturedReviewRequired: boolean | undefined;
+    let capturedCriteria: string | undefined;
+
+    pool.setRunner(async (config) => {
+      capturedReviewRequired = config.reviewRequired;
+      capturedCriteria = config.successCriteria;
+      return {
+        agentId: config.agentId,
+        status: 'completed',
+        answer: 'done',
+        payload: {
+          kind: 'general',
+          summary: 'Worker complete',
+          artifacts: [],
+          evidence: [],
+          risks: [],
+          nextActions: [],
+          confidence: 0.81,
+          rawAnswer: 'done',
+        },
+        reviewStatus: 'needs_fix',
+        reviewResult: {
+          kind: 'review',
+          summary: 'Needs one more verification step',
+          artifacts: [],
+          evidence: [],
+          risks: [],
+          nextActions: ['Run targeted test'],
+          confidence: 0.74,
+          rawAnswer: 'needs fix',
+          findings: [{ severity: 'medium', summary: 'Missing targeted verification' }],
+          decision: 'needs_fix',
+        },
+      };
+    });
+
+    const handler = createSpawnAgentHandler({
+      pool,
+      registry,
+      parentMailbox,
+      parentId: 'supervisor',
+      depth: 0,
+    });
+
+    await handler(
+      {
+        description: 'Reviewable task',
+        prompt: 'Implement and verify the workflow',
+        review_required: true,
+        success_criteria: 'Must include verification output',
+      },
+      {} as any,
+    );
+
+    await new Promise((r) => setTimeout(r, 25));
+    const [mail] = parentMailbox.drain();
+    expect(capturedReviewRequired).toBe(true);
+    expect(capturedCriteria).toBe('Must include verification output');
+    expect(mail.envelope?.kind).toBe('review');
+    expect(mail.envelope?.payload).toMatchObject({
+      reviewStatus: 'needs_fix',
+    });
   });
 });
 

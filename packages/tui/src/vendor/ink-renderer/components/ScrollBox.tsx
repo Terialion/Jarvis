@@ -63,6 +63,7 @@ export type ScrollBoxHandle = {
    * cold start).
    */
   setClampBounds: (min: number | undefined, max: number | undefined) => void;
+  getClampBounds: () => { min?: number; max?: number };
 };
 export type ScrollBoxProps = Except<Styles, "textWrap" | "overflow" | "overflowX" | "overflowY"> & {
   ref?: Ref<ScrollBoxHandle>;
@@ -71,6 +72,8 @@ export type ScrollBoxProps = Except<Styles, "textWrap" | "overflow" | "overflowX
    * grows. Unset manually via scrollTo/scrollBy to break the stickiness.
    */
   stickyScroll?: boolean;
+  selectionLocked?: boolean;
+  followDisabled?: boolean;
 };
 
 /**
@@ -87,6 +90,8 @@ function ScrollBox({
   children,
   ref,
   stickyScroll,
+  selectionLocked,
+  followDisabled,
   ...style
 }: PropsWithChildren<ScrollBoxProps>): React.ReactNode {
   const domRef = useRef<DOMElement>(null);
@@ -201,6 +206,13 @@ function ScrollBox({
         el.scrollClampMin = min;
         el.scrollClampMax = max;
       },
+      getClampBounds() {
+        const el = domRef.current;
+        return {
+          min: el?.scrollClampMin,
+          max: el?.scrollClampMax,
+        };
+      },
     }),
     // notify/scrollMutated are inline (no useCallback) but only close over
     // refs + imports — stable. Empty deps avoids rebuilding the handle on
@@ -238,6 +250,16 @@ function ScrollBox({
       {...(stickyScroll
         ? {
             stickyScroll: true,
+          }
+        : {})}
+      {...(selectionLocked
+        ? {
+            selectionLocked: true,
+          }
+        : {})}
+      {...(followDisabled
+        ? {
+            followDisabled: true,
           }
         : {})}
     >

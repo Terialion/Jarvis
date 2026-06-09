@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { AgentMailbox } from '@jarvis/agent';
 import { SubagentPool } from '../pool.js';
 import { SubagentRunner, toolWhitelistForType } from '../runner.js';
-import { EXPLORE_TOOLS, PLAN_TOOLS, MAX_DEPTH, MAX_BUDGET_STEPS } from '../models.js';
+import { EXPLORE_TOOLS, PLAN_TOOLS, REVIEW_TOOLS, MAX_DEPTH, MAX_BUDGET_STEPS } from '../models.js';
 import type { SubagentConfig, SubagentResult } from '../models.js';
 
 // ============================================================================
@@ -38,9 +38,46 @@ describe('SubagentRunner', () => {
     expect(result.status).toBe('completed');
     expect(result.answer).toBe('done');
     expect(result.turnsUsed).toBe(1);
+    expect(result.payload?.summary).toBeTruthy();
+    expect(result.payload?.rawAnswer).toBe('done');
     expect(createAgentLoop).toHaveBeenCalledTimes(1);
     expect(createAgentLoop.mock.calls[0][0].agentId).toBe('agent_1');
     expect(createAgentLoop.mock.calls[0][0].mailbox).toBe(mailbox);
+  });
+
+  it('runs reviewer loop when review is required', async () => {
+    const workerLoop = {
+      runTurn: vi.fn().mockResolvedValue({
+        ok: true,
+        finalAnswer: 'Worker prose\n```json\n{"summary":"Implemented feature","artifacts":[{"kind":"file","label":"src/app.ts","path":"src/app.ts"}],"evidence":[],"risks":[],"nextActions":[],"confidence":0.8}\n```',
+        toolCalls: [{ name: 'write', arguments: {}, callId: '1' }],
+      } as any),
+    };
+    const reviewLoop = {
+      runTurn: vi.fn().mockResolvedValue({
+        ok: true,
+        finalAnswer: '```json\n{"summary":"Looks good","decision":"pass","findings":[],"nextActions":[],"confidence":0.93}\n```',
+        toolCalls: [{ name: 'read', arguments: {}, callId: '2' }],
+      } as any),
+    };
+    const createAgentLoop = vi.fn()
+      .mockReturnValueOnce(workerLoop)
+      .mockReturnValueOnce(reviewLoop);
+    const runner = new SubagentRunner({ createAgentLoop });
+
+    const result = await runner.run({
+      agentId: 'agent_reviewed',
+      agentType: 'general',
+      task: 'implement something',
+      reviewRequired: true,
+      successCriteria: 'tests and verification included',
+    }, new AgentMailbox());
+
+    expect(createAgentLoop).toHaveBeenCalledTimes(2);
+    expect(result.status).toBe('completed');
+    expect(result.reviewStatus).toBe('pass');
+    expect(result.reviewResult?.decision).toBe('pass');
+    expect(result.payload?.summary).toBe('Implemented feature');
   });
 
   it('enforces depth limit', async () => {
@@ -108,6 +145,10 @@ describe('toolWhitelistForType', () => {
 
   it('returns null (all tools) for general', () => {
     expect(toolWhitelistForType('general')).toBeNull();
+  });
+
+  it('returns review-safe tools for review', () => {
+    expect(toolWhitelistForType('review')).toEqual(REVIEW_TOOLS);
   });
 });
 
@@ -295,6 +336,50 @@ describe('SubagentPool', () => {
     expect(notifs.length).toBeGreaterThan(0);
     // After draining, queue should be empty
     expect(pool.drainNotifications()).toEqual([]);
+  });
+
+  it('delivers structured result envelopes to parent mailbox', async () => {
+    const parentMailbox = new AgentMailbox();
+    pool.setParentMailbox(parentMailbox);
+    pool.setRunner(async (config) => ({
+      agentId: config.agentId,
+      status: 'completed',
+      answer: 'done',
+      payload: {
+        kind: 'general',
+        summary: 'Completed child task',
+        artifacts: [],
+        evidence: [],
+        risks: [],
+        nextActions: [],
+        confidence: 0.88,
+        rawAnswer: 'done',
+      },
+      reviewStatus: 'pass',
+      reviewResult: {
+        kind: 'review',
+        summary: 'Verified',
+        artifacts: [],
+        evidence: [],
+        risks: [],
+        nextActions: [],
+        confidence: 0.94,
+        rawAnswer: 'verified',
+        findings: [],
+        decision: 'pass',
+      },
+    }));
+
+    const handle = pool.submit(makeConfig({ agentId: 'mail-test' }));
+    await handle.completion;
+
+    const [mail] = parentMailbox.drain();
+    expect(mail.envelope?.kind).toBe('review');
+    expect(mail.envelope?.payload).toMatchObject({
+      agentId: 'mail-test',
+      status: 'completed',
+      reviewStatus: 'pass',
+    });
   });
 
   it('shuts down and cancels active agents', async () => {

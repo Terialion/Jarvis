@@ -9,11 +9,20 @@ import { App } from "./app.js";
 import { TuiShell } from "./TuiShell.js";
 import type { TUIDebugEvent, TUIOptions } from "./types.js";
 import { createRoot, type RenderOptions } from "./vendor/ink-renderer/root.js";
+import instances from "./vendor/ink-renderer/instances.js";
+import { finishSelection, startSelection, updateSelection } from "./vendor/ink-renderer/selection.js";
 import { loadJarvisConfig } from "@jarvis/shared";
 
 export type ReplayAction =
   | { type: "text"; value: string; delayMs?: number }
+  | { type: "prompt"; value: string; submitCount?: number; delayMs?: number; waitForCompletion?: boolean }
   | { type: "wait"; ms: number }
+  | {
+      type: "select";
+      start: { col: number; row: number };
+      end: { col: number; row: number };
+      delayMs?: number;
+    }
   | {
       type: "key";
       key:
@@ -127,7 +136,7 @@ class FakeTTYInput extends PassThrough {
 }
 
 class RecordingOutput extends Writable {
-  public readonly isTTY = false;
+  public readonly isTTY = true;
   public columns: number;
   public rows: number;
   private frameBuffer = "";
@@ -264,6 +273,120 @@ function writeSnapshot(baseDir: string, snapshot: FrameSnapshot): void {
   writeFileSync(join(baseDir, `${frameName}.txt`), snapshot.text, "utf8");
 }
 
+export function summarizeViewportDebugEvents(debugEvents: TUIDebugEvent[]): {
+  viewportEventCount: number;
+  viewportModesSeen: Array<"following" | "history" | "selection">;
+  enteredSelectionMode: boolean;
+  enteredHistoryMode: boolean;
+  lastViewportState: Extract<TUIDebugEvent, { type: "viewport_state" }> | null;
+} {
+  const viewportEvents = debugEvents.filter(
+    (event): event is Extract<TUIDebugEvent, { type: "viewport_state" }> => event.type === "viewport_state",
+  );
+  const viewportModesSeen = [...new Set(viewportEvents.map((event) => event.mode))];
+
+  return {
+    viewportEventCount: viewportEvents.length,
+    viewportModesSeen,
+    enteredSelectionMode: viewportModesSeen.includes("selection"),
+    enteredHistoryMode: viewportModesSeen.includes("history"),
+    lastViewportState: viewportEvents.length > 0 ? viewportEvents[viewportEvents.length - 1]! : null,
+  };
+}
+
+export function buildViewportDiagnostics(debugEvents: TUIDebugEvent[]): {
+  eventCount: number;
+  suspiciousChanges: Array<{
+    at: number;
+    mode: "following" | "history" | "selection";
+    reason: "clamp_shift" | "range_recompute" | "external_relayout_or_manual";
+    from: {
+      scrollTop: number;
+      clampMin?: number;
+      clampMax?: number;
+      rangeStart?: number;
+      rangeEnd?: number;
+    };
+    to: {
+      scrollTop: number;
+      clampMin?: number;
+      clampMax?: number;
+      rangeStart?: number;
+      rangeEnd?: number;
+    };
+  }>;
+} {
+  const viewportEvents = debugEvents.filter(
+    (event): event is Extract<TUIDebugEvent, { type: "viewport_state" }> => event.type === "viewport_state",
+  );
+
+  const suspiciousChanges: Array<{
+    at: number;
+    mode: "following" | "history" | "selection";
+    reason: "clamp_shift" | "range_recompute" | "external_relayout_or_manual";
+    from: {
+      scrollTop: number;
+      clampMin?: number;
+      clampMax?: number;
+      rangeStart?: number;
+      rangeEnd?: number;
+    };
+    to: {
+      scrollTop: number;
+      clampMin?: number;
+      clampMax?: number;
+      rangeStart?: number;
+      rangeEnd?: number;
+    };
+  }> = [];
+
+  for (let i = 1; i < viewportEvents.length; i += 1) {
+    const prev = viewportEvents[i - 1]!;
+    const next = viewportEvents[i]!;
+    if (next.followOutput || next.mode === "following") continue;
+    if (prev.scrollTop === next.scrollTop) continue;
+
+    const clampChanged = prev.clampMin !== next.clampMin || prev.clampMax !== next.clampMax;
+    const rangeChanged =
+      prev.transcriptRangeStart !== next.transcriptRangeStart ||
+      prev.transcriptRangeEnd !== next.transcriptRangeEnd;
+
+    let reason: "clamp_shift" | "range_recompute" | "external_relayout_or_manual";
+    if (clampChanged) {
+      reason = "clamp_shift";
+    } else if (rangeChanged) {
+      reason = "range_recompute";
+    } else {
+      reason = "external_relayout_or_manual";
+    }
+
+    suspiciousChanges.push({
+      at: next.timestamp,
+      mode: next.mode,
+      reason,
+      from: {
+        scrollTop: prev.scrollTop,
+        clampMin: prev.clampMin,
+        clampMax: prev.clampMax,
+        rangeStart: prev.transcriptRangeStart,
+        rangeEnd: prev.transcriptRangeEnd,
+      },
+      to: {
+        scrollTop: next.scrollTop,
+        clampMin: next.clampMin,
+        clampMax: next.clampMax,
+        rangeStart: next.transcriptRangeStart,
+        rangeEnd: next.transcriptRangeEnd,
+      },
+    });
+  }
+
+  return {
+    eventCount: viewportEvents.length,
+    suspiciousChanges,
+  };
+}
+
 function writeArtifacts(
   outputDir: string,
   stdout: RecordingOutput,
@@ -277,6 +400,10 @@ function writeArtifacts(
   writeFileSync(join(outputDir, "stderr.txt"), stripAnsi(stderr.getTranscript()), "utf8");
   writeFileSync(join(outputDir, "debug-events.json"), JSON.stringify(debugEvents, null, 2), "utf8");
   const completedRun = [...debugEvents].reverse().find((event) => event.type === "run_completed" || event.type === "run_failed");
+  const { viewportEventCount, viewportModesSeen, enteredSelectionMode, enteredHistoryMode, lastViewportState } =
+    summarizeViewportDebugEvents(debugEvents);
+  const viewportDiagnostics = buildViewportDiagnostics(debugEvents);
+  writeFileSync(join(outputDir, "viewport-diagnostics.json"), JSON.stringify(viewportDiagnostics, null, 2), "utf8");
   writeFileSync(
     join(outputDir, "meta.json"),
     JSON.stringify(
@@ -300,6 +427,12 @@ function writeArtifacts(
         height: options.height,
         frameCount: snapshots.length,
         debugEventCount: debugEvents.length,
+        viewportEventCount,
+        viewportModesSeen,
+        enteredSelectionMode,
+        enteredHistoryMode,
+        lastViewportState,
+        viewportDiagnostics,
         completedRun,
         outputDir,
       },
@@ -312,6 +445,23 @@ function writeArtifacts(
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolvePromise) => setTimeout(resolvePromise, ms));
+}
+
+function withSuppressedReplayWarnings<T>(fn: () => Promise<T>): Promise<T> {
+  const originalError = console.error;
+  console.error = (...args: unknown[]) => {
+    const message = args
+      .map((arg) => (typeof arg === "string" ? arg : arg instanceof Error ? arg.message : String(arg)))
+      .join(" ");
+    if (message.includes("useInsertionEffect must not schedule updates.")) {
+      return;
+    }
+    originalError(...args);
+  };
+
+  return fn().finally(() => {
+    console.error = originalError;
+  });
 }
 
 function mapReplayKey(key: ReplayKeyAction["key"]): string {
@@ -393,6 +543,7 @@ async function sendExpandDetailsSequence(stdin: FakeTTYInput, options: ReplayOpt
 
 async function runActionScript(
   stdin: FakeTTYInput,
+  stdout: RecordingOutput,
   options: ReplayOptions,
   debugEvents: TUIDebugEvent[],
 ): Promise<void> {
@@ -409,6 +560,42 @@ async function runActionScript(
         stdin.send(char);
         await sleep(action.delayMs ?? 40);
       }
+      continue;
+    }
+
+    if (action.type === "prompt") {
+      const baselineEvents = debugEvents.length;
+      stdin.send(action.value);
+      const submitCount =
+        action.submitCount ?? (action.value.startsWith("/") ? 2 : 1);
+      for (let i = 0; i < submitCount; i += 1) {
+        await sleep(action.delayMs ?? 60);
+        stdin.send("\r");
+      }
+      if (action.waitForCompletion ?? !action.value.startsWith("/")) {
+        await waitForRunCompletion(debugEvents, baselineEvents, options.waitMs);
+      } else {
+        await sleep(options.betweenPromptsMs);
+      }
+      continue;
+    }
+
+    if (action.type === "select") {
+      const ink = instances.get(stdout as unknown as NodeJS.WriteStream);
+      if (!ink) {
+        throw new Error("Replay selection action requires an active Ink instance");
+      }
+
+      // Keep replay selection injection side-effect free. We mutate the
+      // renderer-owned selection state and let the next natural app update
+      // (typed input, tool output, slash results) expose it to useHasSelection.
+      // Forcing subscriber notifications here has been causing React timing
+      // warnings during replay, while the follow-up scripted actions already
+      // provide the rerender we need for diagnostics.
+      startSelection(ink.selection, action.start.col, action.start.row);
+      updateSelection(ink.selection, action.end.col, action.end.row);
+      finishSelection(ink.selection);
+      await sleep(action.delayMs ?? 80);
       continue;
     }
 
@@ -491,6 +678,10 @@ export async function runReplay(options: ReplayOptions): Promise<void> {
   };
 
   const root = await createRoot(renderOptions);
+  const replayInk = instances.get(stdout as unknown as NodeJS.WriteStream);
+  if (replayInk) {
+    instances.set(process.stdout, replayInk);
+  }
   const replayAppOptions: TUIOptions = {
     ...options,
     debugHooks: {
@@ -501,20 +692,18 @@ export async function runReplay(options: ReplayOptions): Promise<void> {
     },
   };
   root.render(
-    options.shellMode
-      ? React.createElement(
-          TuiShell,
-          null,
-          React.createElement(App, { options: replayAppOptions }),
-        )
-      : React.createElement(App, { options: replayAppOptions }),
+    React.createElement(
+      TuiShell,
+      { mainScreen: options.shellMode },
+      React.createElement(App, { options: replayAppOptions }),
+    ),
   );
 
   await sleep(options.inputDelayMs);
   await sendPromptSequence(stdin, options, debugEvents);
 
   if (options.actionScript && options.actionScript.length > 0) {
-    await runActionScript(stdin, options, debugEvents);
+    await runActionScript(stdin, stdout, options, debugEvents);
   }
 
   const interruptElapsed = await sendInterruptSequence(stdin, options);
@@ -529,6 +718,9 @@ export async function runReplay(options: ReplayOptions): Promise<void> {
     sleep(2000),
   ]);
   root.cleanup();
+  if (replayInk && instances.get(process.stdout) === replayInk) {
+    instances.delete(process.stdout);
+  }
   stdin.end();
   stdin.destroy();
   stdout.end();
@@ -547,7 +739,7 @@ const isMain = process.argv[1] && (
 
 if (isMain) {
   loadProjectEnv();
-  runReplay(parseReplayArgs())
+  withSuppressedReplayWarnings(() => runReplay(parseReplayArgs()))
     .then(() => {
       process.exit(0);
     })

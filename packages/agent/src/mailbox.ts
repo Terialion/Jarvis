@@ -2,11 +2,20 @@
 // AgentMailbox — per-agent message inbox (Codex mailbox pattern)
 // ============================================================================
 
+export type MailEnvelopeKind = 'note' | 'task' | 'result' | 'review' | 'redirect';
+
+export interface MailEnvelope {
+  kind: MailEnvelopeKind;
+  summary: string;
+  payload?: unknown;
+}
+
 export interface MailItem {
   senderId: string;
   message: string;
   triggerTurn: boolean;
   timestamp: number;
+  envelope?: MailEnvelope;
 }
 
 export class AgentMailbox {
@@ -14,12 +23,14 @@ export class AgentMailbox {
   private listeners: Array<() => void> = [];
 
   /** Deliver a message to this mailbox. */
-  deliver(senderId: string, message: string, triggerTurn = false): void {
+  deliver(senderId: string, message: string | MailEnvelope, triggerTurn = false): void {
+    const envelope = typeof message === 'string' ? undefined : message;
     this.pending.push({
       senderId,
-      message,
+      message: typeof message === 'string' ? message : `[${message.kind}] ${message.summary}`,
       triggerTurn,
       timestamp: Date.now(),
+      envelope,
     });
     // Notify listeners (e.g. AgentLoop waiting for new messages)
     for (const cb of this.listeners) {

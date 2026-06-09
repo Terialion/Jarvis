@@ -25,6 +25,48 @@ export type TUIDebugEvent =
       timestamp: number;
     }
   | {
+      type: "stream_run_started";
+      runId: string;
+      prompt: string;
+      timestamp: number;
+    }
+  | {
+      type: "stream_chunk_flushed";
+      runId: string;
+      chunkLength: number;
+      displayLength: number;
+      sourceLength: number;
+      timestamp: number;
+    }
+  | {
+      type: "stream_finalized";
+      runId: string;
+      reason: "tool_boundary" | "turn_complete" | "error" | "abort" | "cleanup";
+      finalAnswerLength: number;
+      committedTextLength: number;
+      replacedStreamed: boolean;
+      timestamp: number;
+    }
+  | {
+      type: "stream_committed";
+      runId: string;
+      messageId: string;
+      textLength: number;
+      timestamp: number;
+    }
+  | {
+      type: "stream_cleared";
+      runId: string;
+      reason: "tool_boundary" | "turn_complete" | "error" | "abort" | "cleanup";
+      timestamp: number;
+    }
+  | {
+      type: "message_id_emitted";
+      messageId: string;
+      kind: "user" | "assistant" | "thinking" | "error";
+      timestamp: number;
+    }
+  | {
       type: "tool_started";
       toolName: string;
       callId: string;
@@ -83,6 +125,25 @@ export type TUIDebugEvent =
       error: string;
       stopReason?: string;
       isAbort?: boolean;
+      timestamp: number;
+    }
+  | {
+      type: "viewport_state";
+      mode: "following" | "history" | "selection";
+      followOutput: boolean;
+      hasSelection: boolean;
+      interactivePromptActive: boolean;
+      isLoading: boolean;
+      scrollTop: number;
+  scrollHeight: number;
+  viewportHeight: number;
+  pendingScrollDelta: number;
+  remainingScrollDistance: number;
+      clampMin?: number;
+      clampMax?: number;
+      transcriptTotalHeight?: number;
+      transcriptRangeStart?: number;
+      transcriptRangeEnd?: number;
       timestamp: number;
     };
 

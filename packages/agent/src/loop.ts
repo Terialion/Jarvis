@@ -20,6 +20,7 @@ import { TokenTracker } from './token-tracker.js';
 import { AgentEventBus } from './events.js';
 import { ContextBuilder, estimateTokens, type ContextConfig, type TurnContext, type ContextPack, type SessionStoreLike, type MemoryStoreLike, type SkillRegistryLike } from './context.js';
 import { PromptBuilder, AGENT_SYSTEM_PROMPT } from './prompt-builder.js';
+import type { PromptPartMeta } from './prompt-parts.js';
 import { ResponseComposer } from './summary.js';
 import { withRetry, type RetryConfig, ErrorClassifier, RetryPolicy as ToolRetryPolicy, FailureTracker, ReplanPolicy } from './retry.js';
 import type { AgentMailbox } from './mailbox.js';
@@ -27,6 +28,36 @@ import { compact, setTokenEstimator, type CompactionMessage, type CompactionMode
 
 // Wire up CJK-aware token estimation for the compaction pipeline
 setTokenEstimator(estimateTokens);
+
+function formatMailboxContent(mail: {
+  senderId: string;
+  message: string;
+  envelope?: { kind: string; summary: string; payload?: unknown };
+}): string {
+  if (!mail.envelope) {
+    return [
+      `<inter-agent-message from="${mail.senderId}">`,
+      mail.message,
+      '</inter-agent-message>',
+      '',
+      'The message above was sent to you by another agent using the talk_to tool.',
+      `You can reply by calling talk_to(targetId="${mail.senderId}", message="your response").`,
+    ].join('\n');
+  }
+
+  const serializedPayload = mail.envelope.payload === undefined
+    ? ''
+    : `\n\nPayload:\n${JSON.stringify(mail.envelope.payload, null, 2)}`;
+
+  return [
+    `<inter-agent-message from="${mail.senderId}" kind="${mail.envelope.kind}">`,
+    `[${mail.envelope.kind}] ${mail.envelope.summary}${serializedPayload}`,
+    '</inter-agent-message>',
+    '',
+    'Treat structured result and review payloads as coordination context from another agent.',
+    `You can reply by calling talk_to(targetId="${mail.senderId}", message="your response").`,
+  ].join('\n');
+}
 
 // ============================================================================
 // Configuration
@@ -423,14 +454,7 @@ export class AgentLoop {
         for (const mail of mails) {
           allMessages.push({
             role: 'user',
-            content: [
-            `<inter-agent-message from="${mail.senderId}">`,
-            mail.message,
-            '</inter-agent-message>',
-            '',
-            'The message above was sent to you by another agent using the talk_to tool.',
-            `You can reply by calling talk_to(targetId="${mail.senderId}", message="your response").`,
-          ].join('\n'),
+            content: formatMailboxContent(mail),
             messageId: `msg_${crypto.randomUUID()}`,
           });
         }
@@ -952,14 +976,7 @@ export class AgentLoop {
           for (const mail of mails) {
             messages.push({
               role: 'user',
-              content: [
-            `<inter-agent-message from="${mail.senderId}">`,
-            mail.message,
-            '</inter-agent-message>',
-            '',
-            'The message above was sent to you by another agent using the talk_to tool.',
-            `You can reply by calling talk_to(targetId="${mail.senderId}", message="your response").`,
-          ].join('\n'),
+              content: formatMailboxContent(mail),
             });
           }
         }
@@ -1899,12 +1916,24 @@ export class AgentLoop {
 
       if (tokens <= 0) continue;
 
-      if (role === 'system') {
+      const promptPart = (msg as LLMMessage & { promptPart?: PromptPartMeta }).promptPart;
+
+      if (promptPart?.bucket === 'system') {
         systemPromptTokens += tokens;
         continue;
       }
 
-      if (content.includes('<project-context>') || content.includes('<settings-update>')) {
+      if (promptPart?.bucket === 'project' || promptPart?.bucket === 'settings') {
+        projectContextTokens += tokens;
+      } else if (promptPart?.bucket === 'skills') {
+        skillsTokens += tokens;
+      } else if (promptPart?.bucket === 'memory') {
+        memoryTokens += tokens;
+      } else if (promptPart?.category === 'history' || promptPart?.bucket === 'intent') {
+        conversationTokens += tokens;
+      } else if (role === 'system') {
+        systemPromptTokens += tokens;
+      } else if (content.includes('<project-context>') || content.includes('<settings-update>')) {
         projectContextTokens += tokens;
       } else if (content.includes('<skills>') || content.includes('<skills_usage>')) {
         skillsTokens += tokens;

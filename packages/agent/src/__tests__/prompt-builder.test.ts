@@ -1,5 +1,10 @@
 import { describe, it, expect } from 'vitest';
-import { PromptBuilder } from '../prompt-builder.js';
+import {
+  PromptBuilder,
+  SYSTEM_PROMPT_DYNAMIC_BOUNDARY,
+  buildSystemPrompt,
+  buildSystemPromptResult,
+} from '../prompt-builder.js';
 import type { TurnContext } from '../context.js';
 
 function makeTurnContext(overrides: Partial<TurnContext> = {}): TurnContext {
@@ -45,10 +50,60 @@ function makeTurnContext(overrides: Partial<TurnContext> = {}): TurnContext {
 describe('PromptBuilder', () => {
   const builder = new PromptBuilder();
 
+  it('builds stable and dynamic system prompt sections with a boundary marker', () => {
+    const result = buildSystemPromptResult({
+      modelName: 'test-model',
+      mode: 'full',
+      permissionMode: 'workspace_write',
+    });
+
+    expect(result.stableSections.length).toBeGreaterThan(0);
+    expect(result.dynamicSections.length).toBeGreaterThan(0);
+    expect(result.prompt).toContain(SYSTEM_PROMPT_DYNAMIC_BOUNDARY);
+
+    const stableIds = result.stableSections.map((section) => section.id);
+    const dynamicIds = result.dynamicSections.map((section) => section.id);
+    expect(stableIds).toContain('identity');
+    expect(stableIds).toContain('tool-policy');
+    expect(dynamicIds).toContain('mode');
+    expect(dynamicIds).toContain('environment');
+  });
+
+  it('changes only the mode-specific section when permission mode changes', () => {
+    const workspaceWrite = buildSystemPromptResult({
+      modelName: 'test-model',
+      mode: 'full',
+      permissionMode: 'workspace_write',
+    });
+    const planMode = buildSystemPromptResult({
+      modelName: 'test-model',
+      mode: 'full',
+      permissionMode: 'plan',
+    });
+
+    expect(workspaceWrite.stableSections).toEqual(planMode.stableSections);
+
+    const workspaceMode = workspaceWrite.dynamicSections.find((section) => section.id === 'mode');
+    const planModeSection = planMode.dynamicSections.find((section) => section.id === 'mode');
+    expect(workspaceMode?.content).not.toEqual(planModeSection?.content);
+    expect(planModeSection?.content).toContain('plan');
+  });
+
+  it('emits prompts without known mojibake markers', () => {
+    const prompt = buildSystemPrompt('test-model', 'full');
+    expect(prompt).not.toContain('鈥');
+    expect(prompt).not.toContain('涓');
+    expect(prompt).not.toContain('鎴');
+  });
+
   it('emits tool results with role=tool and tool_call_id', () => {
     const ctx = makeTurnContext({
       contextPack: {
         ...makeTurnContext().contextPack!,
+        project: {
+          ...makeTurnContext().contextPack!.project,
+          projectInstructions: 'Use pnpm and keep commits small.',
+        },
         conversation: {
           threadId: null,
           turnId: 'turn_1',
@@ -75,6 +130,7 @@ describe('PromptBuilder', () => {
     expect(toolMsgs[0].tool_call_id).toBe('call_abc');
     expect(toolMsgs[0].content).toContain('read');
     expect(toolMsgs[0].content).toContain('export const x = 1;');
+    expect(toolMsgs[0].promptPart?.category).toBe('history');
   });
 
   it('preserves user and assistant roles natively', () => {
@@ -101,6 +157,7 @@ describe('PromptBuilder', () => {
     // system -> (skills maybe) -> system (history banner) -> user -> assistant -> user -> assistant -> user (current)
     expect(roles.filter((r) => r === 'user').length).toBe(3); // 2 history + 1 current
     expect(roles.filter((r) => r === 'assistant').length).toBe(2);
+    expect(messages.some((message) => message.promptPart?.category === 'history')).toBe(true);
   });
 
   it('does not include tool_call_id on non-tool messages', () => {
@@ -153,5 +210,79 @@ describe('PromptBuilder', () => {
     const summaryMsg = messages.find((m) => m.content.includes('conversation-summary'));
     expect(summaryMsg).toBeDefined();
     expect(summaryMsg!.content).toContain('JWT');
+  });
+
+  it('injects full project context only on first turn', () => {
+    const firstTurn = makeTurnContext({
+      isFirstTurn: true,
+      contextPack: {
+        ...makeTurnContext().contextPack!,
+        project: {
+          ...makeTurnContext().contextPack!.project,
+          projectInstructions: 'Use pnpm and keep commits small.',
+        },
+      },
+    });
+
+    const messages = builder.buildMessages(firstTurn);
+    expect(messages.some((message) => message.content.includes('<project-context>'))).toBe(true);
+    expect(messages.some((message) => message.content.includes('<settings-update>'))).toBe(false);
+    expect(messages.find((message) => message.content.includes('<project-context>'))?.promptPart?.bucket).toBe('project');
+  });
+
+  it('injects settings diff instead of full project context on steady-state turns', () => {
+    const steadyState = makeTurnContext({
+      isFirstTurn: false,
+      settingsDiff: {
+        permission: '- permission mode changed to plan',
+      },
+      contextPack: {
+        ...makeTurnContext().contextPack!,
+        project: {
+          ...makeTurnContext().contextPack!.project,
+          projectInstructions: 'Use pnpm and keep commits small.',
+        },
+      },
+    });
+
+    const messages = builder.buildMessages(steadyState);
+    expect(messages.some((message) => message.content.includes('<settings-update>'))).toBe(true);
+    expect(messages.some((message) => message.content.includes('<project-context>'))).toBe(false);
+    expect(messages.find((message) => message.content.includes('<settings-update>'))?.promptPart?.bucket).toBe('settings');
+  });
+
+  it('builds typed prompt parts before projecting to provider messages', () => {
+    const ctx = makeTurnContext({
+      contextPack: {
+        ...makeTurnContext().contextPack!,
+        project: {
+          ...makeTurnContext().contextPack!.project,
+          projectInstructions: 'Use pnpm and keep commits small.',
+        },
+        conversation: {
+          threadId: null,
+          turnId: 'turn_1',
+          recentMessages: [
+            { role: 'user', content: 'older request' },
+            { role: 'assistant', content: 'older answer' },
+            {
+              role: 'tool',
+              content: 'tool output',
+              tool_call_id: 'call_hist_1',
+              metadata: { tool_name: 'read' },
+            },
+          ],
+          compactedSummary: 'Earlier summary',
+        },
+      },
+    });
+
+    const parts = builder.buildParts(ctx);
+    expect(parts[0].promptPart.bucket).toBe('system');
+    expect(parts.some((part) => part.promptPart.bucket === 'project')).toBe(true);
+    expect(parts.some((part) => part.promptPart.bucket === 'summary')).toBe(true);
+    expect(parts.some((part) => part.promptPart.id === 'conversation_history')).toBe(true);
+    expect(parts.some((part) => part.promptPart.id.startsWith('history_tool_'))).toBe(true);
+    expect(parts[parts.length - 1].promptPart.bucket).toBe('intent');
   });
 });

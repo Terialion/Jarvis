@@ -24,6 +24,9 @@ export interface AgentPool {
     blockedTools?: string[];
     forkContext?: boolean;
     parentMessages?: Array<{ role: string; content: string }>;
+    reviewRequired?: boolean;
+    expectedOutput?: string;
+    successCriteria?: string;
   }): {
     agentId: string;
     status: string;
@@ -65,7 +68,7 @@ export const agentSchema = toOpenAITool({
       subagent_type: {
         type: 'string',
         default: 'general',
-        description: 'Agent type: explore, plan, general, or a custom agent name from .jarvis/agents/',
+        description: 'Agent type: explore, plan, review, general, or a custom agent name from .jarvis/agents/',
       },
       model: {
         type: 'string',
@@ -80,6 +83,19 @@ export const agentSchema = toOpenAITool({
         type: 'boolean',
         default: false,
         description: 'Inherit parent conversation context (saves tokens, like Claude Code fork mode)',
+      },
+      review_required: {
+        type: 'boolean',
+        default: true,
+        description: 'Whether a reviewer agent should verify this worker result before it is merged back.',
+      },
+      expected_output: {
+        type: 'string',
+        description: 'Optional expected output contract for the subagent result.',
+      },
+      success_criteria: {
+        type: 'string',
+        description: 'Optional success criteria the worker and reviewer should verify against.',
       },
     },
     required: ['description', 'prompt'],
@@ -97,14 +113,17 @@ export function createAgentHandler(pool: AgentPool, agentDefs?: Map<string, Agen
     const agentTypeName = String(args.subagent_type ?? 'general').trim();
     const runInBackground = args.run_in_background === true;
     const forkContext = args.fork_context === true;
+    const reviewRequired = args.review_required !== false;
     const modelOverride = typeof args.model === 'string' ? args.model : undefined;
+    const expectedOutput = typeof args.expected_output === 'string' ? args.expected_output : undefined;
+    const successCriteria = typeof args.success_criteria === 'string' ? args.success_criteria : undefined;
 
     if (!description || !prompt) {
       return JSON.stringify({ error: 'Missing required parameters: description and prompt' });
     }
 
     // Resolve agent type: built-in or custom definition
-    const builtins = ['explore', 'plan', 'general'];
+    const builtins = ['explore', 'plan', 'review', 'general'];
     const isBuiltin = builtins.includes(agentTypeName);
     const agentDef = agentDefs?.get(agentTypeName);
 
@@ -124,6 +143,9 @@ export function createAgentHandler(pool: AgentPool, agentDefs?: Map<string, Agen
         agentType: agentTypeName,
         task: `## ${description}\n\n${prompt}`,
         depth,
+        reviewRequired,
+        expectedOutput,
+        successCriteria,
       };
 
       // Apply agent definition overrides

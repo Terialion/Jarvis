@@ -100,6 +100,73 @@ export function consumeFollowScroll(): FollowScroll | null {
   return f;
 }
 
+export function computeAutoFollowState(input: {
+  scrollTopBeforeFollow: number;
+  stickyState: boolean | undefined;
+  stickyAttribute: boolean;
+  selectionLocked: boolean;
+  followDisabled: boolean;
+  prevScrollHeight: number;
+  prevViewportHeight: number;
+  scrollHeight: number;
+  viewportHeight: number;
+  pendingDelta: number | undefined;
+}): {
+  shouldFollow: boolean;
+  nextScrollTop: number;
+  restoreSticky: boolean;
+  followDelta: number;
+} {
+  const {
+    scrollTopBeforeFollow,
+    stickyState,
+    stickyAttribute,
+    selectionLocked,
+    followDisabled,
+    prevScrollHeight,
+    prevViewportHeight,
+    scrollHeight,
+    viewportHeight,
+    pendingDelta,
+  } = input;
+
+  const maxScroll = Math.max(0, scrollHeight - viewportHeight);
+  const prevMaxScroll = Math.max(0, prevScrollHeight - prevViewportHeight);
+  const grew = scrollHeight >= prevScrollHeight;
+  const stickyRequested = stickyState ?? stickyAttribute;
+  const allowPositionalFollow = stickyState !== false;
+  const positionallyAtBottom = grew && scrollTopBeforeFollow >= prevMaxScroll;
+  const atBottom = stickyRequested || (allowPositionalFollow && positionallyAtBottom);
+  const shouldFollow = !selectionLocked && !followDisabled && atBottom && (pendingDelta ?? 0) >= 0;
+  const nextScrollTop = shouldFollow ? maxScroll : scrollTopBeforeFollow;
+  const restoreSticky = false;
+
+  return {
+    shouldFollow,
+    nextScrollTop,
+    restoreSticky,
+    followDelta: nextScrollTop - scrollTopBeforeFollow,
+  };
+}
+
+export function shouldPersistScrollTopAfterClamp(input: {
+  currentScrollTop: number;
+  clampedToMaxScroll: number;
+  pendingDelta: number | undefined;
+  followedThisFrame: boolean;
+}): boolean {
+  const { currentScrollTop, clampedToMaxScroll, pendingDelta, followedThisFrame } = input;
+
+  if (followedThisFrame) return true;
+  if (pendingDelta !== undefined && pendingDelta !== 0) return true;
+
+  // When content height transiently shrinks during a reflow, clamp only for
+  // this paint. Persisting the smaller max-scroll value permanently yanks a
+  // history viewport back toward the top even though the next frame often
+  // restores the previous height.
+  return clampedToMaxScroll === currentScrollTop;
+}
+
 // ── Native terminal drain (iTerm2/Ghostty/etc. — proportional events) ──
 // Minimum rows applied per frame. Above this, drain is proportional (~3/4
 // of remaining) so big bursts catch up in log₄ frames while the tail
@@ -713,16 +780,24 @@ function renderNodeToOutput(
         // active text selection by the same delta (native terminal behavior:
         // view keeps scrolling, highlight walks up with the text).
         const scrollTopBeforeFollow = node.scrollTop ?? 0;
-        const sticky = node.stickyScroll ?? Boolean(node.attributes.stickyScroll);
-        const prevMaxScroll = Math.max(0, prevScrollHeight - prevInnerHeight);
+        const followState = computeAutoFollowState({
+          scrollTopBeforeFollow,
+          stickyState: node.stickyScroll,
+          stickyAttribute: Boolean(node.attributes.stickyScroll),
+          selectionLocked: Boolean(node.attributes.selectionLocked),
+          followDisabled: Boolean(node.attributes.followDisabled),
+          prevScrollHeight,
+          prevViewportHeight: prevInnerHeight,
+          scrollHeight,
+          viewportHeight: innerHeight,
+          pendingDelta: node.pendingScrollDelta,
+        });
         // Positional check only valid when content grew — virtualization can
         // transiently SHRINK scrollHeight (tail unmount + stale heightCache
         // spacer) making scrollTop >= prevMaxScroll true by artifact, not
         // because the user was at bottom.
-        const grew = scrollHeight >= prevScrollHeight;
-        const atBottom = sticky || (grew && scrollTopBeforeFollow >= prevMaxScroll);
-        if (atBottom && (node.pendingScrollDelta ?? 0) >= 0) {
-          node.scrollTop = maxScroll;
+        if (followState.shouldFollow) {
+          node.scrollTop = followState.nextScrollTop;
           node.pendingScrollDelta = undefined;
           // Sync flag so useVirtualScroll's isSticky() agrees with positional
           // state — sticky-broken-but-at-bottom (wheel tremor, click-select
@@ -734,7 +809,7 @@ function renderNodeToOutput(
           // undefined (never set by user action) leave it alone — setting it
           // would make the sticky flag sticky-by-default and lock out
           // direct scrollTop writes (e.g. the alt-screen-perf test).
-          if (node.stickyScroll === false && scrollTopBeforeFollow >= prevMaxScroll) {
+          if (followState.restoreSticky) {
             node.stickyScroll = true;
           }
         }
@@ -783,7 +858,7 @@ function renderNodeToOutput(
           // schedule an infinite loop of no-op drain frames.
           node.pendingScrollDelta = undefined;
         }
-        let scrollTop = Math.max(0, Math.min(cur, maxScroll));
+        const clampedToMaxScroll = Math.max(0, Math.min(cur, maxScroll));
         // Virtual-scroll clamp: if scrollTop raced past the currently-mounted
         // range (burst PageUp before React re-renders), render at the EDGE of
         // the mounted children instead of blank spacer. Do NOT write back to
@@ -792,13 +867,22 @@ function renderNodeToOutput(
         // the right range. Not scheduling scrollDrainNode here keeps the
         // clamp passive — React's commit → resetAfterCommit → onRender will
         // paint again with fresh bounds.
-        const clamped = haveClamp ? Math.max(cMin, Math.min(scrollTop, cMax)) : scrollTop;
-        node.scrollTop = scrollTop;
+        const clamped = haveClamp ? Math.max(cMin, Math.min(clampedToMaxScroll, cMax)) : clampedToMaxScroll;
+        if (
+          shouldPersistScrollTopAfterClamp({
+            currentScrollTop: cur,
+            clampedToMaxScroll,
+            pendingDelta: node.pendingScrollDelta,
+            followedThisFrame: followState.shouldFollow,
+          })
+        ) {
+          node.scrollTop = clampedToMaxScroll;
+        }
         // Clamp hitting top/bottom consumes any remainder. Set drainPending
         // only after clamp so a wasted no-op frame isn't scheduled.
-        if (scrollTop !== cur) node.pendingScrollDelta = undefined;
+        if (clampedToMaxScroll !== cur) node.pendingScrollDelta = undefined;
         if (node.pendingScrollDelta !== undefined) scrollDrainNode = node;
-        scrollTop = clamped;
+        let scrollTop = clamped;
 
         if (content && contentYoga) {
           // Compute content wrapper's absolute render position with scroll

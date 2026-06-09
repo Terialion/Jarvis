@@ -14,6 +14,7 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import * as os from 'node:os';
 import { removeOrphanToolResults } from './compactor.js';
+import { buildSystemPrompt } from './prompt-sections.js';
 
 // ============================================================================
 // Configuration
@@ -1343,7 +1344,9 @@ class PromptBuilderShim {
 
     messages.push({
       role: 'system',
-      content: PROMPT_SHIM_TEMPLATE.replace('{model_name}', modelName),
+      content: buildSystemPrompt(modelName, 'minimal', {
+        permissionMode: turnContext.permissionMode,
+      }),
     });
 
     // Skills index
@@ -1399,24 +1402,7 @@ class PromptBuilderShim {
   }
 }
 
-const PROMPT_SHIM_TEMPLATE = `<agent>
-You are Jarvis, a local AI coding assistant. You have file system access and tools to inspect, search, edit, and run code.
-When asked what model you are, say you are {model_name}.
 
-## Tool rules
-- ALWAYS use tools for file contents, code search, reading files, running commands, web content.
-- Use the most specific tool: Glob for filenames, Grep for content, Read for known paths.
-- If a tool returns an error, try a different approach.
-- Combine independent tool calls in a single response when possible.
-
-## Code
-- Minimum code to solve the problem. No extra features.
-- Match existing codebase style. Don't touch unrelated code.
-
-## Output style
-- Be brief. After tools complete, state what changed in 1-3 sentences.
-- Do not create tables or analysis unless asked.
-</agent>`;
 
 // ============================================================================
 // Helpers

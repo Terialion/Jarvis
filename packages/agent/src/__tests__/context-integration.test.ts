@@ -202,6 +202,63 @@ describe('buildSystemPrompt', () => {
   });
 });
 
+describe('context breakdown classification', () => {
+  it('prefers promptPart metadata over XML marker guessing', async () => {
+    const loop = new AgentLoop({
+      model: { model: 'test-model' },
+      provider: new FakeModelClient([]) as unknown as import('../model.js').LLMProvider,
+    });
+
+    const messages = [
+      {
+        role: 'system',
+        content: 'system prompt',
+        promptPart: { category: 'instruction', bucket: 'system', id: 'system_prompt' },
+      },
+      {
+        role: 'user',
+        content: 'settings changed',
+        promptPart: { category: 'context', bucket: 'settings', id: 'settings_update' },
+      },
+      {
+        role: 'user',
+        content: 'skill index',
+        promptPart: { category: 'context', bucket: 'skills', id: 'skills_index' },
+      },
+      {
+        role: 'user',
+        content: 'memory summary',
+        promptPart: { category: 'context', bucket: 'memory', id: 'memory_summary' },
+      },
+      {
+        role: 'system',
+        content: 'history banner',
+        promptPart: { category: 'history', bucket: 'history', id: 'conversation_history' },
+      },
+      {
+        role: 'user',
+        content: 'current request',
+        promptPart: { category: 'intent', bucket: 'intent', id: 'current_request' },
+      },
+    ] as unknown as import('../model.js').LLMMessage[];
+
+    const breakdown = (loop as unknown as {
+      _estimateContextBreakdown: (
+        messages: import('../model.js').LLMMessage[],
+        toolSpecs: Record<string, unknown>[],
+        contextWindow: number,
+      ) => Record<string, unknown>;
+    })._estimateContextBreakdown(messages, [], 128_000);
+
+    expect(Number(breakdown.system_prompt_tokens)).toBeGreaterThan(0);
+    expect(Number(breakdown.project_context_tokens)).toBeGreaterThan(0);
+    expect(Number(breakdown.skills_tokens)).toBeGreaterThan(0);
+    expect(Number(breakdown.memory_tokens)).toBeGreaterThan(0);
+    expect(Number(breakdown.conversation_tokens)).toBeGreaterThan(0);
+    expect(Number(breakdown.system_prompt_tokens)).toBeLessThan(Number(breakdown.conversation_tokens) + Number(breakdown.system_prompt_tokens));
+  });
+});
+
 // ============================================================================
 // 8. UserFactExtractor
 // ============================================================================

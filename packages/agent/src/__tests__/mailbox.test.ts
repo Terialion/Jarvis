@@ -117,6 +117,24 @@ describe('AgentMailbox', () => {
     expect(item.timestamp).toBeLessThanOrEqual(after);
   });
 
+  it('preserves structured envelopes alongside the legacy message field', () => {
+    const mb = new AgentMailbox();
+    mb.deliver('reviewer', {
+      kind: 'review',
+      summary: 'Worker needs one fix',
+      payload: { decision: 'needs_fix', findings: [{ severity: 'medium', summary: 'Missing verification' }] },
+    }, true);
+
+    const [item] = mb.drain();
+    expect(item.message).toContain('[review]');
+    expect(item.triggerTurn).toBe(true);
+    expect(item.envelope).toEqual({
+      kind: 'review',
+      summary: 'Worker needs one fix',
+      payload: { decision: 'needs_fix', findings: [{ severity: 'medium', summary: 'Missing verification' }] },
+    });
+  });
+
   it('handles rapid drain after drain (idempotent)', () => {
     const mb = new AgentMailbox();
     mb.deliver('a', 'msg');

@@ -3,6 +3,55 @@
 // ============================================================================
 
 export type SubagentStatus = 'pending' | 'running' | 'completed' | 'failed' | 'cancelled';
+export type ReviewDecision = 'pass' | 'needs_fix' | 'blocked';
+export type BuiltinAgentType = 'explore' | 'plan' | 'general' | 'review';
+
+export interface SubagentArtifact {
+  kind: string;
+  label: string;
+  path?: string;
+  detail?: string;
+}
+
+export interface SubagentEvidence {
+  kind: string;
+  summary: string;
+  source?: string;
+}
+
+export interface SubagentRisk {
+  severity: 'low' | 'medium' | 'high';
+  summary: string;
+}
+
+export interface ReviewFinding {
+  severity: 'low' | 'medium' | 'high';
+  summary: string;
+  detail?: string;
+  file?: string;
+}
+
+export interface StructuredSubagentPayload {
+  kind: 'explore' | 'plan' | 'implement' | 'review' | 'general';
+  summary: string;
+  artifacts: SubagentArtifact[];
+  evidence: SubagentEvidence[];
+  risks: SubagentRisk[];
+  nextActions: string[];
+  confidence: number;
+  rawAnswer: string;
+  facts?: string[];
+  files?: string[];
+  openQuestions?: string[];
+  tasks?: string[];
+  dependencies?: string[];
+  assumptions?: string[];
+  changedFiles?: string[];
+  commandsRun?: string[];
+  verification?: string[];
+  findings?: ReviewFinding[];
+  decision?: ReviewDecision;
+}
 
 export interface SubagentConfig {
   /** Unique identifier for this subagent */
@@ -33,6 +82,18 @@ export interface SubagentConfig {
   parentMessages?: Array<{ role: string; content: string }>;
   /** Parent agent ID (for tree display) */
   parentId?: string;
+  /** Whether a reviewer should verify this result before parent consumption. */
+  reviewRequired?: boolean;
+  /** Optional expected output contract for worker/reviewer prompts. */
+  expectedOutput?: string;
+  /** Optional success criteria for worker/reviewer prompts. */
+  successCriteria?: string;
+  /** Optional bundle metadata for first-phase wave orchestration. */
+  taskBundleId?: string;
+  workItemId?: string;
+  waveId?: string;
+  /** Review metadata when the config itself is a reviewer task. */
+  reviewOfAgentId?: string;
 }
 
 export interface SubagentHandle {
@@ -50,6 +111,39 @@ export interface SubagentResult {
   answer?: string;
   error?: string;
   turnsUsed?: number;
+  payload?: StructuredSubagentPayload;
+  reviewStatus?: ReviewDecision;
+  reviewResult?: StructuredSubagentPayload;
+}
+
+export interface WorkItem {
+  id: string;
+  title: string;
+  task: string;
+  agentType: string;
+  reviewRequired?: boolean;
+  expectedOutput?: string;
+  successCriteria?: string;
+  dependsOn?: string[];
+  metadata?: Record<string, string>;
+}
+
+export interface TaskBundle {
+  id: string;
+  title: string;
+  summary?: string;
+  waveId: string;
+  items: WorkItem[];
+}
+
+export interface WaveResult {
+  bundleId: string;
+  waveId: string;
+  status: 'completed' | 'failed' | 'blocked';
+  results: SubagentResult[];
+  passedReviews: number;
+  failedReviews: number;
+  blockedReviews: number;
 }
 
 // ============================================================================
@@ -66,7 +160,7 @@ export interface AgentIdentity {
   /** Nesting depth (0 = supervisor) */
   depth: number;
   /** Agent type — determines tool capabilities */
-  agentType: 'explore' | 'plan' | 'general';
+  agentType: BuiltinAgentType;
   /** Capability tags */
   capabilities: string[];
   /** When the agent was registered */
@@ -96,6 +190,11 @@ export const PLAN_TOOLS = [
   ...EXPLORE_TOOLS,
   'task_create',
   'task_update',
+  'task_list',
+];
+
+export const REVIEW_TOOLS = [
+  ...EXPLORE_TOOLS,
   'task_list',
 ];
 

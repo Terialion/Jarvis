@@ -23,9 +23,12 @@ export function createSpawnAgentHandler(deps: SpawnAgentDeps): ToolHandler {
   return async (args: Record<string, unknown>, _context: ToolContext): Promise<string> => {
     const description = String(args.description ?? '').trim();
     const prompt = String(args.prompt ?? '').trim();
-    const agentType = (['explore', 'plan', 'general'] as const).includes(args.subagent_type as never)
-      ? (args.subagent_type as 'explore' | 'plan' | 'general')
+    const agentType = (['explore', 'plan', 'general', 'review'] as const).includes(args.subagent_type as never)
+      ? (args.subagent_type as 'explore' | 'plan' | 'general' | 'review')
       : 'general';
+    const reviewRequired = args.review_required !== false;
+    const expectedOutput = typeof args.expected_output === 'string' ? args.expected_output : undefined;
+    const successCriteria = typeof args.success_criteria === 'string' ? args.success_criteria : undefined;
 
     if (!description || !prompt) {
       return JSON.stringify({ error: 'Missing required parameters: description and prompt' });
@@ -53,6 +56,9 @@ export function createSpawnAgentHandler(deps: SpawnAgentDeps): ToolHandler {
       task: `## ${description}\n\n${prompt}`,
       depth: childDepth,
       parentId: deps.parentId,
+      reviewRequired,
+      expectedOutput,
+      successCriteria,
     });
 
     // Register in background task registry so task_output can find it
@@ -76,15 +82,17 @@ export function createSpawnAgentHandler(deps: SpawnAgentDeps): ToolHandler {
     // Return immediately — results will flow via mailbox notifications
     handle.completion.then((result) => {
       // Deliver result to parent's mailbox
-      deps.parentMailbox.deliver(agentId,
-        `Task ${result.status === 'completed' ? 'completed' : 'failed'}:\n${result.answer || result.error || '(no output)'}`,
-        true,
-      );
+      deps.parentMailbox.deliver(agentId, {
+        kind: result.reviewResult ? 'review' : 'result',
+        summary: `Task ${result.status === 'completed' ? 'completed' : 'failed'}: ${result.payload?.summary || result.answer || result.error || '(no output)'}`,
+        payload: result,
+      }, true);
     }).catch((err) => {
-      deps.parentMailbox.deliver(agentId,
-        `Error: ${err instanceof Error ? err.message : String(err)}`,
-        true,
-      );
+      deps.parentMailbox.deliver(agentId, {
+        kind: 'result',
+        summary: `Error: ${err instanceof Error ? err.message : String(err)}`,
+        payload: { error: err instanceof Error ? err.message : String(err) },
+      }, true);
     });
 
     return JSON.stringify({
@@ -111,10 +119,13 @@ export function createSpawnAgentTool(deps: SpawnAgentDeps) {
           prompt: { type: 'string', description: 'The task for the agent to perform' },
           subagent_type: {
             type: 'string',
-            enum: ['explore', 'plan', 'general'],
+            enum: ['explore', 'plan', 'general', 'review'],
             default: 'general',
-            description: 'Agent type: explore (read-only), plan (explore + task tools), general (all tools)',
+            description: 'Agent type: explore (read-only), plan (explore + task tools), general (all tools), review (read-only verifier)',
           },
+          review_required: { type: 'boolean', default: true, description: 'Whether a reviewer should verify the worker result.' },
+          expected_output: { type: 'string', description: 'Optional expected output contract for the subagent.' },
+          success_criteria: { type: 'string', description: 'Optional success criteria for the subagent and reviewer.' },
         },
         required: ['description', 'prompt'],
       },

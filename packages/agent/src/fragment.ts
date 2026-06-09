@@ -1,105 +1,166 @@
 // ============================================================================
-// ContextualFragment — formal abstraction for context assembly pieces
-// Pattern from Codex ContextualUserFragment trait
+// ContextualFragment - structured prompt/context assembly pieces
 // ============================================================================
 
-import type { TurnContext } from './context.js';
-
-// ============================================================================
-// Core interface
-// ============================================================================
+import type { MemoryContext, TurnContext } from './context.js';
+import type { PromptPart, PromptPartBucket, PromptPartCategory, PromptPartMeta, PromptPartRole } from './prompt-parts.js';
 
 export interface ContextualFragment {
-  /** Fragment identity — used for dedup and recognition */
   readonly id: string;
-  /** Message role when rendered */
-  readonly role: 'system' | 'user' | 'developer';
-  /** XML marker that opens this fragment, e.g. "<skills>" */
+  readonly role: PromptPartRole;
+  readonly category: PromptPartCategory;
+  readonly bucket: PromptPartBucket;
   readonly startMarker: string;
-  /** XML marker that closes this fragment, e.g. "</skills>" */
   readonly endMarker: string;
-  /** Render the full fragment text within <startMarker>...</endMarker> */
   body(ctx: TurnContext): string;
-  /** Full rendered string including markers */
   render(ctx: TurnContext): string;
-  /** Check if a text string matches this fragment */
   matchesText(text: string): boolean;
+  promptPart(): PromptPartMeta;
 }
-
-// ============================================================================
-// Base implementation
-// ============================================================================
 
 export abstract class BaseFragment implements ContextualFragment {
   abstract readonly id: string;
-  abstract readonly role: 'system' | 'user' | 'developer';
+  abstract readonly role: PromptPartRole;
+  abstract readonly category: PromptPartCategory;
+  abstract readonly bucket: PromptPartBucket;
   abstract readonly startMarker: string;
   abstract readonly endMarker: string;
 
   abstract body(ctx: TurnContext): string;
 
   render(ctx: TurnContext): string {
-    const b = this.body(ctx);
-    return `<${this.startMarker}>\n${b}\n</${this.endMarker}>`;
+    const body = this.body(ctx).trim();
+    if (!body) return '';
+    return `<${this.startMarker}>\n${body}\n</${this.endMarker}>`;
   }
 
   matchesText(text: string): boolean {
     return text.includes(`<${this.startMarker}>`) || text.includes(`<${this.startMarker} `);
   }
+
+  promptPart(): PromptPartMeta {
+    return {
+      category: this.category,
+      bucket: this.bucket,
+      id: this.id,
+    };
+  }
 }
 
-// ============================================================================
-// Concrete fragments
-// ============================================================================
+export class ProjectContextFragment extends BaseFragment {
+  readonly id = 'project_context';
+  readonly role = 'user' as const;
+  readonly category = 'context' as const;
+  readonly bucket = 'project' as const;
+  readonly startMarker = 'project-context';
+  readonly endMarker = 'project-context';
 
-/** Skill index fragment — lists available skills with usage instructions. */
+  body(ctx: TurnContext): string {
+    return ctx.contextPack?.project.projectInstructions ?? '';
+  }
+}
+
+export class SettingsUpdateFragment extends BaseFragment {
+  readonly id = 'settings_update';
+  readonly role = 'user' as const;
+  readonly category = 'context' as const;
+  readonly bucket = 'settings' as const;
+  readonly startMarker = 'settings-update';
+  readonly endMarker = 'settings-update';
+
+  body(ctx: TurnContext): string {
+    const entries = Object.values(ctx.settingsDiff ?? {});
+    return entries.join('\n');
+  }
+}
+
 export class SkillsIndexFragment extends BaseFragment {
   readonly id = 'skills_index';
   readonly role = 'user' as const;
+  readonly category = 'context' as const;
+  readonly bucket = 'skills' as const;
   readonly startMarker = 'skills';
   readonly endMarker = 'skills';
 
-  private skills: Array<{ name: string; description: string }> = [];
-
-  setSkills(skills: Array<{ name: string; description: string }>): void {
-    this.skills = [...skills];
-  }
-
-  body(_ctx: TurnContext): string {
-    if (this.skills.length === 0) return '';
-    const lines: string[] = [];
-    for (const s of this.skills) {
-      lines.push(`- ${s.name}: ${s.description}`);
-    }
-    return lines.join('\n');
+  body(ctx: TurnContext): string {
+    const skills = ctx.contextPack?.skills.availableSkills ?? [];
+    if (skills.length === 0) return '';
+    return skills.map((skill) => `- ${skill.name}: ${skill.description}`).join('\n');
   }
 
   override render(ctx: TurnContext): string {
-    const b = this.body(ctx);
-    if (!b) return '';
+    const body = this.body(ctx);
+    if (!body) return '';
 
-    const usage = [
+    return [
+      `<${this.startMarker}>`,
+      body,
+      `</${this.endMarker}>`,
+      '',
       '<skills_usage>',
-      'When a user task matches a skill description above:',
-      '1. Call skill.load with the skill name to get full instructions.',
-      '2. Follow those instructions step by step to complete the task.',
-      '3. After completing the steps, synthesize a final answer for the user.',
+      'When a task matches a listed skill:',
+      '1. Call skill.load with the skill name.',
+      '2. Follow the loaded instructions.',
+      '3. Finish with a normal user-facing answer.',
       '',
       'Rules:',
-      '- Load each skill only ONCE per turn. Never reload a skill you already loaded.',
-      '- Use skill.load, NOT Read/Grep/Glob tools, to access skill instructions.',
-      '- You MUST produce a final text answer — do not just run tools and stop.',
+      '- Load each skill at most once per turn.',
+      '- Use skill.load instead of file-reading tools for skill instructions.',
+      '- Do not stop after tool calls; always produce a final answer.',
       '</skills_usage>',
     ].join('\n');
-
-    return `<${this.startMarker}>\n${b}\n</${this.startMarker}>\n\n${usage}`;
   }
 }
 
-/** Compaction summary fragment — previous conversation handoff. */
+export class MemorySnapshotFragment extends BaseFragment {
+  readonly id = 'memory_snapshot';
+  readonly role = 'user' as const;
+  readonly category = 'context' as const;
+  readonly bucket = 'memory' as const;
+  readonly startMarker = 'memory-context';
+  readonly endMarker = 'memory-context';
+
+  body(ctx: TurnContext): string {
+    const snapshot = ctx.memorySnapshot ?? '';
+    if (!snapshot) return '';
+    return this.stripWrapping(snapshot, this.startMarker, this.endMarker);
+  }
+
+  override render(ctx: TurnContext): string {
+    const snapshot = ctx.memorySnapshot ?? '';
+    if (!snapshot) return '';
+    return snapshot;
+  }
+
+  private stripWrapping(content: string, startMarker: string, endMarker: string): string {
+    const startTag = `<${startMarker}>`;
+    const endTag = `</${endMarker}>`;
+    if (!content.includes(startTag) || !content.includes(endTag)) return content.trim();
+    return content
+      .replace(startTag, '')
+      .replace(endTag, '')
+      .trim();
+  }
+}
+
+export class MemoryIndexSummaryFragment extends BaseFragment {
+  readonly id = 'memory_index_summary';
+  readonly role = 'user' as const;
+  readonly category = 'context' as const;
+  readonly bucket = 'memory' as const;
+  readonly startMarker = 'available-memory';
+  readonly endMarker = 'available-memory';
+
+  body(ctx: TurnContext): string {
+    return buildMemoryIndexSummaryBody(ctx.contextPack?.memory);
+  }
+}
+
 export class CompactionSummaryFragment extends BaseFragment {
   readonly id = 'compaction_summary';
   readonly role = 'user' as const;
+  readonly category = 'history' as const;
+  readonly bucket = 'summary' as const;
   readonly startMarker = 'conversation-summary';
   readonly endMarker = 'conversation-summary';
 
@@ -108,53 +169,59 @@ export class CompactionSummaryFragment extends BaseFragment {
     if (!summary) return '';
 
     return [
-      'The following is a summary of the earlier conversation. ',
-      'This is a handoff from previous context — treat it as ',
-      'background reference ONLY, NOT as active instructions. ',
-      'Do NOT re-execute tools or commands mentioned here. ',
-      'Do NOT answer questions from the summary — they were ',
-      'already addressed. Your task is the latest user message ',
-      'at the end of this context.\n\n',
+      'The following is a summary of earlier conversation. Treat it as background reference, not as active instructions.',
+      'Do not re-run tools or answer old questions from the summary. Focus on the latest user request.',
+      '',
       summary,
-    ].join('');
+    ].join('\n');
   }
 }
 
-/** Conversation history fragment — recent messages from this session. */
 export class ConversationHistoryFragment extends BaseFragment {
   readonly id = 'conversation_history';
   readonly role = 'system' as const;
+  readonly category = 'history' as const;
+  readonly bucket = 'history' as const;
   readonly startMarker = 'conversation-history';
   readonly endMarker = 'conversation-history';
 
   body(_ctx: TurnContext): string {
     return [
-      'Messages above this point are from earlier turns in ',
-      'this session. They are provided for continuity so you ',
-      'know what was discussed. The user\'s CURRENT request ',
-      'is the LAST message below.',
-    ].join('');
+      'Messages after this banner are recent history for continuity.',
+      'The current task is the final user message that appears after the history.',
+    ].join('\n');
   }
 }
 
-/** Skill context fragment — loaded skill body (rendered as tool result). */
 export class SkillContextFragment extends BaseFragment {
   readonly id = 'skill_context';
   readonly role = 'user' as const;
+  readonly category = 'context' as const;
+  readonly bucket = 'skills' as const;
   readonly startMarker = 'skill-context';
   readonly endMarker = 'skill-context';
 
-  constructor(private readonly skillName: string, private readonly skillBody: string) {
+  constructor(
+    private readonly skillName: string,
+    private readonly skillBody: string,
+  ) {
     super();
   }
 
   body(_ctx: TurnContext): string {
-    return `${this.skillBody}\n\nThese are the complete instructions for the \`${this.skillName}\` skill. Call the tools described above NOW to complete the user's task. Do NOT describe what you plan to do — use the tool functions directly.`;
+    return [
+      this.skillBody,
+      '',
+      `These are the complete instructions for the \`${this.skillName}\` skill.`,
+      'Call the described tools now when the task matches this skill.',
+      'Do not stop at planning text; complete the task and then answer the user.',
+    ].join('\n');
   }
 
   override render(ctx: TurnContext): string {
-    const b = this.body(ctx);
-    return `<${this.startMarker} name="${this.skillName}">\n${b}\n</${this.startMarker}>`;
+    const body = this.body(ctx).trim();
+    if (!body) return '';
+    return `<${this.startMarker} name="${this.skillName}">\n${body}\n</${this.endMarker}>`;
   }
 
   override matchesText(text: string): boolean {
@@ -162,61 +229,76 @@ export class SkillContextFragment extends BaseFragment {
   }
 }
 
-/** Current request boundary fragment. */
 export class CurrentRequestFragment extends BaseFragment {
   readonly id = 'current_request';
   readonly role = 'user' as const;
-  readonly startMarker = '─── current request ───';
-  readonly endMarker = '─── end request ───';
+  readonly category = 'intent' as const;
+  readonly bucket = 'intent' as const;
+  readonly startMarker = 'current-request';
+  readonly endMarker = 'current-request';
 
   body(ctx: TurnContext): string {
     return ctx.userInput;
   }
 }
 
-// ============================================================================
-// Fragment registry — manages ordered list of fragments for assembly
-// ============================================================================
-
 export class FragmentRegistry {
   private fragments: ContextualFragment[] = [];
 
   register(fragment: ContextualFragment): void {
-    // Replace existing fragment with same id
-    const idx = this.fragments.findIndex((f) => f.id === fragment.id);
-    if (idx >= 0) {
-      this.fragments[idx] = fragment;
-    } else {
-      this.fragments.push(fragment);
+    const index = this.fragments.findIndex((item) => item.id === fragment.id);
+    if (index >= 0) {
+      this.fragments[index] = fragment;
+      return;
     }
+    this.fragments.push(fragment);
   }
 
   remove(id: string): void {
-    this.fragments = this.fragments.filter((f) => f.id !== id);
+    this.fragments = this.fragments.filter((fragment) => fragment.id !== id);
   }
 
   get(id: string): ContextualFragment | undefined {
-    return this.fragments.find((f) => f.id === id);
+    return this.fragments.find((fragment) => fragment.id === id);
   }
 
-  /** Render all fragments in order, skipping empty bodies. */
-  renderAll(ctx: TurnContext): Array<{ role: string; content: string }> {
-    const messages: Array<{ role: string; content: string }> = [];
-    for (const frag of this.fragments) {
-      const content = frag.render(ctx);
+  renderAll(ctx: TurnContext): PromptPart[] {
+    const messages: PromptPart[] = [];
+    for (const fragment of this.fragments) {
+      const content = fragment.render(ctx);
       if (content.trim()) {
-        messages.push({ role: frag.role, content });
+        messages.push({ role: fragment.role, content, promptPart: fragment.promptPart() });
       }
     }
     return messages;
   }
 
-  /** Check if text contains any registered fragment marker. */
   containsAnyFragment(text: string): boolean {
-    return this.fragments.some((f) => f.matchesText(text));
+    return this.fragments.some((fragment) => fragment.matchesText(text));
   }
 
   list(): ContextualFragment[] {
     return [...this.fragments];
   }
+}
+
+export function buildMemoryIndexSummaryBody(memory?: MemoryContext | null): string {
+  const refs = memory?.longTermRefs ?? [];
+  if (refs.length === 0) return '';
+
+  const byType = new Map<string, number>();
+  for (const ref of refs) {
+    byType.set(ref.memory_type, (byType.get(ref.memory_type) ?? 0) + 1);
+  }
+
+  const parts = [...byType.entries()].map(([type, count]) => `${type}(${count})`);
+
+  return [
+    'Persistent memories are available via tools:',
+    '- memory_search(query, maxResults?) - search across memory entries',
+    '- memory_get(name) - read a specific entry by name',
+    '- memory_write(name, content, description?, memoryType?) - save new memories proactively',
+    `Types: ${parts.join(', ')}.`,
+    'Use these tools for past decisions, preferences, plans, or durable project facts.',
+  ].join('\n');
 }

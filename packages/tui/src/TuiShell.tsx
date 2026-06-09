@@ -3,7 +3,7 @@ import { AlternateScreen } from "./vendor/ink-renderer/index.js";
 import { KeybindingSetup } from "./vendor/ui/keybindings/KeybindingProviderSetup.js";
 
 type TuiShellProps = {
-  children: React.ReactNode;
+  children?: React.ReactNode;
   /** When true, skip alternate screen — render on main screen with native scrollback. */
   mainScreen?: boolean;
 };

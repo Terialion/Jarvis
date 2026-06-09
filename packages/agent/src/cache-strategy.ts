@@ -1,14 +1,7 @@
 // ============================================================================
-// Cache strategy — provider-aware prompt cache breakpoint injection
-//
-// Anthropic/DeepSeek/Qwen all support cache_control: { type: "ephemeral" }
-// breakpoints. Each breakpoint tells the provider "this message and everything
-// before it is worth caching." Multiple breakpoints create nested cache regions:
-// when only the user's request changes, ALL prefixes hit; when memory updates,
-// earlier prefixes still hit.
+// Cache strategy - provider-aware prompt cache breakpoint injection
 // ============================================================================
 
-// Providers known to support Anthropic-compatible prompt caching
 const CACHE_COMPATIBLE_PROVIDERS = ['deepseek', 'anthropic', 'qwen'];
 
 const CACHE_BREAKPOINT = { type: 'ephemeral' } as const;
@@ -22,16 +15,12 @@ const STABLE_TAG_MARKERS = [
   '<memory-context>',
 ];
 
-/** Tags that vary between turns — must NOT be checkpointed. */
+/** Tags that vary between turns and must not be checkpointed. */
 const VOLATILE_TAG_MARKERS = [
   '<conversation-summary>',
   '<conversation-history>',
-  '─── current request ───',
+  '<current-request>',
 ];
-
-// ============================================================================
-// Public API
-// ============================================================================
 
 export function supportsPromptCaching(
   provider?: string | null,
@@ -43,7 +32,7 @@ export function supportsPromptCaching(
 
 /**
  * Mark a single message with a cache_control breakpoint.
- * Returns a shallow copy — does not mutate the original.
+ * Returns a shallow copy and does not mutate the original.
  */
 export function markCacheable<T extends Record<string, unknown>>(message: T): T {
   return { ...message, cache_control: CACHE_BREAKPOINT };
@@ -51,9 +40,7 @@ export function markCacheable<T extends Record<string, unknown>>(message: T): T 
 
 /**
  * Inject cache_control breakpoints at stable-content boundaries.
- * Walks the messages array, marking: system prompt, project context,
- * skills index, and memory snapshots. Skips conversation history and
- * the current user request (those change every turn).
+ * Stable sections are checkpointed until the first volatile, per-turn boundary.
  */
 export function injectCacheBreakpoints(
   messages: Array<Record<string, unknown>>,
@@ -63,22 +50,35 @@ export function injectCacheBreakpoints(
 
   const result = [...messages];
 
-  // System prompt is always cacheable (doesn't change within a session)
   if (result.length > 0 && result[0].role === 'system') {
     result[0] = markCacheable(result[0]);
   }
 
-  // Walk remaining messages: checkpoint stable sections, stop at volatile ones
   for (let i = 1; i < result.length; i++) {
     const msg = result[i];
     const content = String(msg.content ?? '');
+    const promptPart = msg.promptPart as { category?: string; bucket?: string } | undefined;
 
-    // Stop at volatile boundaries — conversation history & user input are per-turn
+    if (promptPart?.category === 'intent' || promptPart?.bucket === 'intent') {
+      break;
+    }
+
+    if (promptPart?.category === 'history') {
+      break;
+    }
+
     if (VOLATILE_TAG_MARKERS.some((tag) => content.includes(tag))) {
       break;
     }
 
-    // Checkpoint stable sections
+    if (
+      promptPart?.category === 'context'
+      && ['project', 'settings', 'skills', 'memory'].includes(promptPart.bucket ?? '')
+    ) {
+      result[i] = markCacheable(msg);
+      continue;
+    }
+
     if (msg.role === 'user' && STABLE_TAG_MARKERS.some((tag) => content.includes(tag))) {
       result[i] = markCacheable(msg);
     }

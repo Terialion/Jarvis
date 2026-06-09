@@ -8,10 +8,12 @@ import type { SubagentConfig, SubagentResult } from './models.js';
 import {
   EXPLORE_TOOLS,
   PLAN_TOOLS,
+  REVIEW_TOOLS,
   GENERAL_TOOLS,
   MAX_DEPTH,
   MAX_BUDGET_STEPS,
 } from './models.js';
+import { buildReviewerTask, buildStructuredPayload, mergeReviewIntoResult } from './result.js';
 
 // ============================================================================
 // RunnerDeps
@@ -95,18 +97,47 @@ export class SubagentRunner {
 
       const result: AgentRunResult = await loop.runTurn(taskPrompt);
 
-      return {
+      let finalResult: SubagentResult = {
         agentId: config.agentId,
         status: result.ok ? 'completed' : 'failed',
         answer: result.finalAnswer,
         error: result.ok ? undefined : result.finalAnswer,
         turnsUsed: result.toolCalls.length,
+        payload: buildStructuredPayload(config, result.finalAnswer ?? '', result.ok ? undefined : result.finalAnswer),
       };
+
+      if (config.reviewRequired && finalResult.status === 'completed' && config.agentType !== 'review') {
+        const reviewTask = buildReviewerTask(config, finalResult);
+        const reviewLoop = this.deps.createAgentLoop({
+          agentId: `${config.agentId}_review`,
+          task: reviewTask,
+          allowedTools: toolWhitelistForType('review'),
+          maxSteps: Math.min(8, budget),
+          depth,
+          mailbox,
+          systemPrompt: buildSubagentSystemPrompt({
+            task: `Review the result of ${config.agentId}`,
+            depth,
+            agentType: 'review',
+            canSpawn: false,
+          }),
+        });
+        const reviewResult = await reviewLoop.runTurn(reviewTask);
+        const reviewPayload = buildStructuredPayload(
+          { agentType: 'review', expectedOutput: config.expectedOutput, successCriteria: config.successCriteria },
+          reviewResult.finalAnswer ?? '',
+          reviewResult.ok ? undefined : reviewResult.finalAnswer,
+        );
+        finalResult = mergeReviewIntoResult(finalResult, reviewPayload);
+      }
+
+      return finalResult;
     } catch (err) {
       return {
         agentId: config.agentId,
         status: 'failed',
         error: err instanceof Error ? err.message : String(err),
+        payload: buildStructuredPayload(config, '', err instanceof Error ? err.message : String(err)),
       };
     }
   }
@@ -126,6 +157,8 @@ export function toolWhitelistForType(
       return PLAN_TOOLS;
     case 'general':
       return GENERAL_TOOLS; // null = all tools
+    case 'review':
+      return REVIEW_TOOLS;
     default:
       // Custom agent types — tools are passed via SubagentConfig.tools
       return null;
@@ -166,6 +199,8 @@ export function buildSubagentSystemPrompt(params: SubagentPromptParams): string 
     ? 'read-only search tools (read, glob, grep, list)'
     : agentType === 'plan'
       ? 'read-only search + task management tools'
+      : agentType === 'review'
+        ? 'read-only verification tools (read, glob, grep, list, task_list)'
       : 'a full set of development tools (bash, file read/write/edit, glob, grep, web, etc.)';
 
   const lines: string[] = [];
@@ -189,12 +224,10 @@ export function buildSubagentSystemPrompt(params: SubagentPromptParams): string 
     "5. **Recover from truncated tool output** — If output was truncated, re-read using smaller chunks instead of full reads.",
     '',
     '## Output Format',
-    'When complete, your final response should include:',
-    '- What you accomplished or found',
-    '- Any files you created or modified',
-    '- Any issues encountered or remaining work',
-    "- Any relevant details the " + parentLabel + " should know",
-    '- Keep it concise but informative',
+    'End with a ```json fenced object that is truthful and concise.',
+    'Worker format: { "summary": string, "artifacts": [], "evidence": [], "risks": [], "nextActions": [], "confidence": number }',
+    'Review format: { "summary": string, "decision": "pass|needs_fix|blocked", "findings": [], "nextActions": [], "confidence": number }',
+    'You may include brief prose before the JSON, but the JSON must be present.',
     '',
     "## What You DON'T Do",
     "- NO user conversations (that's the " + parentLabel + "'s job)",
