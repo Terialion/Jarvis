@@ -74,6 +74,12 @@ export type MessageListProps = {
   activeSearchMatch?: SearchMatch | null;
 };
 
+export function isStandaloneRunningToolMessage(message: Message): boolean {
+  if (!Array.isArray(message.content) || message.content.length !== 1) return false;
+  const block = message.content[0];
+  return block?.type === "tool_use" && block.status === "running";
+}
+
 const ROLE_CONFIG = {
   user: { icon: ">", label: "You", color: "cyan" as const, railColor: "#1D6F8C" },
   assistant: { icon: "o", label: "Jarvis", color: "#DA7756" as const, railColor: "#7C4A39" },
@@ -307,6 +313,35 @@ function ToolUseBlock({
         </Box>
       )}
     </BlockShell>
+  );
+}
+
+export function LiveToolUseRail({
+  message,
+  allToolResultsExpanded,
+}: {
+  message: Message;
+  allToolResultsExpanded?: boolean;
+}): React.ReactNode {
+  if (!Array.isArray(message.content) || message.content.length !== 1) return null;
+  const block = message.content[0];
+  if (!block || block.type !== "tool_use") return null;
+
+  const config = ROLE_CONFIG[message.role];
+  const isSystem = message.role === "system";
+
+  return (
+    <MessageRail
+      color={config.railColor}
+      label={
+        <Box>
+          <Text color={config.color} dimColor={isSystem}>{config.icon}</Text>
+          <Text color={config.color} dimColor={isSystem} bold={!isSystem}> {config.label}</Text>
+          <Text dimColor> | using {block.toolName}</Text>
+        </Box>
+      }
+      body={<ToolUseBlock content={block} allExpanded={allToolResultsExpanded} />}
+    />
   );
 }
 
@@ -610,6 +645,72 @@ function LiveReasoningBlock({
   );
 }
 
+export function LiveAssistantReasoningRail({
+  text,
+  elapsedMs,
+  expanded,
+}: {
+  text: string;
+  elapsedMs?: number;
+  expanded?: boolean;
+}): React.ReactNode {
+  return (
+    <MessageRail
+      color={ROLE_CONFIG.assistant.railColor}
+      label={
+        <Box>
+          <Text color={ROLE_CONFIG.assistant.color}>{ROLE_CONFIG.assistant.icon}</Text>
+          <Text color={ROLE_CONFIG.assistant.color} bold> Jarvis</Text>
+          <Text dimColor> | working</Text>
+        </Box>
+      }
+      body={
+        <LiveReasoningBlock
+          text={text}
+          elapsedMs={elapsedMs}
+          expanded={expanded}
+        />
+      }
+    />
+  );
+}
+
+export function LiveAssistantAnswerRail({
+  text,
+}: {
+  text: string;
+}): React.ReactNode {
+  const streamingLines = text ? getStableLineEntries(text, "streaming") : [];
+  if (streamingLines.length === 0) return null;
+
+  return (
+    <MessageRail
+      color={ROLE_CONFIG.assistant.railColor}
+      label={
+        <Box>
+          <Text color={ROLE_CONFIG.assistant.color}>{ROLE_CONFIG.assistant.icon}</Text>
+          <Text color={ROLE_CONFIG.assistant.color} bold> Jarvis</Text>
+          <Text dimColor> | drafting reply</Text>
+        </Box>
+      }
+      body={
+        <Box marginLeft={2} flexDirection="column">
+          {streamingLines.map(({ key, line }, index) => (
+            <Box key={key}>
+              <Text>
+                {line}
+                {index === streamingLines.length - 1 && (
+                  <StreamCursor visible streaming color="#DA7756" />
+                )}
+              </Text>
+            </Box>
+          ))}
+        </Box>
+      }
+    />
+  );
+}
+
 export function MessageList({
   messages,
   streamingContent,
@@ -621,11 +722,12 @@ export function MessageList({
   searchQuery,
   activeSearchMatch,
 }: MessageListProps): React.ReactNode {
+  const historicalMessages = messages.filter((message) => !isStandaloneRunningToolMessage(message));
   const streamingLines = streamingContent ? getStableLineEntries(streamingContent, "streaming") : [];
 
   return (
     <Box flexDirection="column">
-      {messages.map((message, index) => (
+      {historicalMessages.map((message, index) => (
         <MessageItem
           key={message.id}
           message={message}
@@ -638,51 +740,14 @@ export function MessageList({
       ))}
 
       {streamingThinking && streamingThinking.trim() && (
-        <MessageRail
-          color={ROLE_CONFIG.assistant.railColor}
-          label={
-            <Box>
-              <Text color={ROLE_CONFIG.assistant.color}>{ROLE_CONFIG.assistant.icon}</Text>
-              <Text color={ROLE_CONFIG.assistant.color} bold> Jarvis</Text>
-              <Text dimColor> | working</Text>
-            </Box>
-          }
-          body={
-            <LiveReasoningBlock
-              text={streamingThinking}
-              elapsedMs={streamingElapsedMs}
-              expanded={allThinkingExpanded}
-            />
-          }
+        <LiveAssistantReasoningRail
+          text={streamingThinking}
+          elapsedMs={streamingElapsedMs}
+          expanded={allThinkingExpanded}
         />
       )}
 
-      {streamingLines.length > 0 && (
-        <MessageRail
-          color={ROLE_CONFIG.assistant.railColor}
-          label={
-            <Box>
-              <Text color={ROLE_CONFIG.assistant.color}>{ROLE_CONFIG.assistant.icon}</Text>
-              <Text color={ROLE_CONFIG.assistant.color} bold> Jarvis</Text>
-              <Text dimColor> | drafting reply</Text>
-            </Box>
-          }
-          body={
-            <Box marginLeft={2} flexDirection="column">
-              {streamingLines.map(({ key, line }, index) => (
-                <Box key={key}>
-                  <Text>
-                    {line}
-                    {index === streamingLines.length - 1 && (
-                      <StreamCursor visible streaming color="#DA7756" />
-                    )}
-                  </Text>
-                </Box>
-              ))}
-            </Box>
-          }
-        />
-      )}
+      {streamingLines.length > 0 && <LiveAssistantAnswerRail text={streamingContent ?? ""} />}
     </Box>
   );
 }

@@ -25,6 +25,27 @@ export function shouldAutoResumeFollow(input: {
   return false;
 }
 
+export function shouldAutoScrollToBottomOnContentUpdate(input: {
+  followOutput: boolean;
+  hasSelection: boolean;
+  interactivePromptActive: boolean;
+  scrollDraining: boolean;
+  remainingScrollDistance: number;
+}): boolean {
+  const {
+    followOutput,
+    hasSelection,
+    interactivePromptActive,
+    scrollDraining,
+    remainingScrollDistance,
+  } = input;
+  if (!followOutput || hasSelection || interactivePromptActive || scrollDraining) {
+    return false;
+  }
+
+  return remainingScrollDistance <= 3;
+}
+
 export function shouldResumeLiveOutputFromBottomAction(hasSelection: boolean): boolean {
   return !hasSelection;
 }

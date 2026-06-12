@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   computeAutoFollowState,
+  shouldApplyMountedRangeClamp,
   shouldPersistScrollTopAfterClamp,
 } from "../vendor/ink-renderer/render-node-to-output.js";
 
@@ -74,6 +75,22 @@ describe("computeAutoFollowState", () => {
     ).toBe(false);
   });
 
+  it("does not apply mounted-range clamp while passively browsing history", () => {
+    expect(
+      shouldApplyMountedRangeClamp({
+        pendingDelta: undefined,
+        followedThisFrame: false,
+      }),
+    ).toBe(false);
+
+    expect(
+      shouldApplyMountedRangeClamp({
+        pendingDelta: 0,
+        followedThisFrame: false,
+      }),
+    ).toBe(false);
+  });
+
   it("does not auto-follow while follow is explicitly disabled", () => {
     const result = computeAutoFollowState({
       scrollTopBeforeFollow: 80,
@@ -108,6 +125,20 @@ describe("computeAutoFollowState", () => {
         clampedToMaxScroll: 92,
         pendingDelta: 12,
         followedThisFrame: false,
+      }),
+    ).toBe(true);
+
+    expect(
+      shouldApplyMountedRangeClamp({
+        pendingDelta: 12,
+        followedThisFrame: false,
+      }),
+    ).toBe(true);
+
+    expect(
+      shouldApplyMountedRangeClamp({
+        pendingDelta: undefined,
+        followedThisFrame: true,
       }),
     ).toBe(true);
   });

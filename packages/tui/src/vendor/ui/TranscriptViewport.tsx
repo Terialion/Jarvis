@@ -14,6 +14,47 @@ export type TranscriptItem = {
   render: () => ReactNode;
 };
 
+export function shouldExposeMountedRangeClamp(input: {
+  pendingDelta: number;
+  followDisabled: boolean;
+  selectionLocked: boolean;
+  sticky: boolean;
+}): boolean {
+  const { pendingDelta, followDisabled, selectionLocked, sticky } = input;
+  if (pendingDelta !== 0) return true;
+  if (selectionLocked) return false;
+  if (followDisabled) return false;
+  return sticky;
+}
+
+export function shouldRefreshViewportSnapshotAfterLayout(input: {
+  current: {
+    scrollTop: number;
+    viewportHeight: number;
+    pendingDelta: number;
+  };
+  next: {
+    scrollTop: number;
+    viewportHeight: number;
+    pendingDelta: number;
+  };
+  followDisabled: boolean;
+  selectionLocked: boolean;
+  sticky: boolean;
+}): boolean {
+  const { current, next, followDisabled, selectionLocked, sticky } = input;
+  const passiveViewportLocked = (followDisabled || selectionLocked) && !sticky && next.pendingDelta === 0;
+  if (passiveViewportLocked) {
+    return false;
+  }
+
+  return (
+    current.scrollTop !== next.scrollTop ||
+    current.viewportHeight !== next.viewportHeight ||
+    current.pendingDelta !== next.pendingDelta
+  );
+}
+
 export function TranscriptViewport({
   items,
   scrollRef,
@@ -140,8 +181,8 @@ export function TranscriptViewport({
     }
 
     const offsets = offsetsCacheRef.current?.offsets ?? [];
-    const clampMin = range.startIndex < offsets.length ? offsets[range.startIndex] : undefined;
-    const clampMax =
+    const nextClampMin = range.startIndex < offsets.length ? offsets[range.startIndex] : undefined;
+    const nextClampMax =
       range.endIndex > 0 && range.endIndex - 1 < offsets.length
         ? (offsets[range.endIndex - 1] ?? 0) +
           (heightCacheRef.current.get(items[range.endIndex - 1]?.id ?? "") ??
@@ -149,6 +190,15 @@ export function TranscriptViewport({
             6)
         : undefined;
     const handle = scrollRef.current;
+    const sticky = handle?.isSticky() ?? false;
+    const shouldExposeClamp = shouldExposeMountedRangeClamp({
+      pendingDelta: scrollSnapshot.pendingDelta,
+      followDisabled: Boolean(followDisabled),
+      selectionLocked: Boolean(selectionLocked),
+      sticky,
+    });
+    const clampMin = shouldExposeClamp ? nextClampMin : undefined;
+    const clampMax = shouldExposeClamp ? nextClampMax : undefined;
     handle?.setClampBounds(clampMin, clampMax);
 
     if (handle) {
@@ -157,13 +207,17 @@ export function TranscriptViewport({
         viewportHeight: handle.getViewportHeight(),
         pendingDelta: handle.getPendingDelta(),
       };
-      setScrollSnapshot((current) =>
-        current.scrollTop === nextSnapshot.scrollTop &&
-        current.viewportHeight === nextSnapshot.viewportHeight &&
-        current.pendingDelta === nextSnapshot.pendingDelta
-          ? current
-          : nextSnapshot,
-      );
+      setScrollSnapshot((current) => (
+        shouldRefreshViewportSnapshotAfterLayout({
+          current,
+          next: nextSnapshot,
+          followDisabled: Boolean(followDisabled),
+          selectionLocked: Boolean(selectionLocked),
+          sticky,
+        })
+          ? nextSnapshot
+          : current
+      ));
     }
 
     onMetricsChange?.({
@@ -180,7 +234,20 @@ export function TranscriptViewport({
     if (mutated) {
       setMeasurementVersion((value) => value + 1);
     }
-  }, [columns, itemKeys, items, onMetricsChange, range.endIndex, range.startIndex, range.totalHeight, scrollRef, visibleItems]);
+  }, [
+    columns,
+    followDisabled,
+    itemKeys,
+    items,
+    onMetricsChange,
+    range.endIndex,
+    range.startIndex,
+    range.totalHeight,
+    scrollRef,
+    scrollSnapshot.pendingDelta,
+    selectionLocked,
+    visibleItems,
+  ]);
 
   return (
     <ScrollBox

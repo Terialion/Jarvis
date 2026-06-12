@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   getViewportMode,
+  shouldAutoScrollToBottomOnContentUpdate,
   shouldAutoResumeFollow,
   shouldResumeLiveOutputFromBottomAction,
 } from "../vendor/ui/viewport-mode.js";
@@ -44,6 +45,30 @@ describe("selection mode viewport rules", () => {
   it("only allows explicit bottom resume when selection mode is inactive", () => {
     expect(shouldResumeLiveOutputFromBottomAction(true)).toBe(false);
     expect(shouldResumeLiveOutputFromBottomAction(false)).toBe(true);
+  });
+
+  it("does not auto-scroll to bottom on streamed content when the viewport is away from the bottom", () => {
+    expect(
+      shouldAutoScrollToBottomOnContentUpdate({
+        followOutput: true,
+        hasSelection: false,
+        interactivePromptActive: false,
+        scrollDraining: false,
+        remainingScrollDistance: 18,
+      }),
+    ).toBe(false);
+  });
+
+  it("still auto-scrolls when we are actively following and remain pinned near the bottom", () => {
+    expect(
+      shouldAutoScrollToBottomOnContentUpdate({
+        followOutput: true,
+        hasSelection: false,
+        interactivePromptActive: false,
+        scrollDraining: false,
+        remainingScrollDistance: 1,
+      }),
+    ).toBe(true);
   });
 });
 

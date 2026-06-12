@@ -1782,6 +1782,7 @@ export class AgentLoop {
     context: { sessionId?: string; turnId?: string; signal?: AbortSignal },
   ): Promise<ToolResult> {
     const startedAt = Date.now();
+    const timeoutMs = Math.max(1, Math.round(this.toolTimeoutS * 1000));
 
     // pre_tool_use hook
     if (this.hooks) {
@@ -1805,42 +1806,127 @@ export class AgentLoop {
       }
     }
 
-    // Execute through ToolRuntime (preferred) or fallback to registry dispatch
-    let toolResult: ToolResult;
-    if (this.toolRuntime) {
-      toolResult = await this.toolRuntime.execute(name, args, {
-        sessionId: context.sessionId,
-        signal: context.signal,
-      });
-    } else if (this.tools) {
-      let rawResult = '';
-      try {
-        rawResult = await this.tools.dispatch(name, args, {
-          signal: context.signal,
-        });
-      } catch {
-        // dispatch() already catches errors internally, but guard anyway
-        rawResult = JSON.stringify({ error: `Tool dispatch failed: ${name}` });
+    const toolAbortController = new AbortController();
+    const parentSignal = context.signal;
+    const onParentAbort = () => {
+      toolAbortController.abort(parentSignal?.reason ?? 'tool_interrupted');
+    };
+    if (parentSignal) {
+      if (parentSignal.aborted) {
+        toolAbortController.abort(parentSignal.reason ?? 'tool_interrupted');
+      } else {
+        parentSignal.addEventListener('abort', onParentAbort, { once: true });
       }
-      let parsed: Record<string, unknown> | null = null;
-      try { parsed = JSON.parse(rawResult); } catch { /* not JSON */ }
-      toolResult = {
-        callId,
-        name,
-        ok: parsed === null || typeof parsed.error !== 'string',
-        content: rawResult,
-        error: parsed && typeof parsed.error === 'string' ? parsed.error : undefined,
-        durationMs: 0,
-      };
-    } else {
-      toolResult = {
+    }
+
+    let timeoutHandle: ReturnType<typeof setTimeout> | null = null;
+    const onForcedParentAbort = () => {
+      if (timeoutHandle) {
+        clearTimeout(timeoutHandle);
+        timeoutHandle = null;
+      }
+    };
+    const resolveInterruptedToolResult = (resolve: (value: ToolResult) => void) => {
+      onForcedParentAbort();
+      resolve({
         callId,
         name,
         ok: false,
-        content: '',
-        error: 'No tool registry or runtime configured',
-        durationMs: 0,
-      };
+        content: JSON.stringify({
+          error: `Tool "${name}" interrupted`,
+        }),
+        error: `Tool "${name}" interrupted`,
+        errorType: 'interrupted',
+        durationMs: Date.now() - startedAt,
+      });
+    };
+
+    const forcedToolResultPromise = new Promise<ToolResult>((resolve) => {
+      timeoutHandle = setTimeout(() => {
+        toolAbortController.abort('tool_timeout');
+        resolve({
+          callId,
+          name,
+          ok: false,
+          content: JSON.stringify({
+            error: `Tool "${name}" timed out after ${timeoutMs}ms`,
+            timeout_ms: timeoutMs,
+          }),
+          error: `Tool "${name}" timed out after ${timeoutMs}ms`,
+          errorType: 'tool_timeout',
+          durationMs: Date.now() - startedAt,
+        });
+      }, timeoutMs);
+
+      if (parentSignal) {
+        parentSignal.addEventListener('abort', onForcedParentAbort, { once: true });
+        parentSignal.addEventListener('abort', () => resolveInterruptedToolResult(resolve), { once: true });
+      }
+    });
+
+    const executeToolPromise: Promise<ToolResult> = (async () => {
+      try {
+        if (this.toolRuntime) {
+          return await this.toolRuntime.execute(name, args, {
+            sessionId: context.sessionId,
+            signal: toolAbortController.signal,
+          });
+        }
+
+        if (this.tools) {
+          let rawResult = '';
+          try {
+            rawResult = await this.tools.dispatch(name, args, {
+              signal: toolAbortController.signal,
+            });
+          } catch {
+            rawResult = JSON.stringify({ error: `Tool dispatch failed: ${name}` });
+          }
+          let parsed: Record<string, unknown> | null = null;
+          try { parsed = JSON.parse(rawResult); } catch { /* not JSON */ }
+          return {
+            callId,
+            name,
+            ok: parsed === null || typeof parsed.error !== 'string',
+            content: rawResult,
+            error: parsed && typeof parsed.error === 'string' ? parsed.error : undefined,
+            durationMs: 0,
+          };
+        }
+
+        return {
+          callId,
+          name,
+          ok: false,
+          content: '',
+          error: 'No tool registry or runtime configured',
+          durationMs: 0,
+        };
+      } catch (error) {
+        const message = error instanceof Error ? error.message : `Tool execution failed: ${name}`;
+        return {
+          callId,
+          name,
+          ok: false,
+          content: JSON.stringify({ error: message }),
+          error: message,
+          errorType: toolAbortController.signal.aborted ? 'interrupted' : 'tool_error',
+          durationMs: Date.now() - startedAt,
+        };
+      }
+    })();
+
+    // If a tool ignores abort, we still need the turn to move on.
+    void executeToolPromise.catch(() => {});
+    let toolResult = await Promise.race([executeToolPromise, forcedToolResultPromise]);
+
+    if (timeoutHandle) {
+      clearTimeout(timeoutHandle);
+      timeoutHandle = null;
+    }
+    if (parentSignal) {
+      parentSignal.removeEventListener('abort', onParentAbort);
+      parentSignal.removeEventListener('abort', onForcedParentAbort);
     }
 
     toolResult.durationMs = Date.now() - startedAt;

@@ -961,6 +961,65 @@ describe('AgentLoop', () => {
     expect(result.answer).toBe('Handled missing tool');
   });
 
+  it('times out stalled tool calls and continues the turn', async () => {
+    const toolRuntime = {
+      execute: vi.fn((_name: string, _args: Record<string, unknown>, context?: { signal?: AbortSignal }) => new Promise((resolve) => {
+        context?.signal?.addEventListener('abort', () => {
+          resolve({
+            callId: 'runtime_call',
+            name: 'web_fetch',
+            ok: false,
+            content: JSON.stringify({ error: 'aborted after timeout' }),
+            error: 'aborted after timeout',
+            errorType: 'tool_error',
+            durationMs: 0,
+          });
+        }, { once: true });
+      })),
+    };
+
+    const mockProvider = createMockProvider([
+      {
+        content: '',
+        toolCalls: [
+          {
+            name: 'web_fetch',
+            arguments: { url: 'https://example.com' },
+            callId: 'call_fetch_1',
+          },
+        ],
+        finishReason: 'tool_calls',
+      },
+      { content: 'Tool timed out, here is the fallback summary.', finishReason: 'stop' },
+    ]);
+
+    const onToolEnd = vi.fn();
+    const loop = new AgentLoop({
+      model: { model: 'test-model' },
+      provider: mockProvider as unknown as LLMProvider,
+      toolRuntime: toolRuntime as never,
+      toolTimeoutS: 0.05,
+      onToolEnd,
+    });
+
+    const outcome = await Promise.race([
+      loop.runTurn('Search this topic'),
+      new Promise<'timed_out_waiting_for_run'>((resolve) => setTimeout(() => resolve('timed_out_waiting_for_run'), 250)),
+    ]);
+
+    expect(outcome).not.toBe('timed_out_waiting_for_run');
+    if (outcome === 'timed_out_waiting_for_run') {
+      throw new Error('AgentLoop stayed stuck on a stalled tool call');
+    }
+
+    expect(outcome.toolResults).toHaveLength(1);
+    expect(outcome.toolResults[0]?.ok).toBe(false);
+    expect(outcome.toolResults[0]?.errorType).toBe('tool_timeout');
+    expect(outcome.toolResults[0]?.error).toMatch(/timed out/i);
+    expect(outcome.finalAnswer).toContain('fallback summary');
+    expect(onToolEnd).toHaveBeenCalledTimes(1);
+  });
+
   it('emits lifecycle events', async () => {
     const mockProvider = createMockProvider([
       { content: 'OK', finishReason: 'stop' },

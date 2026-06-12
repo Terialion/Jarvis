@@ -2,20 +2,18 @@ import { describe, expect, it } from "vitest";
 import { buildViewportFooterView } from "../vendor/ui/viewport-footer.js";
 
 describe("buildViewportFooterView", () => {
-  it("builds a live footer for streaming output", () => {
+  it("omits the live footer in following mode", () => {
     const footer = buildViewportFooterView({ mode: "following", isLoading: true });
 
-    expect(footer.emphasis).toBe(true);
-    expect(footer.segments.map((segment) => segment.content)).toEqual([
-      "[Live mode]",
-      "Following output",
-      "Pinned to the newest live step",
-    ]);
-    expect(footer.segments.map((segment) => segment.color)).toEqual(["green", "green", "gray"]);
+    expect(footer).toBeNull();
   });
 
   it("builds a history footer that keeps the viewport pinned in history", () => {
     const footer = buildViewportFooterView({ mode: "history", isLoading: false });
+    expect(footer).not.toBeNull();
+    if (!footer) {
+      throw new Error("expected history footer");
+    }
 
     expect(footer.segments.map((segment) => segment.content)).toEqual([
       "[History mode]",
@@ -33,6 +31,10 @@ describe("buildViewportFooterView", () => {
 
   it("builds a selection footer that keeps auto behavior frozen", () => {
     const footer = buildViewportFooterView({ mode: "selection", isLoading: false });
+    expect(footer).not.toBeNull();
+    if (!footer) {
+      throw new Error("expected selection footer");
+    }
 
     expect(footer.segments.map((segment) => segment.content)).toEqual([
       "[Selection mode]",

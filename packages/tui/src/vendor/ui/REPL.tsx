@@ -25,7 +25,14 @@ import {
   type CodexTurnSnapshot,
 } from "../../presentation/codex-timeline-state.js";
 import { Divider } from "./Divider";
-import { type Message, MessageList } from "./MessageList";
+import {
+  type Message,
+  isStandaloneRunningToolMessage,
+  LiveAssistantAnswerRail,
+  LiveAssistantReasoningRail,
+  LiveToolUseRail,
+  MessageList,
+} from "./MessageList";
 import { ModelSelector, type ModelSelectionResult } from "./ModelSelector";
 import type { ModelSelectorProps } from "./ModelSelector";
 import { EffortSelector } from "./EffortSelector";
@@ -39,7 +46,10 @@ import type { SearchMatch } from "./SearchOverlay";
 import type { TuiPresentationMode } from "../../presentation/contracts.js";
 import { useRegisterKeybindingContext } from "./keybindings/KeybindingContext";
 import { useKeybindings } from "./keybindings/useKeybinding";
-import { shouldResumeLiveOutputFromBottomAction } from "./viewport-mode.js";
+import {
+  shouldAutoScrollToBottomOnContentUpdate,
+  shouldResumeLiveOutputFromBottomAction,
+} from "./viewport-mode.js";
 import { buildViewportFooterView } from "./viewport-footer.js";
 import { FullscreenLayout } from "./FullscreenLayout.js";
 import {
@@ -529,7 +539,7 @@ export function REPL({
       if (askUserQuestion || permissionRequest) {
         return;
       }
-      // Agents panel focus mode éˆ?route keys to panel
+      // Agents panel focus mode é–³?route keys to panel
       if (agentsFocused && agentsPanelVisible) {
         if (_input === "q" || key.escape || (key.ctrl && _input === "g")) {
           setAgentsFocused(false);
@@ -614,11 +624,11 @@ export function REPL({
           setThinkingExpanded((prev) => !prev);
         }
       }
-      // Ctrl+G handled earlier for focus/panel toggle éˆ?skip here
+      // Ctrl+G handled earlier for focus/panel toggle é–³?skip here
       if (key.ctrl && _input === "o") {
         setToolResultsExpanded((prev) => !prev);
       }
-      // Shift+Tab: cycle permission modes (suggest éˆ?auto-edit éˆ?full-auto éˆ?suggest)
+      // Shift+Tab: cycle permission modes (suggest é–³?auto-edit é–³?full-auto é–³?suggest)
       if (key.tab && key.shift) {
         onPermissionModeCycle?.();
       }
@@ -694,12 +704,12 @@ export function REPL({
   }, [activeSearchMatch, codexState.searchDocuments, presentationMode, searchQuery]);
 
   const finalViewportStatusLine = useMemo(
-    (): StatusDetailLine => buildViewportFooterView({ mode: scrollPositionKind, isLoading }),
+    (): StatusDetailLine | null => buildViewportFooterView({ mode: scrollPositionKind, isLoading }),
     [isLoading, scrollPositionKind],
   );
 
   const combinedStatusDetailLines = useMemo(
-    () => [finalViewportStatusLine, ...statusDetailLines],
+    () => (finalViewportStatusLine ? [finalViewportStatusLine, ...statusDetailLines] : statusDetailLines),
     [finalViewportStatusLine, statusDetailLines],
   );
 
@@ -737,15 +747,14 @@ export function REPL({
         welcome: showWelcome ? welcome : undefined,
       });
     } else {
+      const liveToolMessages = messages.filter((message) => isStandaloneRunningToolMessage(message));
+
       items.push({
         id: "message-list",
         estimatedHeight: Math.max(12, messages.length * 6),
         render: () => (
           <MessageList
             messages={messages}
-            streamingContent={streamingContent}
-            streamingThinking={streamingThinking}
-            streamingElapsedMs={streamingElapsedMs}
             renderMessage={renderMessage}
             allThinkingExpanded={thinkingExpanded}
             allToolResultsExpanded={toolResultsExpanded}
@@ -754,6 +763,41 @@ export function REPL({
           />
         ),
       });
+
+      for (const message of liveToolMessages) {
+        items.push({
+          id: `live-tool-${message.id}`,
+          estimatedHeight: 10,
+          render: () => (
+            <LiveToolUseRail
+              message={message}
+              allToolResultsExpanded={toolResultsExpanded}
+            />
+          ),
+        });
+      }
+
+      if (streamingThinking && streamingThinking.trim()) {
+        items.push({
+          id: "live-reasoning",
+          estimatedHeight: thinkingExpanded ? 12 : 8,
+          render: () => (
+            <LiveAssistantReasoningRail
+              text={streamingThinking}
+              elapsedMs={streamingElapsedMs}
+              expanded={thinkingExpanded}
+            />
+          ),
+        });
+      }
+
+      if (streamingContent && streamingContent.trim()) {
+        items.push({
+          id: "live-answer",
+          estimatedHeight: Math.max(6, streamingContent.split("\n").length + 3),
+          render: () => <LiveAssistantAnswerRail text={streamingContent} />,
+        });
+      }
 
       if (isLoading && !streamingContent && !streamingThinking) {
         items.push({
@@ -883,10 +927,26 @@ export function REPL({
   // Manual scroll-to-bottom: only when followOutput is true (user hasn't scrolled up)
   // Replaces stickyScroll which was resetting scroll position to top on content change
   useEffect(() => {
-    if (followOutput && !hasSelection && !interactivePromptActive && !viewportState.scrollDraining) {
+    if (
+      shouldAutoScrollToBottomOnContentUpdate({
+        followOutput,
+        hasSelection,
+        interactivePromptActive,
+        scrollDraining: viewportState.scrollDraining,
+        remainingScrollDistance: getRemainingScrollDistance(),
+      })
+    ) {
       scrollRef.current?.scrollToBottom();
     }
-  }, [streamingContent, messages.length, followOutput, hasSelection, interactivePromptActive, viewportState.scrollDraining]);
+  }, [
+    streamingContent,
+    messages.length,
+    followOutput,
+    getRemainingScrollDistance,
+    hasSelection,
+    interactivePromptActive,
+    viewportState.scrollDraining,
+  ]);
 
   useEffect(() => {
     if (!onViewportDebugEvent) return;
@@ -1028,15 +1088,22 @@ function ReplBottomShell({
   combinedStatusDetailLines: StatusDetailLine[];
 }): React.ReactNode {
   const viewport = useViewportContext();
-  const footerLine: StatusDetailLine = useMemo(
-    () => ({
-      emphasis: true,
-      segments: buildViewportFooterView({ mode: viewport.mode, isLoading }).segments,
-    }),
+  const footerLine: StatusDetailLine | null = useMemo(
+    () => {
+      const footer = buildViewportFooterView({ mode: viewport.mode, isLoading });
+      if (!footer) {
+        return null;
+      }
+
+      return {
+        emphasis: true,
+        segments: footer.segments,
+      };
+    },
     [isLoading, viewport.mode],
   );
   const footerLines = useMemo(
-    () => [footerLine, ...combinedStatusDetailLines.slice(1)],
+    () => (footerLine ? [footerLine, ...combinedStatusDetailLines.slice(1)] : combinedStatusDetailLines.slice(1)),
     [combinedStatusDetailLines, footerLine],
   );
 

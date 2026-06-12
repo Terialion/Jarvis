@@ -9,7 +9,7 @@ export type ViewportFooterView = {
 export function buildViewportFooterView(input: {
   mode: ViewportMode;
   isLoading: boolean;
-}): ViewportFooterView {
+}): ViewportFooterView | null {
   const { mode, isLoading } = input;
 
   if (mode === "selection") {
@@ -37,15 +37,6 @@ export function buildViewportFooterView(input: {
     };
   }
 
-  return {
-    emphasis: true,
-    segments: [
-      { content: "[Live mode]", color: "green" },
-      { content: "Following output", color: "green" },
-      {
-        content: isLoading ? "Pinned to the newest live step" : "Pinned to the latest message",
-        color: "gray",
-      },
-    ],
-  };
+  void isLoading;
+  return null;
 }

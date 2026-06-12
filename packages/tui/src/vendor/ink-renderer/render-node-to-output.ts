@@ -167,6 +167,15 @@ export function shouldPersistScrollTopAfterClamp(input: {
   return clampedToMaxScroll === currentScrollTop;
 }
 
+export function shouldApplyMountedRangeClamp(input: {
+  pendingDelta: number | undefined;
+  followedThisFrame: boolean;
+}): boolean {
+  const { pendingDelta, followedThisFrame } = input;
+  if (followedThisFrame) return true;
+  return pendingDelta !== undefined && pendingDelta !== 0;
+}
+
 // ── Native terminal drain (iTerm2/Ghostty/etc. — proportional events) ──
 // Minimum rows applied per frame. Above this, drain is proportional (~3/4
 // of remaining) so big bursts catch up in log₄ frames while the tail
@@ -867,7 +876,12 @@ function renderNodeToOutput(
         // the right range. Not scheduling scrollDrainNode here keeps the
         // clamp passive — React's commit → resetAfterCommit → onRender will
         // paint again with fresh bounds.
-        const clamped = haveClamp ? Math.max(cMin, Math.min(clampedToMaxScroll, cMax)) : clampedToMaxScroll;
+        const clamped = haveClamp && shouldApplyMountedRangeClamp({
+          pendingDelta: node.pendingScrollDelta,
+          followedThisFrame: followState.shouldFollow,
+        })
+          ? Math.max(cMin, Math.min(clampedToMaxScroll, cMax))
+          : clampedToMaxScroll;
         if (
           shouldPersistScrollTopAfterClamp({
             currentScrollTop: cur,
