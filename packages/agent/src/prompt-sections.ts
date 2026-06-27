@@ -95,7 +95,12 @@ function buildStableSections(
       stability: 'stable',
       content: [
         '- Always use tools for file contents, directory listings, code search, reading files, running commands, web content, math, dates, and git operations.',
-        '- Use the most specific tool available: glob for filenames, grep for content search, read for known paths.',
+        '- Use the most specific tool available: repo_map for first-pass project orientation, glob for filenames, grep for content search, read for known paths.',
+        '- For broad codebase tasks, call repo_map before deep reading so you can identify entry points, dependency groups, source files, and important symbols. Then use grep/read_file to inspect the specific files and symbols that repo_map surfaces.',
+        '- For web research, call search_router when the best source is not obvious; follow its route plan before choosing a provider-specific search tool.',
+        '- For web research, first check whether a search-related skill is relevant and load it when available.',
+        '- Combine search-related skills with MCP search/fetch tools when MCP provides a useful source or authenticated access.',
+        '- Use general web_search/web_fetch for ordinary web research. Tavily is provider-specific: use it when explicitly requested, when comparing/cross-checking providers, or as a fallback when the general route is unavailable.',
         '- Use only provided tools. Never invent tool names.',
         '- If a tool fails, try a different approach. If it fails repeatedly, report the error clearly instead of pretending success.',
         '- Run independent tool calls together when they do not depend on one another.',

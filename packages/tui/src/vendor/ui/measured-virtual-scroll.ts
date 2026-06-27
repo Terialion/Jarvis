@@ -2,6 +2,7 @@ export type MeasuredRangeInput = {
   itemKeys: readonly string[];
   heightCache: ReadonlyMap<string, number>;
   estimatedHeight: number;
+  estimatedHeights?: ReadonlyMap<string, number>;
   scrollTop: number;
   viewportHeight: number;
   overscan: number;
@@ -22,6 +23,15 @@ export type MeasuredOffsetsCache = {
   itemCount: number;
   signature: string;
 };
+
+function getEstimatedItemHeight(
+  itemKey: string,
+  heightCache: ReadonlyMap<string, number>,
+  estimatedHeight: number,
+  estimatedHeights?: ReadonlyMap<string, number>,
+): number {
+  return heightCache.get(itemKey) ?? estimatedHeights?.get(itemKey) ?? estimatedHeight;
+}
 
 function clamp(value: number, min: number, max: number): number {
   return Math.max(min, Math.min(max, value));
@@ -58,13 +68,14 @@ export function buildMeasuredOffsets(input: {
   itemKeys: readonly string[];
   heightCache: ReadonlyMap<string, number>;
   estimatedHeight: number;
+  estimatedHeights?: ReadonlyMap<string, number>;
 }): number[] {
-  const { itemKeys, heightCache, estimatedHeight } = input;
+  const { itemKeys, heightCache, estimatedHeight, estimatedHeights } = input;
   const offsets: number[] = [];
   let offset = 0;
   for (const key of itemKeys) {
     offsets.push(offset);
-    offset += heightCache.get(key) ?? estimatedHeight;
+    offset += getEstimatedItemHeight(key, heightCache, estimatedHeight, estimatedHeights);
   }
   return offsets;
 }
@@ -75,15 +86,16 @@ export function getMeasuredOffsetsCached(input: {
   itemKeys: readonly string[];
   heightCache: ReadonlyMap<string, number>;
   estimatedHeight: number;
+  estimatedHeights?: ReadonlyMap<string, number>;
 }): MeasuredOffsetsCache {
-  const { cache, version, itemKeys, heightCache, estimatedHeight } = input;
+  const { cache, version, itemKeys, heightCache, estimatedHeight, estimatedHeights } = input;
   const signature = itemKeys.join("\u0000");
   if (cache && cache.version === version && cache.itemCount === itemKeys.length && cache.signature === signature) {
     return cache;
   }
 
   return {
-    offsets: buildMeasuredOffsets({ itemKeys, heightCache, estimatedHeight }),
+    offsets: buildMeasuredOffsets({ itemKeys, heightCache, estimatedHeight, estimatedHeights }),
     version,
     itemCount: itemKeys.length,
     signature,
@@ -108,16 +120,25 @@ export function computeMeasuredRange(input: MeasuredRangeInput): MeasuredRange {
     itemKeys,
     heightCache,
     estimatedHeight,
+    estimatedHeights,
     scrollTop,
     viewportHeight,
     overscan,
     pendingDelta = 0,
   } = input;
-  const offsets = input.offsets ? [...input.offsets] : buildMeasuredOffsets({ itemKeys, heightCache, estimatedHeight });
+  const offsets = input.offsets
+    ? [...input.offsets]
+    : buildMeasuredOffsets({ itemKeys, heightCache, estimatedHeight, estimatedHeights });
   const totalHeight =
     itemKeys.length === 0
       ? 0
-      : offsets[offsets.length - 1]! + (heightCache.get(itemKeys[itemKeys.length - 1]!) ?? estimatedHeight);
+      : offsets[offsets.length - 1]! +
+        getEstimatedItemHeight(
+          itemKeys[itemKeys.length - 1]!,
+          heightCache,
+          estimatedHeight,
+          estimatedHeights,
+        );
 
   if (itemKeys.length === 0) {
     return {
@@ -138,7 +159,8 @@ export function computeMeasuredRange(input: MeasuredRangeInput): MeasuredRange {
   let end = start;
   while (end < itemKeys.length) {
     const top = offsets[end]!;
-    const bottom = top + (heightCache.get(itemKeys[end]!) ?? estimatedHeight);
+    const bottom =
+      top + getEstimatedItemHeight(itemKeys[end]!, heightCache, estimatedHeight, estimatedHeights);
     if (bottom >= effectiveBottom) break;
     end += 1;
   }

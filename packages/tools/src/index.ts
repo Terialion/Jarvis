@@ -1,5 +1,5 @@
 // ============================================================================
-// @jarvis/tools — barrel exports
+// @jarvis/tools - barrel exports
 // ============================================================================
 
 // Registry
@@ -25,11 +25,23 @@ export {
   type UserPermissionMode,
   type PermissionCheckResult,
   type ApprovalRequest,
+  type ToolRuntimeLifecycleEvent,
   type PermissionRule,
   type CommandGroup,
   type CommandClassification,
   type ToolRiskLevel,
 } from './runtime.js';
+export {
+  applyToolLifecycleEvent,
+  buildToolLifecycleSummary,
+  createToolLifecycleState,
+} from './tool-lifecycle.js';
+export type {
+  ToolLifecycleRun,
+  ToolLifecycleRunStatus,
+  ToolLifecycleState,
+  ToolLifecycleSummary,
+} from './tool-lifecycle.js';
 
 // Sandbox policy
 export {
@@ -56,7 +68,9 @@ export { writeFileTool, writeFileSchema } from './builtin/file-write.js';
 export { editFileTool, editFileSchema } from './builtin/file-edit.js';
 export { globTool, globSchema } from './builtin/glob.js';
 export { grepTool, grepSchema } from './builtin/grep.js';
+export { repoMapTool, repoMapSchema, buildRepoMap, type RepoMapResult, type RepoMapFile, type RepoMapSymbol, type RepoMapImport, type RepoMapImportGroup, type RepoMapImportGroups } from './builtin/repo-map.js';
 export { webSearchTool, webSearchSchema, createWebSearchTool, createWebSearchHandler, DefaultWebSearchBackend, type WebSearchBackend, type WebSearchResult } from './builtin/web-search.js';
+export { searchRouterTool, searchRouterSchema, buildSearchRoutePlan, type SearchRoute, type SearchRoutePlan, type SearchRouteInput } from './builtin/search-router.js';
 export { webFetchTool, webFetchSchema, createWebFetchHandler, type WebFetchBackend } from './builtin/web-fetch.js';
 export { askUserQuestionTool, setAskUserQuestionBridge } from './builtin/ask-user-question.js';
 export type { AskQuestionDef, AskUserQuestionCallback } from './builtin/ask-user-question.js';
@@ -79,7 +93,7 @@ export { createListMcpResourcesTool, createReadMcpResourceTool, createMcpStatusT
 export { createMcpToolEntries, type McpToolClient, type McpToolFilterConfig } from './builtin/mcp-tools.js';
 export { mcpBootstrapTool, mcpBootstrapSchema } from './builtin/mcp-setup.js';
 export { pluginBootstrapTool, pluginBootstrapSchema } from './builtin/plugin-setup.js';
-export { TavilySearchBackend, TavilyFetchBackend, tryCreateTavilySearch, tryCreateTavilyFetch, type TavilyOptions } from './builtin/tavily-backend.js';
+export { TavilySearchBackend, TavilyFetchBackend, tryCreateTavilySearch, tryCreateTavilyFetch, createTavilySearchTool, createTavilyFetchTool, type TavilyOptions } from './builtin/tavily-backend.js';
 
 import type { ToolEntry } from './registry.js';
 import { bashTool } from './builtin/bash.js';
@@ -88,6 +102,8 @@ import { writeFileTool } from './builtin/file-write.js';
 import { editFileTool } from './builtin/file-edit.js';
 import { globTool } from './builtin/glob.js';
 import { grepTool } from './builtin/grep.js';
+import { repoMapTool } from './builtin/repo-map.js';
+import { searchRouterTool } from './builtin/search-router.js';
 import { askUserQuestionTool } from './builtin/ask-user-question.js';
 import { taskCreateTool, taskUpdateTool, taskListTool, taskGetTool, taskOutputTool, taskStopTool } from './builtin/task.js';
 import { enterPlanModeTool, exitPlanModeTool } from './builtin/plan-mode.js';
@@ -105,6 +121,8 @@ export const allBuiltinTools: ToolEntry[] = [
   editFileTool,
   globTool,
   grepTool,
+  repoMapTool,
+  searchRouterTool,
   askUserQuestionTool,
   taskCreateTool,
   taskUpdateTool,

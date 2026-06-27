@@ -192,6 +192,8 @@ const DEFAULT_RISK_MAP: Record<string, ToolRiskLevel> = {
   grep: 'read_only',
   web_search: 'network',
   web_fetch: 'network',
+  tavily_search: 'network',
+  tavily_fetch: 'network',
   ask_user_question: 'read_only',
   task_create: 'read_only',
   task_update: 'read_only',
@@ -567,6 +569,14 @@ export interface ApprovalRequest {
   argsKey: string;
 }
 
+export type ToolRuntimeLifecycleEvent =
+  | { stage: 'approval_requested'; toolName: string; callId: string; argsKey: string; risk?: string }
+  | { stage: 'approval_granted'; toolName: string; callId: string; argsKey: string }
+  | { stage: 'approval_denied'; toolName: string; callId: string; argsKey: string; reason: string }
+  | { stage: 'dispatch_started'; toolName: string; callId: string }
+  | { stage: 'dispatch_completed'; toolName: string; callId: string; ok: boolean; durationMs: number }
+  | { stage: 'dispatch_failed'; toolName: string; callId: string; durationMs: number; reason: string };
+
 export interface ToolRuntimeOptions {
   /** Default max result characters before truncation (per-tool caps override) */
   defaultMaxResultSize?: number;
@@ -578,6 +588,8 @@ export interface ToolRuntimeOptions {
   onApprovalNeeded?: (request: ApprovalRequest) => Promise<boolean>;
   /** Optional permission state machine for context-aware gating */
   stateMachine?: PermissionStateMachine;
+  /** Optional lifecycle hook for diagnostics and UI state mapping. */
+  onLifecycleEvent?: (event: ToolRuntimeLifecycleEvent) => void;
 }
 
 /**
@@ -591,6 +603,7 @@ export class ToolRuntime {
   private approvalGate?: ApprovalGate;
   private onApprovalNeeded?: ToolRuntimeOptions['onApprovalNeeded'];
   private stateMachine?: PermissionStateMachine;
+  private onLifecycleEvent?: ToolRuntimeOptions['onLifecycleEvent'];
 
   constructor(registry: ToolRegistry, options: ToolRuntimeOptions = {}) {
     this.registry = registry;
@@ -599,6 +612,7 @@ export class ToolRuntime {
     this.approvalGate = options.approvalGate;
     this.onApprovalNeeded = options.onApprovalNeeded;
     this.stateMachine = options.stateMachine;
+    this.onLifecycleEvent = options.onLifecycleEvent;
   }
 
   /** Get the permission manager (for external configuration). */
@@ -649,6 +663,13 @@ export class ToolRuntime {
         // If needsApproval is set, try the interactive callback
         if (check.needsApproval && this.onApprovalNeeded) {
           const risk = this.permissionManager.getRiskLevel(name);
+          this.onLifecycleEvent?.({
+            stage: 'approval_requested',
+            toolName: name,
+            callId,
+            argsKey,
+            risk,
+          });
           const approved = await this.onApprovalNeeded({
             toolName: name,
             args,
@@ -657,6 +678,13 @@ export class ToolRuntime {
             argsKey,
           });
           if (!approved) {
+            this.onLifecycleEvent?.({
+              stage: 'approval_denied',
+              toolName: name,
+              callId,
+              argsKey,
+              reason: 'User denied',
+            });
             return {
               callId,
               name,
@@ -667,8 +695,21 @@ export class ToolRuntime {
               durationMs: 0,
             };
           }
+          this.onLifecycleEvent?.({
+            stage: 'approval_granted',
+            toolName: name,
+            callId,
+            argsKey,
+          });
           // Approved — continue execution
         } else {
+          this.onLifecycleEvent?.({
+            stage: 'approval_denied',
+            toolName: name,
+            callId,
+            argsKey,
+            reason: check.reason ?? 'Permission denied',
+          });
           // Hard block (plan mode or no callback)
           return {
             callId,
@@ -687,6 +728,13 @@ export class ToolRuntime {
     if (name === 'bash' && typeof args.command === 'string' && this.approvalGate) {
       const approval = this.approvalGate.checkCommand(args.command as string);
       if (!approval.safe) {
+        this.onLifecycleEvent?.({
+          stage: 'approval_denied',
+          toolName: name,
+          callId,
+          argsKey: toolArgsKey(name, args),
+          reason: approval.reason ?? 'Command blocked',
+        });
         return {
           callId,
           name,
@@ -699,7 +747,27 @@ export class ToolRuntime {
       }
     }
 
-    const raw = await this.registry.dispatch(name, args, context);
+    this.onLifecycleEvent?.({
+      stage: 'dispatch_started',
+      toolName: name,
+      callId,
+    });
+
+    let raw: string;
+    try {
+      raw = await this.registry.dispatch(name, args, context);
+    } catch (error) {
+      const durationMs = Math.round(performance.now() - start);
+      this.onLifecycleEvent?.({
+        stage: 'dispatch_failed',
+        toolName: name,
+        callId,
+        durationMs,
+        reason: error instanceof Error ? error.message : String(error),
+      });
+      throw error;
+    }
+
     let content = raw;
 
     // Determine max result size
@@ -723,7 +791,7 @@ export class ToolRuntime {
 
     const isError = parsed !== null && typeof parsed.error === 'string';
 
-    return {
+    const result = {
       callId,
       name,
       ok: !isError,
@@ -732,6 +800,16 @@ export class ToolRuntime {
       errorType: isError ? 'tool_error' : undefined,
       durationMs,
     };
+
+    this.onLifecycleEvent?.({
+      stage: 'dispatch_completed',
+      toolName: name,
+      callId,
+      ok: result.ok,
+      durationMs,
+    });
+
+    return result;
   }
 }
 
@@ -855,6 +933,8 @@ export interface CreateToolRuntimeOptions {
   projectRoot?: string;
   /** Callback when a tool needs user approval */
   onApprovalNeeded?: (request: ApprovalRequest) => Promise<boolean>;
+  /** Optional lifecycle hook for diagnostics and UI state mapping */
+  onLifecycleEvent?: (event: ToolRuntimeLifecycleEvent) => void;
 }
 
 /**
@@ -897,6 +977,7 @@ export function createToolRuntime(
     approvalGate,
     onApprovalNeeded: options.onApprovalNeeded,
     stateMachine,
+    onLifecycleEvent: options.onLifecycleEvent,
   });
 }
 

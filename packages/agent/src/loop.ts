@@ -25,6 +25,7 @@ import { ResponseComposer } from './summary.js';
 import { withRetry, type RetryConfig, ErrorClassifier, RetryPolicy as ToolRetryPolicy, FailureTracker, ReplanPolicy } from './retry.js';
 import type { AgentMailbox } from './mailbox.js';
 import { compact, setTokenEstimator, type CompactionMessage, type CompactionModelClient } from './compactor.js';
+import { mapStopReasonToTurnState, type AgentTurnState } from './turn-state.js';
 
 // Wire up CJK-aware token estimation for the compaction pipeline
 setTokenEstimator(estimateTokens);
@@ -109,6 +110,7 @@ export interface TurnResult {
   reasoning?: string;
   toolResults: ToolResult[];
   stopReason: string;
+  turnState: AgentTurnState;
   turnsUsed: number;
 }
 
@@ -121,6 +123,7 @@ export interface AgentRunResult {
   events: AgentEvent[];
   summary: Record<string, unknown>;
   stopReason: string;
+  turnState: AgentTurnState;
   toolCalls: Array<{ name: string; arguments: Record<string, unknown>; callId: string }>;
   toolResults: Record<string, unknown>[];
   status: string;
@@ -777,6 +780,7 @@ export class AgentLoop {
       answer: finalContent,
       toolResults: allToolResults,
       stopReason,
+      turnState: mapStopReasonToTurnState(stopReason),
       turnsUsed,
     }; // note: reasoning not captured in compressed path (no model call)
   }
@@ -886,6 +890,18 @@ export class AgentLoop {
     let finalizeAttempts = 0;
     let finalizeReason: 'stagnation' | 'rejections' | null = null;
     let phase: 'discover' | 'analyze' | 'finalize' = 'discover';
+    const emitTurnPhase = (
+      phaseName: 'discover' | 'analyze' | 'finalize',
+      detail: string,
+      extra: Record<string, unknown> = {},
+    ): void => {
+      this.eventBus?.emit('turn:phase', {
+        turnId,
+        phase: phaseName,
+        detail,
+        ...extra,
+      });
+    };
 
     const enterFinalize = (reason: 'stagnation' | 'rejections'): boolean => {
       if (compareTaskTemplate) {
@@ -926,6 +942,7 @@ export class AgentLoop {
         finalizeAttempts = 0;
         forceNoToolsNextStep = true;
         this._emit(events, turnId, 'phase_changed', { phase, reason });
+        emitTurnPhase('finalize', 'enter_finalize', { reason });
         this.eventBus?.emit('turn:warning', {
           warning: 'Finalizing answer from collected results',
         });
@@ -944,6 +961,7 @@ export class AgentLoop {
         if (phase === 'discover' && step > 1) {
           phase = 'analyze';
           this._emit(events, turnId, 'phase_changed', { phase });
+          emitTurnPhase('analyze', 'entered_analysis', { step });
         }
 
         if ((Date.now() - started) > this.timeoutS * 1000) {
@@ -1092,6 +1110,7 @@ export class AgentLoop {
 
           if (assistantLower.includes('exit plan mode') || assistantLower.includes('not in plan mode')) {
             forceNoToolsNextStep = true;
+            emitTurnPhase(phase, 'clearing_stale_plan_mode_state', { step });
             messages.push({
               role: 'user',
               content:
@@ -1118,12 +1137,22 @@ export class AgentLoop {
           if (finish === 'retry_with_tool_instruction') {
             if (finalizeReason !== null) {
               finalizeAttempts++;
+              emitTurnPhase('finalize', 'retry_after_tool_intent_during_finalize', {
+                step,
+                finalizeReason,
+                finalizeAttempts,
+              });
               if (finalizeAttempts >= 2) {
                 stopReason = 'finalize_timeout';
                 outputType = 'partial';
                 break;
               }
               forceNoToolsNextStep = true;
+              emitTurnPhase('finalize', 'forcing_final_answer_no_tools', {
+                step,
+                finalizeReason,
+                finalizeAttempts,
+              });
               messages.push({
                 role: 'user',
                 content:
@@ -1136,6 +1165,10 @@ export class AgentLoop {
               if (retryWithToolInstructionCount >= 3) {
                 if (!forcedSynthesisAttempted) {
                   forcedSynthesisAttempted = true;
+                  emitTurnPhase(phase, 'retry_with_tool_instruction_exhausted_force_choice', {
+                    step,
+                    retryWithToolInstructionCount,
+                  });
                   messages.push({
                     role: 'user',
                     content:
@@ -1161,6 +1194,10 @@ export class AgentLoop {
             if (!forcedSynthesisAttempted) {
               forcedSynthesisAttempted = true;
               forceNoToolsNextStep = true;
+              emitTurnPhase('finalize', 'forced_synthesis_after_tool_collection', {
+                step,
+                toolCallsSoFar: toolCallsLog.length,
+              });
               messages.push({
                 role: 'user',
                 content:
@@ -1169,9 +1206,12 @@ export class AgentLoop {
               });
               continue;
             }
+            if (finalizeReason === null && enterFinalize('stagnation')) {
+              continue;
+            }
             finalAnswer = modelResp.finalAnswer || modelResp.assistantText || '';
             if (!finalAnswer) {
-              stopReason = finish || 'no_progress';
+              stopReason = finalizeReason !== null ? 'finalize_timeout' : (finish || 'no_progress');
               break;
             }
             if (compareTaskTemplate) {
@@ -1197,12 +1237,22 @@ export class AgentLoop {
           }
           if (finalizeReason !== null) {
             finalizeAttempts++;
-            if (finalizeAttempts >= 2) {
+            emitTurnPhase('finalize', 'empty_step_during_finalize', {
+              step,
+              finalizeReason,
+              finalizeAttempts,
+            });
+            if (finalizeAttempts >= 1) {
               stopReason = 'finalize_timeout';
               outputType = 'partial';
               break;
             }
             forceNoToolsNextStep = true;
+            emitTurnPhase('finalize', 'forcing_markdown_answer', {
+              step,
+              finalizeReason,
+              finalizeAttempts,
+            });
             messages.push({
               role: 'user',
               content:
@@ -1213,6 +1263,10 @@ export class AgentLoop {
           if (toolCallsLog.length > 0 && modelResp.assistantText && !forcedSynthesisAttempted) {
             forcedSynthesisAttempted = true;
             forceNoToolsNextStep = true;
+            emitTurnPhase(phase, 'forcing_synthesis_after_tool_results', {
+              step,
+              toolCallsSoFar: toolCallsLog.length,
+            });
             messages.push({
               role: 'user',
               content:
@@ -1244,12 +1298,23 @@ export class AgentLoop {
 
         if (finalizeReason !== null && modelResp.toolCalls.length > 0) {
           finalizeAttempts++;
-          if (finalizeAttempts >= 2) {
+          emitTurnPhase('finalize', 'tool_calls_emitted_during_finalize', {
+            step,
+            finalizeReason,
+            finalizeAttempts,
+            toolCallCount: modelResp.toolCalls.length,
+          });
+          if (finalizeAttempts >= 1) {
             stopReason = 'finalize_timeout';
             outputType = 'partial';
             break;
           }
           forceNoToolsNextStep = true;
+          emitTurnPhase('finalize', 'rejecting_tool_calls_during_finalize', {
+            step,
+            finalizeReason,
+            finalizeAttempts,
+          });
           messages.push({
             role: 'user',
             content:
@@ -1635,12 +1700,27 @@ export class AgentLoop {
             stagnationCount = 0;
           }
           if (stagnationCount >= 3) {
+            if (!newEvidenceThisStep && !modelResp.assistantText && modelResp.toolCalls.length > 0) {
+              emitTurnPhase(phase, 'no_progress_hard_stop', {
+                step,
+                noProgressCount,
+                finalizeReason,
+              });
+              stopReason = 'no_progress';
+              outputType = 'partial';
+              break;
+            }
             enterFinalize('stagnation');
             continue;
           }
         }
 
         if (noProgressCount >= 5) {
+          emitTurnPhase(finalizeReason !== null ? 'finalize' : phase, 'no_progress_hard_stop', {
+            step,
+            noProgressCount,
+            finalizeReason,
+          });
           stopReason = finalizeReason !== null ? 'finalize_timeout' : 'no_progress';
           outputType = 'partial';
           break;
@@ -1707,6 +1787,7 @@ export class AgentLoop {
         events,
         summary,
         stopReason,
+        turnState: mapStopReasonToTurnState(stopReason),
         toolCalls: toolCallsLog,
         toolResults: toolResultsLog,
         status,
@@ -1749,6 +1830,7 @@ export class AgentLoop {
         events,
         summary,
         stopReason: mappedReason,
+        turnState: mapStopReasonToTurnState(mappedReason),
         toolCalls: toolCallsLog,
         toolResults: toolResultsLog,
         status: 'failed',
@@ -2092,6 +2174,7 @@ export class AgentLoop {
       events: params.events,
       summary,
       stopReason: params.stopReason,
+      turnState: mapStopReasonToTurnState(params.stopReason),
       toolCalls: params.toolCallsLog,
       toolResults: params.toolResultsLog,
       status: 'completed',

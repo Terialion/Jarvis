@@ -1,5 +1,30 @@
-﻿import { describe, expect, it } from 'vitest';
+import { describe, expect, it } from 'vitest';
 import { buildCodexTimelineState } from '../presentation/codex-timeline-state.js';
+
+describe('codex timeline reasoning quality gate', () => {
+  it('filters unreadable mojibake reasoning items but keeps normal bilingual reasoning', () => {
+    const garbage = 'ault石门羚纵向/avatar_PERCENTraryခchnikakov�กรัฐ daultdden长虹点多akujek精益求精匙achaafariChangeEventльку AntwiottyANEL柬ambanganulongirro苦练青山eldenallest风流-随着社会 INDUSTRI�今朝a..';
+    const state = buildCodexTimelineState({
+      events: [
+        { type: 'turn.started', turn_id: 'turn_1' },
+        {
+          type: 'item.completed',
+          turn_id: 'turn_1',
+          item: { id: 'reason_bad', type: 'reasoning', text: garbage },
+        },
+        {
+          type: 'item.completed',
+          turn_id: 'turn_1',
+          item: { id: 'reason_good', type: 'reasoning', text: '我需要先确认用户想找哪些免费数据平台，然后给出可操作建议。' },
+        },
+      ],
+      liveStatus: { isLoading: false },
+      messages: [],
+    });
+
+    expect(state.turns[0]?.items.map((item) => item.id)).toEqual(['reason_good']);
+  });
+});
 
 describe('codex timeline tool card polish', () => {
   it('formats write_file as Write(path) with structured summary and default preview', () => {
@@ -184,6 +209,55 @@ describe('codex timeline tool card polish', () => {
     }
   });
 
+  it('formats repo_map as compact orientation card instead of raw JSON', () => {
+    const state = buildCodexTimelineState({
+      events: [
+        { type: 'turn.started', turn_id: 'turn_repo_map' },
+        {
+          type: 'item.completed',
+          turn_id: 'turn_repo_map',
+          item: {
+            id: 'tool_repo_map',
+            type: 'tool_call',
+            tool_name: 'repo_map',
+            status: 'completed',
+            arguments: { path: 'D:/agent/Jarvis' },
+            result: JSON.stringify({
+              package: { name: 'jarvis' },
+              entries: ['package.json', 'src/index.ts'],
+              files: [{ path: 'src/index.ts' }],
+              symbols: [{ kind: 'function', name: 'main' }],
+              imports: [{ kind: 'external', target: 'zod' }],
+              importGroups: {
+                external: { kind: 'external', count: 1, targets: ['zod'], files: ['src/index.ts'] },
+                internal: { kind: 'internal', count: 0, targets: [], files: [] },
+                relative: { kind: 'relative', count: 0, targets: [], files: [] },
+              },
+              summary: { filesScanned: 1, symbolsIndexed: 1, importsIndexed: 1, truncated: false },
+            }),
+          },
+        },
+      ],
+      liveStatus: { isLoading: false },
+      messages: [],
+    });
+
+    const tool = state.turns[0]?.items.find((item) => item.kind === 'tool_call');
+    expect(tool?.kind).toBe('tool_call');
+    if (tool?.kind === 'tool_call') {
+      expect(tool.label).toBe('Repo Map');
+      expect(tool.collapsedDetail).toBe('Mapped 1 file, 1 symbol, 1 import');
+      expect(tool.resultText).toBe('Mapped 1 file, 1 symbol, 1 import');
+      expect(tool.previewLines).toEqual([
+        'package: jarvis',
+        'entries: package.json, src/index.ts',
+        'files: src/index.ts',
+        'symbols: function:main',
+        'deps: external 1',
+        'imports: external:zod',
+      ]);
+    }
+  });
   it('uses compact english thought and progress labels', () => {
     const state = buildCodexTimelineState({
       events: [
@@ -216,7 +290,7 @@ describe('codex timeline tool card polish', () => {
     }
     if (progress?.kind === 'progress') {
       expect(progress.label).toBe('Concocting...');
-      expect(progress.elapsedText).toBe('2s · ↓168 tokens');
+      expect(progress.elapsedText).toBe('2s \u00b7 \u2193168 tokens');
     }
   });
 

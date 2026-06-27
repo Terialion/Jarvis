@@ -643,7 +643,7 @@ describe('UserFactExtractor', () => {
 function createMockProvider(responses: Array<{
   content: string;
   toolCalls?: Array<{ name: string; arguments: Record<string, unknown>; callId: string }>;
-  finishReason?: 'stop' | 'tool_calls' | 'length' | 'content_filter';
+  finishReason?: 'stop' | 'tool_calls' | 'length' | 'content_filter' | 'retry_with_tool_instruction';
 }>) {
   let callIndex = 0;
   return {
@@ -1044,6 +1044,364 @@ describe('AgentLoop', () => {
     expect(events).toContain('llm:request');
     expect(events).toContain('llm:response');
     expect(events).toContain('turn:complete');
+  });
+
+  it('emits turn phase events when collected tool results force synthesis', async () => {
+    const registry = new ToolRegistry();
+    registry.register({
+      name: 'read_note',
+      toolset: 'test',
+      schema: {
+        type: 'function',
+        function: {
+          name: 'read_note',
+          description: 'Read a note',
+          parameters: { type: 'object', properties: {} },
+        },
+      },
+      handler: () => JSON.stringify({ ok: true, note: 'important evidence' }),
+    });
+
+    const mockProvider = createMockProvider([
+      {
+        content: '',
+        toolCalls: [{ name: 'read_note', arguments: {}, callId: 'call_read_note' }],
+        finishReason: 'tool_calls',
+      },
+      {
+        content: '',
+        finishReason: 'retry_with_tool_instruction',
+      },
+      {
+        content: 'Final answer from collected evidence.',
+        finishReason: 'stop',
+      },
+    ]);
+
+    const eventBus = new AgentEventBus();
+    const phases: Array<{ phase: string; detail: string }> = [];
+    eventBus.on('turn:phase', (payload) => {
+      phases.push({
+        phase: String(payload.phase ?? ''),
+        detail: String(payload.detail ?? ''),
+      });
+    });
+
+    const loop = new AgentLoop({
+      model: { model: 'test-model' },
+      tools: registry,
+      provider: mockProvider as unknown as LLMProvider,
+      eventBus,
+    });
+
+    const result = await loop.runTurn('Use the evidence and answer');
+
+    expect(result.finalAnswer).toContain('Final answer from collected evidence.');
+    expect(phases).toContainEqual({
+      phase: 'analyze',
+      detail: 'entered_analysis',
+    });
+    expect(phases).toContainEqual({
+      phase: 'finalize',
+      detail: 'forced_synthesis_after_tool_collection',
+    });
+  });
+
+  it('enters finalize instead of stopping blocked when tool intent repeats after collected results', async () => {
+    const registry = new ToolRegistry();
+    registry.register({
+      name: 'read_note',
+      toolset: 'test',
+      schema: {
+        type: 'function',
+        function: {
+          name: 'read_note',
+          description: 'Read a note',
+          parameters: { type: 'object', properties: {} },
+        },
+      },
+      handler: () => JSON.stringify({ ok: true, note: 'important evidence' }),
+    });
+
+    const mockProvider = createMockProvider([
+      {
+        content: '',
+        toolCalls: [{ name: 'read_note', arguments: {}, callId: 'call_read_note' }],
+        finishReason: 'tool_calls',
+      },
+      {
+        content: '',
+        finishReason: 'retry_with_tool_instruction',
+      },
+      {
+        content: '',
+        finishReason: 'retry_with_tool_instruction',
+      },
+      {
+        content: 'Final answer after finalize fallback.',
+        finishReason: 'stop',
+      },
+    ]);
+
+    const eventBus = new AgentEventBus();
+    const phases: Array<{ phase: string; detail: string }> = [];
+    eventBus.on('turn:phase', (payload) => {
+      phases.push({
+        phase: String(payload.phase ?? ''),
+        detail: String(payload.detail ?? ''),
+      });
+    });
+
+    const loop = new AgentLoop({
+      model: { model: 'test-model' },
+      tools: registry,
+      provider: mockProvider as unknown as LLMProvider,
+      eventBus,
+    });
+
+    const result = await loop.runTurn('Use the evidence and answer');
+
+    expect(result.stopReason).not.toBe('retry_with_tool_instruction');
+    expect(result.finalAnswer).toContain('Final answer after finalize fallback.');
+    expect(phases).toContainEqual({
+      phase: 'finalize',
+      detail: 'enter_finalize',
+    });
+  });
+
+  it('stops with no_progress when repeated deduped tool calls add no new evidence', async () => {
+    const registry = new ToolRegistry();
+    registry.register({
+      name: 'read_note',
+      toolset: 'test',
+      schema: {
+        type: 'function',
+        function: {
+          name: 'read_note',
+          description: 'Read a note',
+          parameters: { type: 'object', properties: {} },
+        },
+      },
+      handler: () => JSON.stringify({ ok: true, note: 'important evidence' }),
+    });
+
+    const repeatedToolCalls = Array.from({ length: 6 }, (_, index) => ({
+      content: '',
+      toolCalls: [{ name: 'read_note', arguments: {}, callId: `call_read_note_${index + 1}` }],
+      finishReason: 'tool_calls' as const,
+    }));
+
+    const mockProvider = createMockProvider(repeatedToolCalls);
+    const eventBus = new AgentEventBus();
+    const phases: Array<{ phase: string; detail: string }> = [];
+    eventBus.on('turn:phase', (payload) => {
+      phases.push({
+        phase: String(payload.phase ?? ''),
+        detail: String(payload.detail ?? ''),
+      });
+    });
+
+    const loop = new AgentLoop({
+      model: { model: 'test-model' },
+      tools: registry,
+      provider: mockProvider as unknown as LLMProvider,
+      eventBus,
+      maxTurns: 8,
+    });
+
+    const result = await loop.runTurn('Keep reading the same note');
+
+    expect(result.stopReason).toBe('no_progress');
+    expect(phases).toContainEqual({
+      phase: 'analyze',
+      detail: 'entered_analysis',
+    });
+    expect(phases).toContainEqual({
+      phase: 'analyze',
+      detail: 'no_progress_hard_stop',
+    });
+  });
+
+  it('stops with finalize_timeout after repeated empty steps during finalize', async () => {
+    const registry = new ToolRegistry();
+    registry.register({
+      name: 'read_note',
+      toolset: 'test',
+      schema: {
+        type: 'function',
+        function: {
+          name: 'read_note',
+          description: 'Read a note',
+          parameters: { type: 'object', properties: {} },
+        },
+      },
+      handler: () => JSON.stringify({ ok: true, note: 'important evidence' }),
+    });
+
+    const mockProvider = createMockProvider([
+      {
+        content: '',
+        toolCalls: [{ name: 'read_note', arguments: {}, callId: 'call_read_note' }],
+        finishReason: 'tool_calls',
+      },
+      {
+        content: '',
+        finishReason: 'retry_with_tool_instruction',
+      },
+      {
+        content: '',
+        finishReason: 'retry_with_tool_instruction',
+      },
+      {
+        content: '',
+        finishReason: 'stop',
+      },
+      {
+        content: '',
+        finishReason: 'stop',
+      },
+    ]);
+
+    const eventBus = new AgentEventBus();
+    const phases: Array<{ phase: string; detail: string }> = [];
+    eventBus.on('turn:phase', (payload) => {
+      phases.push({
+        phase: String(payload.phase ?? ''),
+        detail: String(payload.detail ?? ''),
+      });
+    });
+
+    const loop = new AgentLoop({
+      model: { model: 'test-model' },
+      tools: registry,
+      provider: mockProvider as unknown as LLMProvider,
+      eventBus,
+      maxTurns: 8,
+    });
+
+    const result = await loop.runTurn('Use the evidence and answer');
+
+    expect(result.stopReason).toBe('finalize_timeout');
+    expect(phases).toContainEqual({
+      phase: 'finalize',
+      detail: 'empty_step_during_finalize',
+    });
+  });
+
+  it('hard-stops when finalize mode receives another tool call instead of consuming another model step', async () => {
+    const registry = new ToolRegistry();
+    registry.register({
+      name: 'read_note',
+      toolset: 'test',
+      schema: {
+        type: 'function',
+        function: {
+          name: 'read_note',
+          description: 'Read a note',
+          parameters: { type: 'object', properties: {} },
+        },
+      },
+      handler: () => JSON.stringify({ ok: true, note: 'important evidence' }),
+    });
+
+    const mockProvider = createMockProvider([
+      {
+        content: '',
+        toolCalls: [{ name: 'read_note', arguments: {}, callId: 'call_read_note_1' }],
+        finishReason: 'tool_calls',
+      },
+      { content: '', finishReason: 'retry_with_tool_instruction' },
+      { content: '', finishReason: 'retry_with_tool_instruction' },
+      {
+        content: '',
+        toolCalls: [{ name: 'read_note', arguments: { again: true }, callId: 'call_read_note_2' }],
+        finishReason: 'tool_calls',
+      },
+      { content: 'This later response should not be consumed.', finishReason: 'stop' },
+    ]);
+
+    const eventBus = new AgentEventBus();
+    const phases: Array<{ phase: string; detail: string }> = [];
+    eventBus.on('turn:phase', (payload) => {
+      phases.push({
+        phase: String(payload.phase ?? ''),
+        detail: String(payload.detail ?? ''),
+      });
+    });
+
+    const loop = new AgentLoop({
+      model: { model: 'test-model' },
+      tools: registry,
+      provider: mockProvider as unknown as LLMProvider,
+      eventBus,
+      maxTurns: 8,
+    });
+
+    const result = await loop.runTurn('Use the evidence and answer');
+
+    expect(result.stopReason).toBe('finalize_timeout');
+    expect(mockProvider.chat).toHaveBeenCalledTimes(4);
+    expect(result.finalAnswer).not.toContain('This later response should not be consumed.');
+    expect(phases).toContainEqual({
+      phase: 'finalize',
+      detail: 'tool_calls_emitted_during_finalize',
+    });
+  });
+
+  it('hard-stops on the first empty step during finalize instead of consuming another model step', async () => {
+    const registry = new ToolRegistry();
+    registry.register({
+      name: 'read_note',
+      toolset: 'test',
+      schema: {
+        type: 'function',
+        function: {
+          name: 'read_note',
+          description: 'Read a note',
+          parameters: { type: 'object', properties: {} },
+        },
+      },
+      handler: () => JSON.stringify({ ok: true, note: 'important evidence' }),
+    });
+
+    const mockProvider = createMockProvider([
+      {
+        content: '',
+        toolCalls: [{ name: 'read_note', arguments: {}, callId: 'call_read_note' }],
+        finishReason: 'tool_calls',
+      },
+      { content: '', finishReason: 'retry_with_tool_instruction' },
+      { content: '', finishReason: 'retry_with_tool_instruction' },
+      { content: '', finishReason: 'stop' },
+      { content: 'This later response should not be consumed.', finishReason: 'stop' },
+    ]);
+
+    const eventBus = new AgentEventBus();
+    const phases: Array<{ phase: string; detail: string }> = [];
+    eventBus.on('turn:phase', (payload) => {
+      phases.push({
+        phase: String(payload.phase ?? ''),
+        detail: String(payload.detail ?? ''),
+      });
+    });
+
+    const loop = new AgentLoop({
+      model: { model: 'test-model' },
+      tools: registry,
+      provider: mockProvider as unknown as LLMProvider,
+      eventBus,
+      maxTurns: 8,
+    });
+
+    const result = await loop.runTurn('Use the evidence and answer');
+
+    expect(result.stopReason).toBe('finalize_timeout');
+    expect(mockProvider.chat).toHaveBeenCalledTimes(4);
+    expect(result.finalAnswer).not.toContain('This later response should not be consumed.');
+    expect(phases).toContainEqual({
+      phase: 'finalize',
+      detail: 'empty_step_during_finalize',
+    });
   });
 
   it('handles length finish reason', async () => {

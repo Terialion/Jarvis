@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildStatusSegments, getProjectLabel } from "../status-segments.js";
+import { buildContextBreakdownSegments, buildStatusSegments, getProjectLabel } from "../status-segments.js";
 import {
   buildSearchExcerpt,
   extractProgressLines,
@@ -52,6 +52,23 @@ describe("buildStatusSegments", () => {
     ]);
   });
 
+
+
+  it("rounds context percentage in the status line", () => {
+    const segments = buildStatusSegments({
+      cwd: "D:/agent/Jarvis",
+      model: "qwen3.6-reasoner",
+      isLoading: false,
+      hasQuestion: false,
+      totalTokens: 38981,
+      contextPercentRemaining: 69.54609375,
+      taskCounts: { pending: 0, in_progress: 0, completed: 0 },
+      elapsedMs: 0,
+    });
+
+    expect(segments.map((segment) => segment.content)).toContain("38,981 tok | 69.5% left");
+  });
+
   it("prefers Question over Working when user input is requested", () => {
     const segments = buildStatusSegments({
       cwd: "D:/agent/Jarvis",
@@ -65,6 +82,26 @@ describe("buildStatusSegments", () => {
     expect(segments[1]?.content).toBe("model deepseek-v4-pro");
     expect(segments[2]?.content).toBe("state Question");
   });
+
+
+  it("separates non-MCP tool schema tokens from MCP tool tokens", () => {
+    const segments = buildContextBreakdownSegments({
+      systemPromptTokens: 1000,
+      conversationTokens: 12300,
+      skillsTokens: 9680,
+      toolSchemasTokens: 16000,
+      mcpToolsTokens: 6510,
+    });
+
+    expect(segments.map((segment) => segment.content)).toEqual([
+      "sys:1K",
+      "msg:12.3K",
+      "skills:9.68K",
+      "tools:9.49K",
+      "mcp:6.51K",
+    ]);
+  });
+
 });
 
 describe("default scroll keybindings", () => {

@@ -1,5 +1,5 @@
 // ============================================================================
-// Builtin tool tests — all builtin tools
+// Builtin tool tests - all builtin tools
 // ============================================================================
 
 import { describe, it, expect, afterAll, beforeAll } from 'vitest';
@@ -13,8 +13,16 @@ import { writeFileTool } from '../builtin/file-write.js';
 import { editFileTool } from '../builtin/file-edit.js';
 import { globTool } from '../builtin/glob.js';
 import { grepTool } from '../builtin/grep.js';
+import { repoMapTool } from '../builtin/repo-map.js';
 import { webSearchTool } from '../builtin/web-search.js';
+import { searchRouterTool } from '../builtin/search-router.js';
 import { webFetchTool } from '../builtin/web-fetch.js';
+import {
+  TavilyFetchBackend,
+  TavilySearchBackend,
+  createTavilyFetchTool,
+  createTavilySearchTool,
+} from '../builtin/tavily-backend.js';
 import {
   askUserQuestionTool,
   setAskUserQuestionBridge,
@@ -345,7 +353,7 @@ describe('ask_user_question tool', () => {
 });
 
 // ============================================================================
-// Task tools — task_create / task_update / task_list
+// Task tools - task_create / task_update / task_list
 // ============================================================================
 
 describe('task tools', () => {
@@ -466,7 +474,7 @@ describe('task tools', () => {
 });
 
 // ============================================================================
-// Plan mode tools — enter_plan_mode / exit_plan_mode
+// Plan mode tools - enter_plan_mode / exit_plan_mode
 // ============================================================================
 
 describe('plan mode tools', () => {
@@ -525,7 +533,7 @@ describe('plan mode tools', () => {
 });
 
 // ============================================================================
-// Notebook edit tool — notebook_edit
+// Notebook edit tool - notebook_edit
 // ============================================================================
 
 describe('notebook_edit tool', () => {
@@ -702,7 +710,7 @@ describe('notebook_edit tool', () => {
 });
 
 // ============================================================================
-// read_file — image support
+// read_file - image support
 // ============================================================================
 
 describe('read_file image support', () => {
@@ -759,7 +767,7 @@ describe('read_file image support', () => {
     }
   });
 
-  it('returns text content for non-image files unchanged', async () => {
+  it('returns text content for non- image files unchanged', async () => {
     const txtPath = join(tmpDir, 'notes.txt');
     writeFileSync(txtPath, 'hello world\nline two');
 
@@ -773,7 +781,7 @@ describe('read_file image support', () => {
 });
 
 // ============================================================================
-// read_file — PDF support
+// read_file - PDF support
 // ============================================================================
 
 describe('read_file PDF support', () => {
@@ -860,7 +868,7 @@ describe('task_get tool', () => {
 });
 
 // ============================================================================
-// Cron tools — cron_create, cron_delete, cron_list, schedule_wakeup
+// Cron tools - cron_create, cron_delete, cron_list, schedule_wakeup
 // ============================================================================
 
 describe('cron tools', () => {
@@ -960,14 +968,14 @@ describe('cron tools', () => {
   });
 
   it('schedule_wakeup clamps delay to [60, 3600]', async () => {
-    // Too low → clamped to 60
+    // Too low -> clamped to 60
     const r1 = await scheduleWakeupTool.handler(
       { delaySeconds: 1, reason: 'Min clamp test', prompt: 'x' },
       ctx,
     );
     expect(JSON.parse(r1).delaySeconds).toBe(60);
 
-    // Too high → clamped to 3600
+    // Too high -> clamped to 3600
     const r2 = await scheduleWakeupTool.handler(
       { delaySeconds: 99999, reason: 'Max clamp test', prompt: 'x' },
       ctx,
@@ -977,7 +985,7 @@ describe('cron tools', () => {
 });
 
 // ============================================================================
-// Web search tool (updated — real implementation with env var fallback)
+// Web search tool (updated - real implementation with env var fallback)
 // ============================================================================
 
 describe('web_search tool', () => {
@@ -998,7 +1006,7 @@ describe('web_search tool', () => {
 });
 
 // ============================================================================
-// Web fetch tool (updated — real implementation)
+// Web fetch tool (updated - real implementation)
 // ============================================================================
 
 describe('web_fetch tool', () => {
@@ -1041,8 +1049,34 @@ describe('web_fetch tool', () => {
   }, 15000);
 });
 
+describe('tavily tools', () => {
+  it('exposes dedicated Tavily search tool metadata without overriding web_search', () => {
+    const tool = createTavilySearchTool(new TavilySearchBackend({ apiKey: 'test-key' }));
+    const fn = tool.schema.function as { name: string; description: string };
+    expect(tool.name).toBe('tavily_search');
+    expect(tool.toolset).toBe('web');
+    expect(tool.isAsync).toBe(true);
+    expect(fn.name).toBe('tavily_search');
+    expect(fn.description.toLowerCase()).toContain('tavily');
+    expect(fn.description.toLowerCase()).toContain('explicitly');
+    expect(fn.description.toLowerCase()).toContain('compare');
+  });
+
+  it('exposes dedicated Tavily fetch tool metadata without overriding web_fetch', () => {
+    const tool = createTavilyFetchTool(new TavilyFetchBackend({ apiKey: 'test-key' }));
+    const fn = tool.schema.function as { name: string; description: string };
+    expect(tool.name).toBe('tavily_fetch');
+    expect(tool.toolset).toBe('web');
+    expect(tool.isAsync).toBe(true);
+    expect(fn.name).toBe('tavily_fetch');
+    expect(fn.description.toLowerCase()).toContain('tavily');
+    expect(fn.description.toLowerCase()).toContain('explicitly');
+    expect(fn.description.toLowerCase()).toContain('compare');
+  });
+});
+
 // ============================================================================
-// Worktree tools — enter_worktree, exit_worktree
+// Worktree tools - enter_worktree, exit_worktree
 // ============================================================================
 
 describe('worktree tools', () => {
@@ -1107,7 +1141,7 @@ describe('worktree tools', () => {
 });
 
 // ============================================================================
-// Agent tool (factory — tested with mock pool)
+// Agent tool (factory - tested with mock pool)
 // ============================================================================
 
 describe('Agent tool', () => {
@@ -1134,7 +1168,7 @@ describe('Agent tool', () => {
     expect(agentTool.schema.type).toBe('function');
     expect(agentTool.isAsync).toBe(true);
 
-    // Test foreground execution — handler now always returns 'spawned' immediately
+    // Test foreground execution - handler now always returns 'spawned' immediately
     const result = await agentTool.handler(
       { description: 'Test task', prompt: 'Do something useful', subagent_type: 'explore' },
       ctx,
@@ -1196,7 +1230,7 @@ describe('Agent tool', () => {
 });
 
 // ============================================================================
-// MCP resource tools (factory — tested with mock client)
+// MCP resource tools (factory - tested with mock client)
 // ============================================================================
 
 describe('MCP resource tools', () => {
@@ -1285,14 +1319,14 @@ describe('MCP resource tools', () => {
 });
 
 // ============================================================================
-// Tool schema routing accuracy — verify all tool schemas are well-formed
+// Tool schema routing accuracy - verify all tool schemas are well-formed
 // and have unambiguous names/descriptions for natural language dispatch
 // ============================================================================
 
 describe('tool schema routing readiness', () => {
   const allTools = [
-    bashTool, readFileTool, writeFileTool, editFileTool, globTool, grepTool,
-    webSearchTool, webFetchTool, askUserQuestionTool,
+    bashTool, readFileTool, writeFileTool, editFileTool, globTool, grepTool, repoMapTool,
+    searchRouterTool, webSearchTool, webFetchTool, askUserQuestionTool,
     taskCreateTool, taskUpdateTool, taskListTool, taskGetTool,
     enterPlanModeTool, exitPlanModeTool, notebookEditTool,
     cronCreateTool, cronDeleteTool, cronListTool, scheduleWakeupTool,
@@ -1329,6 +1363,8 @@ describe('tool schema routing readiness', () => {
       ['edit_file', 'replace'],
       ['glob', 'glob pattern'],
       ['grep', 'search'],
+      ['repo_map', 'repository map'],
+      ['search_router', 'search source'],
       ['web_search', 'search the web'],
       ['web_fetch', 'fetch'],
       ['task_create', 'create'],
@@ -1358,7 +1394,7 @@ describe('tool schema routing readiness', () => {
   it('all tools with isAsync flag are known async-capable tools', () => {
     const asyncTools = allTools.filter((t) => t.isAsync);
     const knownAsync = new Set([
-      'bash', 'read_file', 'write_file', 'edit_file', 'glob', 'grep',
+      'bash', 'read_file', 'write_file', 'edit_file', 'glob', 'grep', 'repo_map',
       'web_search', 'web_fetch', 'ask_user_question', 'notebook_edit',
       'enter_worktree', 'exit_worktree', 'exit_plan_mode',
     ]);

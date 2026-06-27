@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   computeAutoFollowState,
+  shouldClampScrollTopForPaint,
   shouldApplyMountedRangeClamp,
   shouldPersistScrollTopAfterClamp,
 } from "../vendor/ink-renderer/render-node-to-output.js";
@@ -75,6 +76,17 @@ describe("computeAutoFollowState", () => {
     ).toBe(false);
   });
 
+  it("does not even paint with a transient max-scroll clamp while browsing history", () => {
+    expect(
+      shouldClampScrollTopForPaint({
+        currentScrollTop: 180,
+        clampedToMaxScroll: 0,
+        pendingDelta: undefined,
+        followedThisFrame: false,
+      }),
+    ).toBe(false);
+  });
+
   it("does not apply mounted-range clamp while passively browsing history", () => {
     expect(
       shouldApplyMountedRangeClamp({
@@ -121,6 +133,15 @@ describe("computeAutoFollowState", () => {
 
     expect(
       shouldPersistScrollTopAfterClamp({
+        currentScrollTop: 80,
+        clampedToMaxScroll: 92,
+        pendingDelta: 12,
+        followedThisFrame: false,
+      }),
+    ).toBe(true);
+
+    expect(
+      shouldClampScrollTopForPaint({
         currentScrollTop: 80,
         clampedToMaxScroll: 92,
         pendingDelta: 12,

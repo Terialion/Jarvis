@@ -65,6 +65,10 @@ describe('PromptBuilder', () => {
     const dynamicIds = result.dynamicSections.map((section) => section.id);
     expect(stableIds).toContain('identity');
     expect(stableIds).toContain('tool-policy');
+    const toolPolicy = result.stableSections.find((section) => section.id === 'tool-policy')?.content;
+    expect(toolPolicy).toContain('repo_map');
+    expect(toolPolicy).toContain('entry points, dependency groups, source files, and important symbols');
+    expect(toolPolicy).toContain('Then use grep/read_file');
     expect(dynamicIds).toContain('mode');
     expect(dynamicIds).toContain('environment');
   });
@@ -91,9 +95,24 @@ describe('PromptBuilder', () => {
 
   it('emits prompts without known mojibake markers', () => {
     const prompt = buildSystemPrompt('test-model', 'full');
-    expect(prompt).not.toContain('鈥');
-    expect(prompt).not.toContain('涓');
-    expect(prompt).not.toContain('鎴');
+    expect(prompt).not.toContain('\u95b3?');
+    expect(prompt).not.toContain('\u5a11?');
+    expect(prompt).not.toContain('\u95f9?');
+  });
+
+  it('describes web research as skill and MCP coordinated instead of Tavily-first', () => {
+    const result = buildSystemPromptResult({
+      modelName: 'test-model',
+      mode: 'full',
+      permissionMode: 'workspace_write',
+    });
+
+    const toolPolicy = result.stableSections.find((section) => section.id === 'tool-policy');
+    expect(toolPolicy?.content).toContain('search_router');
+    expect(toolPolicy?.content).toContain('search-related skill');
+    expect(toolPolicy?.content).toContain('MCP');
+    expect(toolPolicy?.content).toContain('Tavily is provider-specific');
+    expect(toolPolicy?.content).not.toContain('start with Tavily');
   });
 
   it('emits tool results with role=tool and tool_call_id', () => {

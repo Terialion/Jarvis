@@ -9,7 +9,7 @@ import type { Message, MessageContent } from './vendor/ui/MessageList.js';
 import type { StatusLineSegment } from './vendor/ui/StatusLine.js';
 import { WelcomeScreen } from './vendor/ui/WelcomeScreen.js';
 import { loadSettings, saveSettings, type UserSettings } from './settings-store.js';
-import { AgentLoop, AgentEventBus, AgentMailbox, TokenTracker, formatTokensCompact, estimateTokens, validateContextWindow, resolveContextWindow, getAllModels, parseModelName, findModel, buildSystemPrompt, createMemorySearchHandler, createMemoryGetHandler, createMemoryWriteHandler, createMemoryDeleteHandler, type ThreadEvent, type ModelInfo } from '@jarvis/agent';
+import { AgentLoop, AgentEventBus, AgentMailbox, TokenTracker, estimateTokens, validateContextWindow, resolveContextWindow, getAllModels, parseModelName, findModel, buildSystemPrompt, createMemorySearchHandler, createMemoryGetHandler, createMemoryWriteHandler, createMemoryDeleteHandler, type ThreadEvent, type ModelInfo } from '@jarvis/agent';
 import {
   ToolRegistry,
   allBuiltinTools,
@@ -26,11 +26,15 @@ import {
   createMcpToolEntries,
   webSearchTool,
   webFetchTool,
-  createWebSearchTool,
-  createWebFetchHandler,
+  createTavilySearchTool,
+  createTavilyFetchTool,
   tryCreateTavilySearch,
   tryCreateTavilyFetch,
+  applyToolLifecycleEvent,
+  buildToolLifecycleSummary,
+  createToolLifecycleState,
   PermissionStateMachine,
+  type ToolRuntimeLifecycleEvent,
 } from '@jarvis/tools';
 import type { AskQuestionDef, PlanReviewRequest, PermissionState } from '@jarvis/tools';
 import type { PlanReviewDecision } from './vendor/ui/PlanReview';
@@ -45,7 +49,7 @@ import type { ModelReasoningEffort } from '@jarvis/agent';
 import type { TUIOptions, TUIDebugEvent } from './types.js';
 import type { ChatMessage } from '@jarvis/shared';
 import { formatToolLine } from './vendor/ui/tool-display.js';
-import { buildStatusSegments } from './status-segments.js';
+import { buildContextBreakdownSegments, buildStatusSegments } from './status-segments.js';
 import type { CodexTaskSnapshot, CodexTurnSnapshot } from './presentation/codex-timeline-state.js';
 // Extracted modules
 import { buildReplCommands, resolveSlashCommand, SLASH_COMMANDS, makeSysMsg, type SlashCommandCtx, type REPLCommandDef, type LiveContextUsage } from './commands/index.js';
@@ -56,10 +60,16 @@ import { extractModifiedFiles, safeJsonParse, computeFileChange, formatFileChang
 import { estimateTokensFromText, estimateMemoryEntries, buildContextProgressBar, estimateTurnTokenCount, buildMcpFooterLines } from './utils/token-estimation.js';
 import { decodeHtmlEntities } from './vendor/ui/utils/markdown.js';
 import { TuiStreamAssembler } from './vendor/shared/stream-assembler.js';
+import {
+  resolveContentTokenStreamStart,
+  resolveToolBoundaryStreamTransition,
+} from './stream-run-policy.js';
 import { loadJarvisConfig } from '@jarvis/shared';
 import { resolveModelCredentials } from './utils/credentials.js';
 import { connectMcpServers } from '@jarvis/mcp';
 import { getCronScheduler } from '@jarvis/tools';
+import { humanizeToolName, summarizeAgentEventProgress } from './progress-summary.js';
+import { sanitizeReasoningForDisplay } from './reasoning-quality.js';
 
 function formatInlinePlanReview(plan: PlanReviewRequest): string {
   const lines = [
@@ -230,6 +240,7 @@ export function App({ options }: { options: TUIOptions }): React.ReactNode {
   const streamAccumRef = useRef<string>(''); // full accumulated content (OpenClaw replacement mode)
   const streamAssemblerRef = useRef(new TuiStreamAssembler());
   const streamingRunIdRef = useRef<string | null>(null);
+  const pendingAssistantResumeRef = useRef<"assistant_resume" | null>(null);
   const streamingSourceTextRef = useRef<string>('');
   const reasoningBufferRef = useRef<string>('');
   const reasoningFlushedRef = useRef(false);
@@ -237,6 +248,7 @@ export function App({ options }: { options: TUIOptions }): React.ReactNode {
   const streamingContentRef = useRef<string | null>(null);
   const threadEventsRef = useRef<ThreadEvent[]>([]);
   const eventBusRef = useRef<AgentEventBus | null>(null);
+  const toolLifecycleStateRef = useRef(createToolLifecycleState());
   const runStatsRef = useRef<{
     prompt: string;
     startedAt: number;
@@ -253,6 +265,69 @@ export function App({ options }: { options: TUIOptions }): React.ReactNode {
   const emitDebugEvent = useCallback((event: TUIDebugEvent) => {
     options.debugHooks?.onEvent?.(event);
   }, [options.debugHooks]);
+  const updateToolMessageLifecycle = useCallback((
+    callId: string,
+    patch: {
+      status?: 'running' | 'success' | 'error';
+      result?: string;
+      durationMs?: number;
+    },
+  ) => {
+    setMessages((prev) => prev.map((message) => {
+      if (message.id !== `tool_${callId}`) {
+        return message;
+      }
+
+      const content = [...(message.content as MessageContent[])];
+      const toolBlock = content.find((entry) => entry.type === 'tool_use');
+      if (!toolBlock || !('status' in toolBlock)) {
+        return message;
+      }
+
+      const updated = {
+        ...toolBlock,
+        ...(patch.status ? { status: patch.status } : {}),
+        ...(patch.result !== undefined ? { result: patch.result } : {}),
+        ...(patch.durationMs !== undefined ? { durationMs: patch.durationMs } : {}),
+      };
+
+      return {
+        ...message,
+        content: content.map((entry) => (entry.type === 'tool_use' ? updated : entry)),
+      };
+    }));
+  }, []);
+  const handleToolRuntimeLifecycle = useCallback((event: ToolRuntimeLifecycleEvent) => {
+    emitDebugEvent({
+      type: 'tool_runtime_state',
+      stage: event.stage,
+      toolName: event.toolName,
+      callId: event.callId,
+      argsKey: 'argsKey' in event ? event.argsKey : undefined,
+      risk: 'risk' in event ? event.risk : undefined,
+      ok: 'ok' in event ? event.ok : undefined,
+      reason: 'reason' in event ? event.reason : undefined,
+      durationMs: 'durationMs' in event ? event.durationMs : undefined,
+      timestamp: Date.now(),
+    });
+    toolLifecycleStateRef.current = applyToolLifecycleEvent(toolLifecycleStateRef.current, event);
+    const summary = buildToolLifecycleSummary(toolLifecycleStateRef.current);
+    setSpinnerStatus(summary.statusLine);
+    setSpinnerRunning(summary.runningLine);
+    setSpinnerCompleted(summary.completedLines);
+    if (event.stage === 'dispatch_completed') {
+      updateToolMessageLifecycle(event.callId, {
+        status: event.ok ? 'success' : 'error',
+        durationMs: event.durationMs,
+      });
+    } else if (event.stage === 'dispatch_failed' || event.stage === 'approval_denied') {
+      updateToolMessageLifecycle(event.callId, {
+        status: 'error',
+        result: 'reason' in event && event.reason ? event.reason : undefined,
+        durationMs: 'durationMs' in event ? event.durationMs : undefined,
+      });
+    }
+  }, [emitDebugEvent, updateToolMessageLifecycle]);
   const invalidateAgent = useCallback(() => {
     agentRef.current = null;
     tokenTrackerRef.current = null;
@@ -545,6 +620,7 @@ export function App({ options }: { options: TUIOptions }): React.ReactNode {
       });
     }
     streamingRunIdRef.current = null;
+    pendingAssistantResumeRef.current = null;
     streamingSourceTextRef.current = '';
     streamingContentRef.current = null;
     streamAccumRef.current = '';
@@ -731,7 +807,28 @@ export function App({ options }: { options: TUIOptions }): React.ReactNode {
       const eventBus = eventBusRef.current;
       const bindProgressEvent = (eventName: string) => {
         eventBus.on(eventName, (payload) => {
-          pushSpinnerDetail(summarizeEventProgress(eventName, payload));
+          if (eventName === 'turn:phase') {
+            emitDebugEvent({
+              type: 'turn_phase',
+              phase: payload.phase === 'finalize' ? 'finalize' : payload.phase === 'analyze' ? 'analyze' : 'discover',
+              detail: typeof payload.detail === 'string' ? payload.detail : 'phase_update',
+              step: typeof payload.step === 'number' ? payload.step : undefined,
+              finalizeReason: payload.finalizeReason === 'stagnation' || payload.finalizeReason === 'rejections'
+                ? payload.finalizeReason
+                : payload.finalizeReason === null
+                  ? null
+                  : undefined,
+              finalizeAttempts: typeof payload.finalizeAttempts === 'number' ? payload.finalizeAttempts : undefined,
+              toolCallsSoFar: typeof payload.toolCallsSoFar === 'number' ? payload.toolCallsSoFar : undefined,
+              toolCallCount: typeof payload.toolCallCount === 'number' ? payload.toolCallCount : undefined,
+              retryWithToolInstructionCount: typeof payload.retryWithToolInstructionCount === 'number'
+                ? payload.retryWithToolInstructionCount
+                : undefined,
+              noProgressCount: typeof payload.noProgressCount === 'number' ? payload.noProgressCount : undefined,
+              timestamp: Date.now(),
+            });
+          }
+          pushSpinnerDetail(summarizeAgentEventProgress(eventName, payload));
           if (eventName === 'llm:request') {
             setSpinnerStatus('preparing the next step');
           }
@@ -740,6 +837,14 @@ export function App({ options }: { options: TUIOptions }): React.ReactNode {
           }
           if (eventName === 'turn:warning' && typeof payload.warning === 'string') {
             setSpinnerStatus(payload.warning);
+          }
+          if (eventName === 'turn:phase') {
+            const detail = typeof payload.detail === 'string' ? payload.detail : '';
+            if (detail === 'enter_finalize') {
+              setSpinnerStatus('finalizing from collected results');
+            } else if (detail.includes('forced_synthesis') || detail.includes('forcing_')) {
+              setSpinnerStatus('synthesizing the final answer');
+            }
           }
           if (eventName === 'turn:complete' && typeof payload.stopReason === 'string') {
             setSpinnerStatus('finalizing the response');
@@ -751,7 +856,7 @@ export function App({ options }: { options: TUIOptions }): React.ReactNode {
         peakContextRef.current = 0; // reset peak — compaction freed space
         setCompactedVersion((v) => v + 1);
       });
-      for (const eventName of ['turn:start', 'skills:matched', 'llm:request', 'llm:response', 'tool:executing', 'tool:result', 'turn:warning', 'turn:complete']) {
+      for (const eventName of ['turn:start', 'skills:matched', 'llm:request', 'llm:response', 'tool:executing', 'tool:result', 'turn:warning', 'turn:phase', 'turn:complete']) {
         bindProgressEvent(eventName);
       }
       eventBus.on('context_window_usage', (payload) => {
@@ -812,12 +917,12 @@ export function App({ options }: { options: TUIOptions }): React.ReactNode {
       }
       // Register web tools (mirrors CLI main.ts registerWebTools)
       {
+        tools.register(webSearchTool);
+        tools.register(webFetchTool);
         const tavilySearch = tryCreateTavilySearch();
         const tavilyFetch = tryCreateTavilyFetch();
-        if (tavilySearch) { tools.register(createWebSearchTool(tavilySearch)); }
-        else { tools.register(webSearchTool); }
-        if (tavilyFetch) { tools.register({ ...webFetchTool, handler: createWebFetchHandler(tavilyFetch) }); }
-        else { tools.register(webFetchTool); }
+        if (tavilySearch) { tools.register(createTavilySearchTool(tavilySearch)); }
+        if (tavilyFetch) { tools.register(createTavilyFetchTool(tavilyFetch)); }
       }
       // Memory search/get tools (mirrors CLI main.ts bootstrap)
       {
@@ -1022,6 +1127,7 @@ export function App({ options }: { options: TUIOptions }): React.ReactNode {
               permissionMode: permissionModeRef.current,
               sandbox: loadJarvisConfig().sandbox,
               projectRoot: process.cwd(),
+              onLifecycleEvent: handleToolRuntimeLifecycle,
             });
 
             return new AgentLoop({
@@ -1092,6 +1198,14 @@ export function App({ options }: { options: TUIOptions }): React.ReactNode {
             runStatsRef.current.tokenChars += token.length;
             runStatsRef.current.hadStreamingContent = true;
           }
+          const streamRunStart = resolveContentTokenStreamStart({
+            hasActiveRun: Boolean(streamingRunIdRef.current),
+            pendingResumeReason: pendingAssistantResumeRef.current,
+          });
+          if (streamRunStart.shouldStartRun && streamRunStart.label) {
+            startStreamingRun(streamRunStart.label);
+          }
+          pendingAssistantResumeRef.current = streamRunStart.pendingResumeReason;
           // First content token: flush live reasoning as thinking block
           if (!reasoningFlushedRef.current && reasoningBufferRef.current) {
             const thinkingText = reasoningBufferRef.current;
@@ -1120,24 +1234,32 @@ export function App({ options }: { options: TUIOptions }): React.ReactNode {
           }
         },
         onReasoningDelta: (delta: string) => {
+          const displayDelta = sanitizeReasoningForDisplay(delta);
+          if (!displayDelta) {
+            return;
+          }
           if (runStatsRef.current) {
             runStatsRef.current.reasoningEvents += 1;
-            runStatsRef.current.reasoningChars += delta.length;
+            runStatsRef.current.reasoningChars += displayDelta.length;
             runStatsRef.current.hadStreamingThinking = true;
           }
-          const buf = reasoningBufferRef.current + delta;
-          reasoningBufferRef.current = buf.length > 262144 ? buf.slice(-262144) : buf;
+          const buf = reasoningBufferRef.current + displayDelta;
+          const displayBuffer = sanitizeReasoningForDisplay(buf);
+          if (!displayBuffer) {
+            return;
+          }
+          reasoningBufferRef.current = displayBuffer.length > 262144 ? displayBuffer.slice(-262144) : displayBuffer;
           // Live thinking display: throttle React state updates (CC/OpenClaw pattern)
           const now = Date.now();
           if (now - reasoningDisplayThrottle.current > 200) {
             reasoningDisplayThrottle.current = now;
-            setStreamingThinking(buf);
+            setStreamingThinking(reasoningBufferRef.current);
           }
-          const boldMatch = delta.match(/\*\*([^*]+)\*\*/);
+          const boldMatch = displayDelta.match(/\*\*([^*]+)\*\*/);
           if (boldMatch) {
             setSpinnerVerb(boldMatch[1]);
           } else if (!spinnerVerb) {
-            const clean = delta.replace(/[#*`\n]/g, ' ').replace(/\s+/g, ' ').trim();
+            const clean = displayDelta.replace(/[#*`\n]/g, ' ').replace(/\s+/g, ' ').trim();
             if (clean.length > 10) setSpinnerVerb(clean.slice(0, 60));
           }
         },
@@ -1151,9 +1273,13 @@ export function App({ options }: { options: TUIOptions }): React.ReactNode {
             callId,
             timestamp: Date.now(),
           });
-          setSpinnerRunning(toolName);
-          finalizeStreamingRun('tool_boundary');
-          startStreamingRun(`tool:${toolName}`);
+          const boundaryTransition = resolveToolBoundaryStreamTransition({
+            hasActiveRun: Boolean(streamingRunIdRef.current),
+          });
+          if (boundaryTransition.shouldFinalizeCurrentRun) {
+            finalizeStreamingRun('tool_boundary');
+          }
+          pendingAssistantResumeRef.current = boundaryTransition.pendingResumeReason;
           const argRecord = typeof args === 'object' && args !== null
             ? (args as Record<string, unknown>)
             : undefined;
@@ -1182,21 +1308,11 @@ export function App({ options }: { options: TUIOptions }): React.ReactNode {
             resultLength: result.content.length,
             timestamp: Date.now(),
           });
-          setSpinnerRunning(undefined);
-          setSpinnerCompleted((prev) => [...prev, toolName]);
-          setMessages((prev) => prev.map((m) => {
-            if (m.id === `tool_${callId}`) {
-              const now = Date.now();
-              const content = [...(m.content as MessageContent[])];
-              const toolBlock = content.find((c) => c.type === 'tool_use');
-              if (toolBlock && 'status' in toolBlock) {
-                const durationMs = m.timestamp ? now - m.timestamp : undefined;
-                const updated = { ...toolBlock, status: result.ok ? 'success' as const : 'error' as const, result: result.content.slice(0, 2000), durationMs };
-                return { ...m, content: content.map((c) => c.type === 'tool_use' ? updated : c) };
-              }
-            }
-            return m;
-          }));
+          updateToolMessageLifecycle(callId, {
+            status: result.ok ? 'success' : 'error',
+            result: result.content.slice(0, 2000),
+            durationMs: result.durationMs,
+          });
         },
         mailbox: mailboxRef.current,
         sessionStore: sessionStoreRef.current ?? undefined,
@@ -1206,6 +1322,7 @@ export function App({ options }: { options: TUIOptions }): React.ReactNode {
             sandbox: loadJarvisConfig().sandbox,
             projectRoot: process.cwd(),
             onApprovalNeeded: handleApprovalNeeded,
+            onLifecycleEvent: handleToolRuntimeLifecycle,
           });
           permManagerRef.current = runtime.getPermissionManager() ?? null;
           stateMachineRef.current = runtime.getStateMachine() ?? null;
@@ -1261,13 +1378,14 @@ export function App({ options }: { options: TUIOptions }): React.ReactNode {
       // Fire state machine transition for user submit
       stateMachineRef.current?.transition({ type: 'user_submit' });
       clearStreamingRun('cleanup');
-      setStreamingThinking(null);
-      setSpinnerVerb('Concocting');
-      setSpinnerStatus(undefined);
-      setSpinnerDetails([]);
-      setSpinnerCompleted([]);
-      setSpinnerRunning(undefined);
-      reasoningBufferRef.current = '';
+        setStreamingThinking(null);
+        setSpinnerVerb('Concocting');
+        setSpinnerStatus(undefined);
+        setSpinnerDetails([]);
+        setSpinnerCompleted([]);
+        setSpinnerRunning(undefined);
+        toolLifecycleStateRef.current = createToolLifecycleState();
+        reasoningBufferRef.current = '';
       reasoningDisplayThrottle.current = 0;
       reasoningFlushedRef.current = false;
       startStreamingRun(prompt);
@@ -1354,9 +1472,12 @@ export function App({ options }: { options: TUIOptions }): React.ReactNode {
       const finalAnswer = typeof result.finalAnswer === 'string' ? result.finalAnswer.trim() : '';
 
       // Check if the result is a failure (e.g., model call failed)
-      if (!result.ok || result.status === 'failed') {
-        finalizeStreamingRun('error');
-        const errorContent: MessageContent = {
+        if (!result.ok || result.status === 'failed') {
+          finalizeStreamingRun('error');
+          const toolSummary = buildToolLifecycleSummary(toolLifecycleStateRef.current);
+          setSpinnerRunning(toolSummary.runningLine);
+          setSpinnerStatus(toolSummary.statusLine);
+          const errorContent: MessageContent = {
           type: 'error',
           message: decodeHtmlEntities(finalAnswer) || 'Model call failed',
         };
@@ -1373,6 +1494,7 @@ export function App({ options }: { options: TUIOptions }): React.ReactNode {
         emitDebugEvent({
           type: 'run_failed',
           prompt,
+          turnState: result.turnState,
           elapsedMs: Date.now() - turnStartedAt,
           error: finalAnswer,
           stopReason: result.stopReason,
@@ -1384,16 +1506,20 @@ export function App({ options }: { options: TUIOptions }): React.ReactNode {
       }
 
       // Finalize the current streaming run before building any non-text blocks.
-      const committedStreamingText = finalizeStreamingRun('turn_complete', result.finalAnswer);
+        const committedStreamingText = finalizeStreamingRun('turn_complete', result.finalAnswer);
+        const toolSummary = buildToolLifecycleSummary(toolLifecycleStateRef.current);
+        setSpinnerRunning(toolSummary.runningLine);
+        setSpinnerStatus(toolSummary.statusLine);
 
       const content: MessageContent[] = [];
       let taskSnapshot: CodexTaskSnapshot | null = null;
 
       // Show reasoning as a collapsible thinking block
-      if (result.reasoning) {
+      const displayReasoning = result.reasoning ? sanitizeReasoningForDisplay(result.reasoning) : '';
+      if (displayReasoning) {
         content.push({
           type: 'thinking',
-          text: result.reasoning,
+          text: displayReasoning,
         });
       }
 
@@ -1472,6 +1598,7 @@ export function App({ options }: { options: TUIOptions }): React.ReactNode {
       emitDebugEvent({
         type: 'run_completed',
         prompt,
+        turnState: result.turnState,
         elapsedMs: Date.now() - turnStartedAt,
         finalAnswerLength: resultAnswer.length,
         finalAnswerPreview: resultAnswer.slice(0, 200),
@@ -1508,12 +1635,16 @@ export function App({ options }: { options: TUIOptions }): React.ReactNode {
           messageId: `msg_${crypto.randomUUID()}`,
         }];
       }
-    } catch (err) {
-      const isAbort = err instanceof DOMException && err.name === 'AbortError';
+      } catch (err) {
+      const toolSummary = buildToolLifecycleSummary(toolLifecycleStateRef.current);
+      setSpinnerRunning(toolSummary.runningLine);
+      setSpinnerStatus(toolSummary.statusLine);
+        const isAbort = err instanceof DOMException && err.name === 'AbortError';
       const stats = runStatsRef.current;
       emitDebugEvent({
         type: 'run_failed',
         prompt,
+        turnState: isAbort ? 'interrupted' : 'failed',
         elapsedMs: Date.now() - turnStartedAt,
         tokenEvents: stats?.tokenEvents ?? 0,
         tokenChars: stats?.tokenChars ?? 0,
@@ -1673,17 +1804,18 @@ export function App({ options }: { options: TUIOptions }): React.ReactNode {
     }
     // Per-component breakdown (when available from context_usage_breakdown event)
     if (liveUsage) {
-      const parts: StatusLineSegment[] = [];
-      if (liveUsage.systemPromptTokens) parts.push({ content: `sys:${formatTokensCompact(liveUsage.systemPromptTokens)}`, color: 'cyan' });
-      if (liveUsage.conversationTokens) parts.push({ content: `msg:${formatTokensCompact(liveUsage.conversationTokens)}`, color: 'green' });
-      if (liveUsage.skillsTokens) parts.push({ content: `skills:${formatTokensCompact(liveUsage.skillsTokens)}`, color: 'yellow' });
-      if (liveUsage.mcpToolsTokens) parts.push({ content: `mcp:${formatTokensCompact(liveUsage.mcpToolsTokens)}`, color: 'red' });
-      const toolTotal = (liveUsage.toolSchemasTokens ?? 0) + (liveUsage.mcpToolsTokens ?? 0);
-      if (toolTotal > 0 && !liveUsage.mcpToolsTokens) parts.push({ content: `tools:${formatTokensCompact(toolTotal)}`, color: 'yellow' });
+      const parts = buildContextBreakdownSegments({
+        systemPromptTokens: liveUsage.systemPromptTokens,
+        conversationTokens: liveUsage.conversationTokens,
+        skillsTokens: liveUsage.skillsTokens,
+        toolSchemasTokens: liveUsage.toolSchemasTokens,
+        mcpToolsTokens: liveUsage.mcpToolsTokens,
+      });
       if (parts.length > 0) {
         lines.push({ segments: parts, emphasis: true });
       }
     }
+
     // Context window size guard — warn for small windows
     const contextWindow = liveUsage?.contextWindow ?? tracker?.contextWindow ?? 128_000;
     const guard = validateContextWindow(contextWindow);
@@ -1715,9 +1847,11 @@ export function App({ options }: { options: TUIOptions }): React.ReactNode {
     }
     // Reset loading state so input stays responsive while agent winds down
     setIsLoading(false);
-    clearStreamingRun('abort');
-    setStreamingThinking(null);
-    setSpinnerRunning(undefined);
+      clearStreamingRun('abort');
+      setStreamingThinking(null);
+      const toolSummary = buildToolLifecycleSummary(toolLifecycleStateRef.current);
+      setSpinnerRunning(toolSummary.runningLine);
+      setSpinnerStatus(toolSummary.statusLine);
     // Clear any pending dialog states (permission, questions, plan review)
     setPermissionRequest(undefined);
     permissionResolveRef.current?.(false);
@@ -1817,13 +1951,24 @@ export function App({ options }: { options: TUIOptions }): React.ReactNode {
       onSubmit={onSubmit}
       onInterrupt={handleInterrupt}
       onExit={handleExit}
-      onViewportDebugEvent={(event) =>
+      onViewportDebugEvent={(event) => {
+        if (event.debugType === "manual_scroll") {
+          emitDebugEvent({
+            type: "viewport_manual_scroll",
+            action: event.action ?? "scroll_by",
+            delta: event.delta,
+            targetTop: event.targetTop,
+            timestamp: Date.now(),
+          });
+          return;
+        }
+
         emitDebugEvent({
           type: "viewport_state",
           ...event,
           timestamp: Date.now(),
-        })
-      }
+        });
+      }}
       model={modelRef.current}
       statusSegments={statusSegments}
       statusDetailLines={statusDetailLines}
@@ -1868,48 +2013,3 @@ export function App({ options }: { options: TUIOptions }): React.ReactNode {
   );
 }
 
-function summarizeEventProgress(event: string, payload: Record<string, unknown>): string | null {
-  switch (event) {
-    case 'turn:start':
-      return 'Opening a new turn';
-    case 'skills:matched': {
-      const skills = Array.isArray(payload.skills) ? payload.skills : [];
-      if (skills.length === 0) return null;
-      const names = skills
-        .map((item) => (item && typeof item === 'object' ? String((item as Record<string, unknown>).name ?? '') : ''))
-        .filter(Boolean)
-        .slice(0, 3);
-      return names.length > 0 ? `Loaded context from ${names.join(', ')}` : null;
-    }
-    case 'context:compressing':
-      return 'Condensing earlier context';
-    case 'llm:request':
-      return 'Preparing the next model step';
-    case 'llm:response': {
-      const toolCallCount = typeof payload.toolCallCount === 'number' ? payload.toolCallCount : 0;
-      const contentLength = typeof payload.contentLength === 'number' ? payload.contentLength : 0;
-      if (toolCallCount > 0) return `Prepared ${toolCallCount} tool call${toolCallCount > 1 ? 's' : ''}`;
-      if (contentLength > 0) return 'Started drafting the response';
-      return 'Prepared an empty step';
-    }
-    case 'tool:executing':
-      return `Using ${humanizeToolName(payload.toolName)}`;
-    case 'tool:result': {
-      const ok = payload.ok === true;
-      const toolName = humanizeToolName(payload.toolName);
-      return ok ? `Finished ${toolName}` : `Could not use ${toolName}`;
-    }
-    case 'turn:warning':
-      return typeof payload.warning === 'string' ? payload.warning : 'Turn finished with a warning';
-    case 'turn:complete':
-      return 'Completed this turn';
-    default:
-      return null;
-  }
-}
-
-function humanizeToolName(value: unknown): string {
-  const raw = String(value ?? 'tool').trim();
-  if (!raw) return 'tool';
-  return raw.replace(/[_-]+/g, ' ');
-}

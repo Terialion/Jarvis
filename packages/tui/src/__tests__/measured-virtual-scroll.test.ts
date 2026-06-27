@@ -36,6 +36,25 @@ describe("measured virtual scroll helpers", () => {
     expect(offsets).toEqual([0, 4, 7]);
   });
 
+  it("uses per-item estimated heights before measurement is available", () => {
+    const itemKeys = ["a", "b", "c"];
+    const cache = new Map<string, number>();
+    const estimatedHeights = new Map([
+      ["a", 3],
+      ["b", 12],
+      ["c", 5],
+    ]);
+
+    const offsets = buildMeasuredOffsets({
+      itemKeys,
+      heightCache: cache,
+      estimatedHeight: 6,
+      estimatedHeights,
+    });
+
+    expect(offsets).toEqual([0, 3, 15]);
+  });
+
   it("computes a visible range around the viewport with overscan", () => {
     const itemKeys = ["a", "b", "c", "d", "e"];
     const cache = new Map([
@@ -76,6 +95,29 @@ describe("measured virtual scroll helpers", () => {
     });
 
     expect(range.endIndex).toBeGreaterThanOrEqual(4);
+  });
+
+  it("computes total height using item-specific fallback estimates", () => {
+    const itemKeys = ["small", "large", "tail"];
+    const estimatedHeights = new Map([
+      ["small", 3],
+      ["large", 20],
+      ["tail", 4],
+    ]);
+
+    const range = computeMeasuredRange({
+      itemKeys,
+      heightCache: new Map(),
+      estimatedHeight: 6,
+      estimatedHeights,
+      scrollTop: 0,
+      viewportHeight: 10,
+      overscan: 0,
+      pendingDelta: 0,
+    });
+
+    expect(range.totalHeight).toBe(27);
+    expect(range.endIndex).toBe(2);
   });
 
   it("invalidates cached offsets when item identities change with the same length", () => {

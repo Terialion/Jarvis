@@ -1,9 +1,18 @@
 // ============================================================================
-// Tavily backend — WebSearch + WebFetch via Tavily API
+// Tavily backend - WebSearch + WebFetch via Tavily API
 // ============================================================================
 
-import type { WebSearchBackend, WebSearchResult } from './web-search.js';
-import type { WebFetchBackend } from './web-fetch.js';
+import { toOpenAITool } from '@jarvis/shared';
+import type { ToolEntry } from '../registry.js';
+import {
+  createWebSearchHandler,
+  type WebSearchBackend,
+  type WebSearchResult,
+} from './web-search.js';
+import {
+  createWebFetchHandler,
+  type WebFetchBackend,
+} from './web-fetch.js';
 
 const TAVILY_BASE = 'https://api.tavily.com';
 
@@ -116,6 +125,79 @@ export class TavilyFetchBackend implements WebFetchBackend {
 
     return `Extracted from ${url}\nPrompt: ${prompt}\n\n${rawContent}`;
   }
+}
+
+// ---- dedicated tool wrappers ----
+
+export function createTavilySearchTool(backend: WebSearchBackend): ToolEntry {
+  return {
+    name: 'tavily_search',
+    toolset: 'web',
+    schema: toOpenAITool({
+      name: 'tavily_search',
+      description:
+        'Search the web via Tavily. Use when you explicitly want Tavily-backed search results or want to compare Tavily against other web or MCP search sources.',
+      parameters: {
+        type: 'object',
+        properties: {
+          query: {
+            type: 'string',
+            description: 'Search query',
+          },
+          max_results: {
+            type: 'number',
+            default: 5,
+            description: 'Maximum number of search results to return',
+          },
+          allowed_domains: {
+            type: 'array',
+            items: { type: 'string' },
+            description: 'Only include results from these domains',
+          },
+          blocked_domains: {
+            type: 'array',
+            items: { type: 'string' },
+            description: 'Never include results from these domains',
+          },
+        },
+        required: ['query'],
+      },
+    }),
+    handler: createWebSearchHandler(backend),
+    isAsync: true,
+    emoji: 'TV',
+    maxResultSizeChars: 50_000,
+  };
+}
+
+export function createTavilyFetchTool(backend: WebFetchBackend): ToolEntry {
+  return {
+    name: 'tavily_fetch',
+    toolset: 'web',
+    schema: toOpenAITool({
+      name: 'tavily_fetch',
+      description:
+        'Fetch and extract web content via Tavily. Use when you explicitly want Tavily extraction or want to compare Tavily against the default web fetch or MCP tools.',
+      parameters: {
+        type: 'object',
+        properties: {
+          url: {
+            type: 'string',
+            description: 'The URL to fetch content from',
+          },
+          prompt: {
+            type: 'string',
+            description: 'Question to answer from the fetched content',
+          },
+        },
+        required: ['url', 'prompt'],
+      },
+    }),
+    handler: createWebFetchHandler(backend),
+    isAsync: true,
+    emoji: 'TV',
+    maxResultSizeChars: 50_000,
+  };
 }
 
 // ---- auto-detect ----

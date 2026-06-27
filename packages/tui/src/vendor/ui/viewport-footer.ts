@@ -16,9 +16,8 @@ export function buildViewportFooterView(input: {
     return {
       emphasis: true,
       segments: [
-        { content: "[Selection mode]", color: "cyan" },
-        { content: "Selection active", color: "cyan" },
-        { content: "Auto-follow paused", color: "yellow" },
+        { content: "Selection", color: "cyan" },
+        { content: "Follow paused", color: "yellow" },
         { content: "Ctrl+C copies", color: "gray" },
         { content: "Esc clears", color: "gray" },
       ],
@@ -29,10 +28,9 @@ export function buildViewportFooterView(input: {
     return {
       emphasis: true,
       segments: [
-        { content: "[History mode]", color: "yellow" },
-        { content: "Viewing history", color: "yellow" },
-        { content: "New output will not move the viewport", color: "gray" },
-        { content: "End resumes live output", color: "cyan" },
+        { content: "History", color: "yellow" },
+        { content: "New output stays put", color: "gray" },
+        { content: "End resumes", color: "cyan" },
       ],
     };
   }

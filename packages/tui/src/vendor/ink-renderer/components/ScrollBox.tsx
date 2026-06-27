@@ -64,6 +64,14 @@ export type ScrollBoxHandle = {
    */
   setClampBounds: (min: number | undefined, max: number | undefined) => void;
   getClampBounds: () => { min?: number; max?: number };
+  getPaintDiagnostics: () => {
+    paintScrollTop?: number;
+    clampedToMaxScroll?: number;
+    usedPaintClamp?: boolean;
+    usedMountedRangeClamp?: boolean;
+    followedThisFrame?: boolean;
+    mutationSource?: string;
+  };
 };
 export type ScrollBoxProps = Except<Styles, "textWrap" | "overflow" | "overflowX" | "overflowY"> & {
   ref?: Ref<ScrollBoxHandle>;
@@ -106,6 +114,7 @@ function ScrollBox({
   const [, forceRender] = useState(0);
   const listenersRef = useRef(new Set<() => void>());
   const renderQueuedRef = useRef(false);
+  const lastKnownScrollTopRef = useRef(0);
   const notify = () => {
     for (const l of listenersRef.current) l();
   };
@@ -135,6 +144,8 @@ function ScrollBox({
         el.pendingScrollDelta = undefined;
         el.scrollAnchor = undefined;
         el.scrollTop = Math.max(0, Math.floor(y));
+        el.scrollMutationSource = "imperative_scroll_to";
+        lastKnownScrollTopRef.current = el.scrollTop;
         scrollMutated(el);
       },
       scrollToElement(el: DOMElement, offset = 0) {
@@ -146,6 +157,7 @@ function ScrollBox({
           el,
           offset,
         };
+        box.scrollMutationSource = "imperative_scroll_to_element";
         scrollMutated(box);
       },
       scrollBy(dy: number) {
@@ -158,6 +170,8 @@ function ScrollBox({
         // rate so fast flicks show intermediate frames. Pure accumulator:
         // scroll-up followed by scroll-down naturally cancels.
         el.pendingScrollDelta = (el.pendingScrollDelta ?? 0) + Math.floor(dy);
+        el.scrollMutationSource = "imperative_scroll_by";
+        lastKnownScrollTopRef.current = Math.max(0, (el.scrollTop ?? 0) + (el.pendingScrollDelta ?? 0));
         scrollMutated(el);
       },
       scrollToBottom() {
@@ -165,12 +179,16 @@ function ScrollBox({
         if (!el) return;
         el.pendingScrollDelta = undefined;
         el.stickyScroll = true;
+        el.scrollMutationSource = "imperative_scroll_bottom";
+        lastKnownScrollTopRef.current = el.scrollTop ?? lastKnownScrollTopRef.current;
         markDirty(el);
         notify();
         forceRender((n) => n + 1);
       },
       getScrollTop() {
-        return domRef.current?.scrollTop ?? 0;
+        const scrollTop = domRef.current?.scrollTop ?? 0;
+        lastKnownScrollTopRef.current = scrollTop;
+        return scrollTop;
       },
       getPendingDelta() {
         // Accumulated-but-not-yet-drained delta. useVirtualScroll needs
@@ -213,6 +231,17 @@ function ScrollBox({
           max: el?.scrollClampMax,
         };
       },
+      getPaintDiagnostics() {
+        const el = domRef.current;
+        return {
+          paintScrollTop: el?.scrollPaintTop,
+          clampedToMaxScroll: el?.scrollClampedToMaxScroll,
+          usedPaintClamp: el?.scrollUsedPaintClamp,
+          usedMountedRangeClamp: el?.scrollUsedMountedRangeClamp,
+          followedThisFrame: el?.scrollFollowedThisFrame,
+          mutationSource: el?.scrollMutationSource,
+        };
+      },
     }),
     // notify/scrollMutated are inline (no useCallback) but only close over
     // refs + imports — stable. Empty deps avoids rebuilding the handle on
@@ -236,7 +265,12 @@ function ScrollBox({
     <ink-box
       ref={(el) => {
         domRef.current = el;
-        if (el) el.scrollTop ??= 0;
+        if (!el) return;
+        if (el.scrollTop == null) {
+          el.scrollTop = lastKnownScrollTopRef.current;
+        } else {
+          lastKnownScrollTopRef.current = el.scrollTop;
+        }
       }}
       style={{
         flexWrap: "nowrap",

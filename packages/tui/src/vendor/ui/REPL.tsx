@@ -1,6 +1,7 @@
 import {
   Box,
   Text,
+  stringWidth,
   type Key,
   useApp,
   useHasSelection,
@@ -47,6 +48,8 @@ import type { TuiPresentationMode } from "../../presentation/contracts.js";
 import { useRegisterKeybindingContext } from "./keybindings/KeybindingContext";
 import { useKeybindings } from "./keybindings/useKeybinding";
 import {
+  isUserViewportScrollMutationSource,
+  resolveViewportTopForFollowState,
   shouldAutoScrollToBottomOnContentUpdate,
   shouldResumeLiveOutputFromBottomAction,
 } from "./viewport-mode.js";
@@ -62,12 +65,69 @@ import { TranscriptViewport, type TranscriptItem } from "./TranscriptViewport.js
 import { createViewportState, reduceViewportState } from "./viewport-controller.js";
 import { ViewportProvider, useViewportContext } from "./ViewportContext.js";
 import { useCopyOnSelect } from "./useCopyOnSelect.js";
+import {
+  areScrollChromeStatesEqual,
+  clearScrollChrome,
+  createScrollChromeState,
+  formatJumpToBottomLabel,
+  recordScrollChromeSnapshot,
+  recordScrollChromeTranscriptMutation,
+  shouldShowJumpToBottomPill,
+} from "./scroll-chrome.js";
 
 type REPLCommand = {
   name: string;
   description: string;
   onExecute: (args: string, fullInput: string) => void;
 };
+
+function estimateWrappedLineCount(text: string, width: number): number {
+  const safeWidth = Math.max(8, width);
+  const lines = text.replace(/\r/g, "").split("\n");
+  return lines.reduce((total, line) => {
+    const lineWidth = Math.max(1, stringWidth(line));
+    return total + Math.max(1, Math.ceil(lineWidth / safeWidth));
+  }, 0);
+}
+
+function estimateMessageItemHeight(message: Message): number {
+  const contentWidth = Math.max(20, (process.stdout.columns ?? 80) - 12);
+  if (typeof message.content === "string") {
+    return Math.max(4, estimateWrappedLineCount(message.content, contentWidth) + 2);
+  }
+
+  let lines = 3;
+  for (const block of message.content) {
+    switch (block.type) {
+      case "text":
+      case "thinking":
+        lines += Math.max(2, estimateWrappedLineCount(block.text, contentWidth) + 1);
+        break;
+      case "tool_use":
+        lines += Math.max(5, estimateWrappedLineCount(block.result ?? block.input, contentWidth) + 3);
+        break;
+      case "code":
+        lines += Math.max(6, estimateWrappedLineCount(block.code, contentWidth));
+        break;
+      case "diff":
+        lines += Math.max(6, estimateWrappedLineCount(block.diff, contentWidth));
+        break;
+      case "error":
+        lines += Math.max(4, estimateWrappedLineCount(`${block.message}\n${block.details ?? ""}`, contentWidth) + 1);
+        break;
+      case "task_result":
+        lines += Math.max(4, block.tasks.length + 2);
+        break;
+      case "plan":
+        lines += Math.max(5, 2 + (block.steps?.length ?? 0) * 2);
+        break;
+      default:
+        lines += 4;
+        break;
+    }
+  }
+  return lines;
+}
 
 export type StatusDetailLine = {
   content?: string;
@@ -97,6 +157,7 @@ export type REPLProps = {
   /** Called when user requests interrupt (Esc while loading, or first Ctrl+C). */
   onInterrupt?: () => void;
   onViewportDebugEvent?: (event: {
+    debugType?: "state" | "manual_scroll";
     mode: "following" | "history" | "selection";
     followOutput: boolean;
     hasSelection: boolean;
@@ -109,9 +170,24 @@ export type REPLProps = {
     remainingScrollDistance: number;
     clampMin?: number;
     clampMax?: number;
+    paintScrollTop?: number;
+    clampedToMaxScroll?: number;
+    usedPaintClamp?: boolean;
+    usedMountedRangeClamp?: boolean;
+    followedThisFrame?: boolean;
+    mutationSource?: string;
+    liveAnswerLength?: number;
+    liveThinkingLength?: number;
+    transcriptItemCount?: number;
     transcriptTotalHeight?: number;
     transcriptRangeStart?: number;
     transcriptRangeEnd?: number;
+    scrollChromeActive?: boolean;
+    scrollChromeUnseenCount?: number;
+    scrollChromeShouldRequestFollow?: boolean;
+    action?: "scroll_by" | "scroll_to_top" | "scroll_to_bottom";
+    delta?: number;
+    targetTop?: number;
   }) => void;
 
   messages: Message[];
@@ -284,6 +360,10 @@ export function REPL({
   const [thinkingExpanded, setThinkingExpanded] = useState(false);
   const [toolResultsExpanded, setToolResultsExpanded] = useState(false);
   const [viewportState, dispatchViewport] = useReducer(reduceViewportState, undefined, createViewportState);
+  const [scrollDebugVersion, setScrollDebugVersion] = useState(0);
+  const [scrollHandleVersion, setScrollHandleVersion] = useState(0);
+  const transcriptItemCountRef = useRef(0);
+  const [scrollChrome, setScrollChrome] = useState(createScrollChromeState);
   const [showExitHint, setShowExitHint] = useState(false);
   const exitHintTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const scrollDrainTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -315,9 +395,13 @@ export function REPL({
   );
 
   const getEffectiveViewportTop = useCallback((handle: ScrollBoxHandle) => {
-    const maxScroll = Math.max(0, handle.getScrollHeight() - handle.getViewportHeight());
-    if (followOutput || handle.isSticky()) return maxScroll;
-    return Math.max(0, Math.min(maxScroll, handle.getScrollTop() + handle.getPendingDelta()));
+    return resolveViewportTopForFollowState({
+      followOutput,
+      scrollTop: handle.getScrollTop(),
+      scrollHeight: handle.getScrollHeight(),
+      viewportHeight: handle.getViewportHeight(),
+      pendingDelta: handle.getPendingDelta(),
+    });
   }, [followOutput]);
 
   const getRemainingScrollDistance = useCallback(() => {
@@ -326,21 +410,72 @@ export function REPL({
     return Math.max(0, handle.getScrollHeight() - handle.getViewportHeight() - getEffectiveViewportTop(handle));
   }, [getEffectiveViewportTop]);
 
+  const updateScrollChrome = useCallback(
+    (producer: (previous: ReturnType<typeof createScrollChromeState>) => ReturnType<typeof createScrollChromeState>) => {
+      setScrollChrome((previous) => {
+        const next = producer(previous);
+        return areScrollChromeStatesEqual(previous, next) ? previous : next;
+      });
+    },
+    [],
+  );
+
+  const recordPassiveViewportSnapshot = useCallback(
+    (mode: "history" | "selection", scrollTopOverride?: number) => {
+      const handle = scrollRef.current;
+      if (!handle) return;
+      updateScrollChrome((previous) =>
+        recordScrollChromeSnapshot(previous, {
+          mode,
+          itemCount: transcriptItemCountRef.current,
+          scrollHeight: handle.getScrollHeight(),
+          viewportHeight: handle.getViewportHeight(),
+          scrollTop: scrollTopOverride ?? getEffectiveViewportTop(handle),
+        }),
+      );
+    },
+    [getEffectiveViewportTop, updateScrollChrome],
+  );
+
+  const clearScrollChromeState = useCallback(() => {
+    updateScrollChrome((previous) => clearScrollChrome(previous));
+  }, [updateScrollChrome]);
+
   const resumeFollowingOutput = useCallback(() => {
     scrollRef.current?.scrollToBottom();
+    clearScrollChromeState();
     dispatchViewport({ type: "resume_follow" });
-  }, []);
+  }, [clearScrollChromeState]);
 
   const handleViewportBottomAction = useCallback(() => {
     if (!shouldResumeLiveOutputFromBottomAction(hasSelection)) {
-      scrollRef.current?.scrollToBottom();
+      const handle = scrollRef.current;
+      handle?.scrollToBottom();
+      if (handle) {
+        const targetTop = Math.max(0, handle.getScrollHeight() - handle.getViewportHeight());
+        onViewportDebugEvent?.({
+          debugType: "manual_scroll",
+          action: "scroll_to_bottom",
+          targetTop,
+          mode: hasSelection ? "selection" : "history",
+          followOutput,
+          hasSelection,
+          interactivePromptActive,
+          isLoading,
+          scrollTop: targetTop,
+          scrollHeight: handle.getScrollHeight(),
+          viewportHeight: handle.getViewportHeight(),
+          pendingScrollDelta: handle.getPendingDelta(),
+          remainingScrollDistance: 0,
+        });
+      }
       dispatchViewport({ type: "bottom_action" });
       return;
     }
 
     dispatchViewport({ type: "bottom_action" });
     resumeFollowingOutput();
-  }, [hasSelection, resumeFollowingOutput]);
+  }, [followOutput, hasSelection, interactivePromptActive, isLoading, onViewportDebugEvent, resumeFollowingOutput]);
 
   const handleViewportScrollBy = useCallback(
     (dy: number) => {
@@ -367,15 +502,51 @@ export function REPL({
       }
       handle.scrollTo(targetTop);
       const nextKind = hasSelection ? "selection" : "history";
+      recordPassiveViewportSnapshot(nextKind, targetTop);
+      onViewportDebugEvent?.({
+        debugType: "manual_scroll",
+        action: "scroll_by",
+        delta: actualDelta,
+        targetTop,
+        mode: hasSelection ? "selection" : "history",
+        followOutput,
+        hasSelection,
+        interactivePromptActive,
+        isLoading,
+        scrollTop: targetTop,
+        scrollHeight: handle.getScrollHeight(),
+        viewportHeight: handle.getViewportHeight(),
+        pendingScrollDelta: handle.getPendingDelta(),
+        remainingScrollDistance: Math.max(0, handle.getScrollHeight() - handle.getViewportHeight() - targetTop),
+      });
       stopFollowingOutput(nextKind);
     },
-    [captureScrolledRows, getEffectiveViewportTop, hasSelection, shiftSelection, stopFollowingOutput],
+    [captureScrolledRows, followOutput, getEffectiveViewportTop, hasSelection, interactivePromptActive, isLoading, onViewportDebugEvent, recordPassiveViewportSnapshot, shiftSelection, stopFollowingOutput],
   );
 
   const handleViewportScrollToTop = useCallback(() => {
-    scrollRef.current?.scrollTo(0);
+    const handle = scrollRef.current;
+    handle?.scrollTo(0);
+    recordPassiveViewportSnapshot(hasSelection ? "selection" : "history", 0);
+    if (handle) {
+      onViewportDebugEvent?.({
+        debugType: "manual_scroll",
+        action: "scroll_to_top",
+        targetTop: 0,
+        mode: hasSelection ? "selection" : "history",
+        followOutput,
+        hasSelection,
+        interactivePromptActive,
+        isLoading,
+        scrollTop: 0,
+        scrollHeight: handle.getScrollHeight(),
+        viewportHeight: handle.getViewportHeight(),
+        pendingScrollDelta: handle.getPendingDelta(),
+        remainingScrollDistance: Math.max(0, handle.getScrollHeight() - handle.getViewportHeight()),
+      });
+    }
     stopFollowingOutput(hasSelection ? "selection" : "history");
-  }, [hasSelection, stopFollowingOutput]);
+  }, [followOutput, hasSelection, interactivePromptActive, isLoading, onViewportDebugEvent, recordPassiveViewportSnapshot, stopFollowingOutput]);
 
   // Cleanup timers on unmount
   useEffect(
@@ -391,21 +562,29 @@ export function REPL({
     const handle = scrollRef.current;
     if (!handle) return;
     return handle.subscribe(() => {
-      // After any imperative scroll, check if we're still at the bottom
-      const remaining = Math.max(
-        0,
-        handle.getScrollHeight() - handle.getViewportHeight() - getEffectiveViewportTop(handle),
-      );
-      if (remaining > 3 && followOutput) {
-        stopFollowingOutput(hasSelection ? "selection" : "history");
+      const mutationSource = handle.getPaintDiagnostics().mutationSource;
+      const isUserScroll = isUserViewportScrollMutationSource(mutationSource);
+      // Programmatic live-follow scrolls should not start scroll draining;
+      // otherwise answer streaming can immediately disable the follow it just requested.
+      if (isUserScroll) {
+        const remaining = Math.max(
+          0,
+          handle.getScrollHeight() - handle.getViewportHeight() - getEffectiveViewportTop(handle),
+        );
+        if (remaining > 3 && followOutput) {
+          const nextKind = hasSelection ? "selection" : "history";
+          recordPassiveViewportSnapshot(nextKind, getEffectiveViewportTop(handle));
+          stopFollowingOutput(nextKind);
+        }
+        dispatchViewport({ type: "scroll_draining_changed", scrollDraining: true });
+        if (scrollDrainTimerRef.current) clearTimeout(scrollDrainTimerRef.current);
+        scrollDrainTimerRef.current = setTimeout(() => {
+          dispatchViewport({ type: "scroll_draining_changed", scrollDraining: false });
+        }, 150);
       }
-      dispatchViewport({ type: "scroll_draining_changed", scrollDraining: true });
-      if (scrollDrainTimerRef.current) clearTimeout(scrollDrainTimerRef.current);
-      scrollDrainTimerRef.current = setTimeout(() => {
-        dispatchViewport({ type: "scroll_draining_changed", scrollDraining: false });
-      }, 150);
+      setScrollDebugVersion((value) => value + 1);
     });
-  }, [followOutput, getEffectiveViewportTop, hasSelection, stopFollowingOutput]);
+  }, [followOutput, getEffectiveViewportTop, hasSelection, recordPassiveViewportSnapshot, scrollHandleVersion, stopFollowingOutput]);
 
   useEffect(() => {
     dispatchViewport({ type: "selection_changed", hasSelection });
@@ -539,7 +718,7 @@ export function REPL({
       if (askUserQuestion || permissionRequest) {
         return;
       }
-      // Agents panel focus mode 閳?route keys to panel
+      // Agents panel focus mode - route keys to panel
       if (agentsFocused && agentsPanelVisible) {
         if (_input === "q" || key.escape || (key.ctrl && _input === "g")) {
           setAgentsFocused(false);
@@ -624,11 +803,11 @@ export function REPL({
           setThinkingExpanded((prev) => !prev);
         }
       }
-      // Ctrl+G handled earlier for focus/panel toggle 閳?skip here
+      // Ctrl+G handled earlier for focus/panel toggle - skip here
       if (key.ctrl && _input === "o") {
         setToolResultsExpanded((prev) => !prev);
       }
-      // Shift+Tab: cycle permission modes (suggest 閳?auto-edit 閳?full-auto 閳?suggest)
+      // Shift+Tab: cycle permission modes (suggest -> auto-edit -> full-auto -> suggest)
       if (key.tab && key.shift) {
         onPermissionModeCycle?.();
       }
@@ -728,6 +907,20 @@ export function REPL({
     );
   }, [askUserQuestion, permissionRequest, planReview, planReviewIndex, showPermission]);
 
+  const bottomFloatNode = useMemo(() => {
+    if (!shouldShowJumpToBottomPill(scrollChrome)) {
+      return null;
+    }
+
+    return (
+      <ScrollChromePill
+        label={formatJumpToBottomLabel(scrollChrome)}
+        mode={scrollPositionKind}
+        onJump={handleViewportBottomAction}
+      />
+    );
+  }, [handleViewportBottomAction, scrollChrome, scrollPositionKind]);
+
   const transcriptItems = useMemo<TranscriptItem[]>(() => {
     const items: TranscriptItem[] = [];
 
@@ -747,22 +940,25 @@ export function REPL({
         welcome: showWelcome ? welcome : undefined,
       });
     } else {
+      const historicalMessages = messages.filter((message) => !isStandaloneRunningToolMessage(message));
       const liveToolMessages = messages.filter((message) => isStandaloneRunningToolMessage(message));
 
-      items.push({
-        id: "message-list",
-        estimatedHeight: Math.max(12, messages.length * 6),
-        render: () => (
-          <MessageList
-            messages={messages}
-            renderMessage={renderMessage}
-            allThinkingExpanded={thinkingExpanded}
-            allToolResultsExpanded={toolResultsExpanded}
-            searchQuery={searchQuery}
-            activeSearchMatch={activeSearchMatch}
-          />
-        ),
-      });
+      for (const [index, message] of historicalMessages.entries()) {
+        items.push({
+          id: `message-${message.id}`,
+          estimatedHeight: estimateMessageItemHeight(message),
+          render: () => (
+            <MessageList
+              messages={[message]}
+              renderMessage={renderMessage}
+              allThinkingExpanded={thinkingExpanded}
+              allToolResultsExpanded={toolResultsExpanded}
+              searchQuery={searchQuery}
+              activeSearchMatch={activeSearchMatch?.index === index ? { ...activeSearchMatch, index: 0 } : null}
+            />
+          ),
+        });
+      }
 
       for (const message of liveToolMessages) {
         items.push({
@@ -794,7 +990,13 @@ export function REPL({
       if (streamingContent && streamingContent.trim()) {
         items.push({
           id: "live-answer",
-          estimatedHeight: Math.max(6, streamingContent.split("\n").length + 3),
+          estimatedHeight: Math.max(
+            6,
+            estimateWrappedLineCount(
+              streamingContent,
+              Math.max(20, (process.stdout.columns ?? 80) - 12),
+            ) + 3,
+          ),
           render: () => <LiveAssistantAnswerRail text={streamingContent} />,
         });
       }
@@ -846,6 +1048,17 @@ export function REPL({
     toolResultsExpanded,
     welcome,
   ]);
+
+  useEffect(() => {
+    transcriptItemCountRef.current = transcriptItems.length;
+    updateScrollChrome((previous) =>
+      recordScrollChromeTranscriptMutation(previous, {
+        mode: scrollPositionKind,
+        itemCount: transcriptItems.length,
+        scrollHeight: transcriptMetricsRef.current?.totalHeight ?? scrollRef.current?.getScrollHeight() ?? 0,
+      }),
+    );
+  }, [scrollPositionKind, transcriptItems.length, updateScrollChrome]);
 
   const overlayNode = useMemo(
     () => (
@@ -916,6 +1129,10 @@ export function REPL({
     ],
   );
 
+  const handleScrollHandleReady = useCallback(() => {
+    setScrollHandleVersion((value) => value + 1);
+  }, []);
+
   const viewportContextValue = {
     ...viewportState,
     dispatch: dispatchViewport,
@@ -953,6 +1170,7 @@ export function REPL({
     const handle = scrollRef.current;
     const remainingScrollDistance = getRemainingScrollDistance();
     const payload = {
+      debugType: "state" as const,
       mode: scrollPositionKind,
       followOutput,
       hasSelection,
@@ -965,9 +1183,21 @@ export function REPL({
       remainingScrollDistance,
       clampMin: transcriptMetricsRef.current?.clampMin,
       clampMax: transcriptMetricsRef.current?.clampMax,
+      paintScrollTop: handle?.getPaintDiagnostics().paintScrollTop,
+      clampedToMaxScroll: handle?.getPaintDiagnostics().clampedToMaxScroll,
+      usedPaintClamp: handle?.getPaintDiagnostics().usedPaintClamp,
+      usedMountedRangeClamp: handle?.getPaintDiagnostics().usedMountedRangeClamp,
+      followedThisFrame: handle?.getPaintDiagnostics().followedThisFrame,
+      mutationSource: handle?.getPaintDiagnostics().mutationSource,
+      liveAnswerLength: streamingContent?.length ?? 0,
+      liveThinkingLength: streamingThinking?.length ?? 0,
+      transcriptItemCount: transcriptItems.length,
       transcriptTotalHeight: transcriptMetricsRef.current?.totalHeight,
       transcriptRangeStart: transcriptMetricsRef.current?.startIndex,
       transcriptRangeEnd: transcriptMetricsRef.current?.endIndex,
+      scrollChromeActive: scrollChrome.active,
+      scrollChromeUnseenCount: scrollChrome.unseenCount,
+      scrollChromeShouldRequestFollow: scrollChrome.shouldRequestFollow,
     };
     const snapshotKey = JSON.stringify(payload);
     if (snapshotKey === lastViewportDebugRef.current) return;
@@ -981,9 +1211,13 @@ export function REPL({
     isLoading,
     messages.length,
     onViewportDebugEvent,
+    scrollDebugVersion,
     scrollPositionKind,
+    scrollChrome,
     streamingContent,
+    streamingThinking,
     threadEvents.length,
+    transcriptItems.length,
   ]);
 
   return (
@@ -1029,9 +1263,29 @@ export function REPL({
           overlayNode={overlayNode}
           modalNode={modalNode}
           bottomReplacementNode={bottomReplacementNode}
+          bottomFloatNode={bottomFloatNode}
         />
       </FullscreenLayout>
     </ViewportProvider>
+  );
+}
+
+function ScrollChromePill({
+  label,
+  mode,
+  onJump,
+}: {
+  label: string;
+  mode: "following" | "history" | "selection";
+  onJump: () => void;
+}): React.ReactNode {
+  const color = mode === "selection" ? "cyan" : "yellow";
+  return (
+    <Box paddingX={1} flexShrink={0}>
+      <Box onClick={onJump} paddingX={1} borderStyle="round" borderColor={color}>
+        <Text color={color}>{label}</Text>
+      </Box>
+    </Box>
   );
 }
 
@@ -1044,15 +1298,17 @@ function ReplOverlayRegistrations({
   overlayNode,
   modalNode,
   bottomReplacementNode,
+  bottomFloatNode,
 }: {
   overlayNode: React.ReactNode;
   modalNode: React.ReactNode;
   bottomReplacementNode: React.ReactNode;
+  bottomFloatNode: React.ReactNode;
 }): React.ReactNode {
   useSetPromptOverlay(overlayNode);
   useSetPromptModal(modalNode);
   useSetBottomReplacement(bottomReplacementNode);
-  useSetBottomFloat(null);
+  useSetBottomFloat(bottomFloatNode);
   return null;
 }
 

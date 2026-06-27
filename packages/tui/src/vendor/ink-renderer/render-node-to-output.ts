@@ -167,6 +167,23 @@ export function shouldPersistScrollTopAfterClamp(input: {
   return clampedToMaxScroll === currentScrollTop;
 }
 
+export function shouldClampScrollTopForPaint(input: {
+  currentScrollTop: number;
+  clampedToMaxScroll: number;
+  pendingDelta: number | undefined;
+  followedThisFrame: boolean;
+}): boolean {
+  const { currentScrollTop, clampedToMaxScroll, pendingDelta, followedThisFrame } = input;
+
+  if (followedThisFrame) return true;
+  if (pendingDelta !== undefined && pendingDelta !== 0) return true;
+
+  // Passive history browsing should not be visually yanked to a transient
+  // max-scroll boundary when a growing transcript item is briefly measured
+  // smaller during layout churn.
+  return clampedToMaxScroll === currentScrollTop;
+}
+
 export function shouldApplyMountedRangeClamp(input: {
   pendingDelta: number | undefined;
   followedThisFrame: boolean;
@@ -773,6 +790,7 @@ function renderNodeToOutput(
           const anchorTop = node.scrollAnchor.el.yogaNode?.getComputedTop();
           if (anchorTop != null) {
             node.scrollTop = anchorTop + node.scrollAnchor.offset;
+            node.scrollMutationSource = "render_scroll_anchor";
             node.pendingScrollDelta = undefined;
           }
           node.scrollAnchor = undefined;
@@ -807,6 +825,7 @@ function renderNodeToOutput(
         // because the user was at bottom.
         if (followState.shouldFollow) {
           node.scrollTop = followState.nextScrollTop;
+          node.scrollMutationSource = "render_follow";
           node.pendingScrollDelta = undefined;
           // Sync flag so useVirtualScroll's isSticky() agrees with positional
           // state — sticky-broken-but-at-bottom (wheel tremor, click-select
@@ -876,12 +895,26 @@ function renderNodeToOutput(
         // the right range. Not scheduling scrollDrainNode here keeps the
         // clamp passive — React's commit → resetAfterCommit → onRender will
         // paint again with fresh bounds.
-        const clamped = haveClamp && shouldApplyMountedRangeClamp({
+        const paintBaseScrollTop = shouldClampScrollTopForPaint({
+          currentScrollTop: cur,
+          clampedToMaxScroll,
           pendingDelta: node.pendingScrollDelta,
           followedThisFrame: followState.shouldFollow,
         })
-          ? Math.max(cMin, Math.min(clampedToMaxScroll, cMax))
-          : clampedToMaxScroll;
+          ? clampedToMaxScroll
+          : Math.max(0, cur);
+        const mountedRangeClampActive = haveClamp && shouldApplyMountedRangeClamp({
+          pendingDelta: node.pendingScrollDelta,
+          followedThisFrame: followState.shouldFollow,
+        });
+        const clamped = mountedRangeClampActive
+          ? Math.max(cMin, Math.min(paintBaseScrollTop, cMax))
+          : paintBaseScrollTop;
+        node.scrollClampedToMaxScroll = clampedToMaxScroll;
+        node.scrollUsedPaintClamp = paintBaseScrollTop !== Math.max(0, cur);
+        node.scrollUsedMountedRangeClamp = mountedRangeClampActive;
+        node.scrollFollowedThisFrame = followState.shouldFollow;
+        node.scrollPaintTop = clamped;
         if (
           shouldPersistScrollTopAfterClamp({
             currentScrollTop: cur,
@@ -891,6 +924,7 @@ function renderNodeToOutput(
           })
         ) {
           node.scrollTop = clampedToMaxScroll;
+          node.scrollMutationSource = "render_persist_clamp";
         }
         // Clamp hitting top/bottom consumes any remainder. Set drainPending
         // only after clamp so a wasted no-op frame isn't scheduled.

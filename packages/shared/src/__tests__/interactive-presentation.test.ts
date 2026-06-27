@@ -45,6 +45,51 @@ describe('interactive presentation', () => {
     expect(card.previewLines?.[1]).toMatch(/1\s+\+ a/);
   });
 
+  it('formats repo_map tool cards with compact orientation summary and preview', () => {
+    const card = buildToolCardView({
+      toolName: 'repo_map',
+      args: { path: 'D:/agent/Jarvis' },
+      resultText: JSON.stringify({
+        root: 'D:/agent/Jarvis',
+        package: { name: 'jarvis' },
+        entries: ['package.json', 'src/index.ts'],
+        files: [
+          { path: 'src/index.ts', language: 'typescript', lines: 10, size: 100 },
+          { path: 'src/lib/math.ts', language: 'typescript', lines: 8, size: 80 },
+        ],
+        symbols: [
+          { kind: 'function', name: 'startApp', file: 'src/index.ts', line: 3 },
+          { kind: 'class', name: 'AppService', file: 'src/index.ts', line: 2 },
+          { kind: 'function', name: 'add', file: 'src/lib/math.ts', line: 2 },
+        ],
+        imports: [
+          { kind: 'relative', target: './lib/math', from: 'src/index.ts', file: 'src/index.ts', line: 1 },
+          { kind: 'external', target: 'zod', from: 'src/index.ts', file: 'src/index.ts', line: 2 },
+        ],
+        importGroups: {
+          external: { kind: 'external', count: 1, targets: ['zod'], files: ['src/index.ts'] },
+          internal: { kind: 'internal', count: 0, targets: [], files: [] },
+          relative: { kind: 'relative', count: 1, targets: ['./lib/math'], files: ['src/index.ts'] },
+        },
+        summary: { filesScanned: 2, symbolsIndexed: 3, importsIndexed: 2, truncated: false },
+      }),
+      status: 'completed',
+    });
+
+    expect(card.label).toBe('Repo Map');
+    expect(card.summary).toBe('Mapped 2 files, 3 symbols, 2 imports');
+    expect(card.collapsedDetail).toBe('Mapped 2 files, 3 symbols, 2 imports');
+    expect(card.previewKind).toBe('code');
+    expect(card.alwaysShowPreview).toBe(true);
+    expect(card.previewLines).toEqual([
+      'package: jarvis',
+      'entries: package.json, src/index.ts',
+      'files: src/index.ts, src/lib/math.ts',
+      'symbols: function:startApp, class:AppService, function:add',
+      'deps: external 1, relative 1',
+      'imports: relative:./lib/math, external:zod',
+    ]);
+  });
   it('serializes slash result blocks to plain text', () => {
     const text = renderSlashResultText([
       { kind: 'section', title: 'Context Usage', lines: ['Estimated: 12/200 tokens', 'Messages: 3'] },
@@ -132,7 +177,7 @@ describe('interactive presentation', () => {
         },
       ],
       liveStatus: { isLoading: false },
-      messages: [{ id: 'user_1', role: 'user', text: '你好' }],
+      messages: [{ id: 'user_1', role: 'user', text: 'hello' }],
     });
 
     const lines = renderCodexTimelineBlocks(state);

@@ -8,7 +8,7 @@ import * as fs from 'node:fs';
 import * as os from 'node:os';
 import { parseArgs } from 'node:util';
 import { LLMProvider, AgentLoop, AgentMailbox } from '@jarvis/agent';
-import { ToolRegistry, allBuiltinTools, createToolRuntime, createSkillLoadTool, createSkillTool, createAgentTool, createListMcpResourcesTool, createReadMcpResourceTool, createMcpStatusTool, createMcpHealthcheckTool, createMcpToolEntries, webSearchTool, webFetchTool, createWebSearchTool, createWebFetchHandler, tryCreateTavilySearch, tryCreateTavilyFetch } from '@jarvis/tools';
+import { ToolRegistry, allBuiltinTools, createToolRuntime, createSkillLoadTool, createSkillTool, createAgentTool, createListMcpResourcesTool, createReadMcpResourceTool, createMcpStatusTool, createMcpHealthcheckTool, createMcpToolEntries, webSearchTool, webFetchTool, createTavilySearchTool, createTavilyFetchTool, tryCreateTavilySearch, tryCreateTavilyFetch } from '@jarvis/tools';
 import { HookRegistry } from '@jarvis/hooks';
 import { SkillRegistry, SkillExecutor } from '@jarvis/skills';
 import { SubagentPool, SubagentRunner } from '@jarvis/subagents';
@@ -346,12 +346,13 @@ export function registerSkillCommands(
 // ============================================================================
 
 export function registerWebTools(tools: ToolRegistry): void {
+  tools.register(webSearchTool);
+  tools.register(webFetchTool);
+
   const tavilySearch = tryCreateTavilySearch();
   const tavilyFetch = tryCreateTavilyFetch();
-  if (tavilySearch) { tools.register(createWebSearchTool(tavilySearch)); }
-  else { tools.register(webSearchTool); }
-  if (tavilyFetch) { tools.register({ ...webFetchTool, handler: createWebFetchHandler(tavilyFetch) }); }
-  else { tools.register(webFetchTool); }
+  if (tavilySearch) { tools.register(createTavilySearchTool(tavilySearch)); }
+  if (tavilyFetch) { tools.register(createTavilyFetchTool(tavilyFetch)); }
 }
 
 // ============================================================================

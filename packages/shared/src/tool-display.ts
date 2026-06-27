@@ -14,6 +14,8 @@ const TOOL_DISPLAY: Record<string, ToolDisplay> = {
   grep: { label: 'Grep', detailKeys: ['pattern', 'path'] },
   web_search: { label: 'Web Search', detailKeys: ['query'] },
   web_fetch: { label: 'Web Fetch', detailKeys: ['url'] },
+  tavily_search: { label: 'Tavily Search', detailKeys: ['query'] },
+  tavily_fetch: { label: 'Tavily Fetch', detailKeys: ['url'] },
   task_create: { label: 'Create Task', detailKeys: ['subject'] },
   task_update: { label: 'Update Task', detailKeys: ['taskId'] },
   task_list: { label: 'List Tasks', detailKeys: [] },
@@ -413,6 +415,8 @@ function resolveDetail(toolName: string, args: Record<string, unknown>): string 
   if (toolName === 'glob') return typeof args.pattern === 'string' ? args.pattern : null;
   if (toolName === 'web_search') return typeof args.query === 'string' ? args.query.slice(0, 80) : null;
   if (toolName === 'web_fetch') return typeof args.url === 'string' ? args.url.slice(0, 80) : null;
+  if (toolName === 'tavily_search') return typeof args.query === 'string' ? args.query.slice(0, 80) : null;
+  if (toolName === 'tavily_fetch') return typeof args.url === 'string' ? args.url.slice(0, 80) : null;
   const config = TOOL_DISPLAY[toolName];
   if (config?.detailKeys) {
     for (const key of config.detailKeys) {

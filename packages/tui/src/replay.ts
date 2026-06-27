@@ -6,6 +6,7 @@ import { parseArgs } from "node:util";
 import React from "react";
 import stripAnsi from "strip-ansi";
 import { App } from "./app.js";
+import { ReplayFixtureApp, type ReplayFixtureScenario } from "./replay-fixture.js";
 import { TuiShell } from "./TuiShell.js";
 import type { TUIDebugEvent, TUIOptions } from "./types.js";
 import { createRoot, type RenderOptions } from "./vendor/ink-renderer/root.js";
@@ -45,6 +46,7 @@ export type ReplayOptions = TUIOptions & {
   prompt: string;
   prompts?: string[];
   actionScript?: ReplayAction[];
+  fixtureScenario?: ReplayFixtureScenario;
   waitMs: number;
   inputDelayMs: number;
   submitCount: number;
@@ -179,6 +181,7 @@ function parseReplayArgs(argv: string[] = process.argv): ReplayOptions {
       "prompt-b64": { type: "string" },
       "prompts-b64": { type: "string" },
       "action-script-b64": { type: "string" },
+      fixture: { type: "string" },
       model: {
         type: "string",
         default: userConfig.model ?? process.env["JARVIS_LLM_MODEL"] ?? process.env["JARVIS_MODEL"] ?? "deepseek-v4-flash-ascend",
@@ -234,6 +237,7 @@ function parseReplayArgs(argv: string[] = process.argv): ReplayOptions {
     prompt,
     prompts,
     actionScript,
+    fixtureScenario: values["fixture"] as ReplayFixtureScenario | undefined,
     model: values["model"] as string,
     apiKey: values["api-key"] as string | undefined,
     baseURL: values["base-url"] as string | undefined,
@@ -294,16 +298,64 @@ export function summarizeViewportDebugEvents(debugEvents: TUIDebugEvent[]): {
   };
 }
 
+export function summarizeTurnPhaseDebugEvents(debugEvents: TUIDebugEvent[]): {
+  eventCount: number;
+  phasesSeen: Array<"discover" | "analyze" | "finalize">;
+  detailsSeen: string[];
+  sawEnterFinalize: boolean;
+  sawNoProgressHardStop: boolean;
+  sawEmptyStepDuringFinalize: boolean;
+  terminalPhaseTrail: string[];
+  lastPhaseEvent: Extract<TUIDebugEvent, { type: "turn_phase" }> | null;
+} {
+  const phaseEvents = debugEvents.filter(
+    (event): event is Extract<TUIDebugEvent, { type: "turn_phase" }> => event.type === "turn_phase",
+  );
+
+  return {
+    eventCount: phaseEvents.length,
+    phasesSeen: [...new Set(phaseEvents.map((event) => event.phase))],
+    detailsSeen: [...new Set(phaseEvents.map((event) => event.detail))],
+    sawEnterFinalize: phaseEvents.some((event) => event.detail === "enter_finalize"),
+    sawNoProgressHardStop: phaseEvents.some((event) => event.detail === "no_progress_hard_stop"),
+    sawEmptyStepDuringFinalize: phaseEvents.some((event) => event.detail === "empty_step_during_finalize"),
+    terminalPhaseTrail: phaseEvents.slice(-6).map((event) => `${event.phase}:${event.detail}`),
+    lastPhaseEvent: phaseEvents.length > 0 ? phaseEvents[phaseEvents.length - 1]! : null,
+  };
+}
+
 export function buildViewportDiagnostics(debugEvents: TUIDebugEvent[]): {
   eventCount: number;
+  manualChanges: Array<{
+    at: number;
+    mode: "following" | "history" | "selection";
+    fromScrollTop: number;
+    toScrollTop: number;
+    mutationSource?: string;
+    action?: "scroll_by" | "scroll_to_top" | "scroll_to_bottom";
+    delta?: number;
+    targetTop?: number;
+  }>;
   suspiciousChanges: Array<{
     at: number;
     mode: "following" | "history" | "selection";
-    reason: "clamp_shift" | "range_recompute" | "external_relayout_or_manual";
+    reason:
+      | "paint_clamp_shift"
+      | "mounted_range_clamp_shift"
+      | "max_scroll_clamp_shift"
+      | "range_recompute"
+      | "manual_scroll_action"
+      | "external_relayout_or_manual";
     from: {
       scrollTop: number;
       clampMin?: number;
       clampMax?: number;
+      paintScrollTop?: number;
+      clampedToMaxScroll?: number;
+      mutationSource?: string;
+      liveAnswerLength?: number;
+      liveThinkingLength?: number;
+      transcriptItemCount?: number;
       rangeStart?: number;
       rangeEnd?: number;
     };
@@ -311,23 +363,54 @@ export function buildViewportDiagnostics(debugEvents: TUIDebugEvent[]): {
       scrollTop: number;
       clampMin?: number;
       clampMax?: number;
+      paintScrollTop?: number;
+      clampedToMaxScroll?: number;
+      mutationSource?: string;
+      liveAnswerLength?: number;
+      liveThinkingLength?: number;
+      transcriptItemCount?: number;
       rangeStart?: number;
       rangeEnd?: number;
     };
+    nearbyEvents: string[];
+    outputActivity: Array<"answer_stream" | "tool_output" | "bash_output">;
   }>;
 } {
   const viewportEvents = debugEvents.filter(
     (event): event is Extract<TUIDebugEvent, { type: "viewport_state" }> => event.type === "viewport_state",
   );
 
+  const manualChanges: Array<{
+    at: number;
+    mode: "following" | "history" | "selection";
+    fromScrollTop: number;
+    toScrollTop: number;
+    mutationSource?: string;
+    action?: "scroll_by" | "scroll_to_top" | "scroll_to_bottom";
+    delta?: number;
+    targetTop?: number;
+  }> = [];
+
   const suspiciousChanges: Array<{
     at: number;
     mode: "following" | "history" | "selection";
-    reason: "clamp_shift" | "range_recompute" | "external_relayout_or_manual";
+    reason:
+      | "paint_clamp_shift"
+      | "mounted_range_clamp_shift"
+      | "max_scroll_clamp_shift"
+      | "range_recompute"
+      | "manual_scroll_action"
+      | "external_relayout_or_manual";
     from: {
       scrollTop: number;
       clampMin?: number;
       clampMax?: number;
+      paintScrollTop?: number;
+      clampedToMaxScroll?: number;
+      mutationSource?: string;
+      liveAnswerLength?: number;
+      liveThinkingLength?: number;
+      transcriptItemCount?: number;
       rangeStart?: number;
       rangeEnd?: number;
     };
@@ -335,9 +418,17 @@ export function buildViewportDiagnostics(debugEvents: TUIDebugEvent[]): {
       scrollTop: number;
       clampMin?: number;
       clampMax?: number;
+      paintScrollTop?: number;
+      clampedToMaxScroll?: number;
+      mutationSource?: string;
+      liveAnswerLength?: number;
+      liveThinkingLength?: number;
+      transcriptItemCount?: number;
       rangeStart?: number;
       rangeEnd?: number;
     };
+    nearbyEvents: string[];
+    outputActivity: Array<"answer_stream" | "tool_output" | "bash_output">;
   }> = [];
 
   for (let i = 1; i < viewportEvents.length; i += 1) {
@@ -351,13 +442,77 @@ export function buildViewportDiagnostics(debugEvents: TUIDebugEvent[]): {
       prev.transcriptRangeStart !== next.transcriptRangeStart ||
       prev.transcriptRangeEnd !== next.transcriptRangeEnd;
 
-    let reason: "clamp_shift" | "range_recompute" | "external_relayout_or_manual";
-    if (clampChanged) {
-      reason = "clamp_shift";
+    let reason:
+      | "paint_clamp_shift"
+      | "mounted_range_clamp_shift"
+      | "max_scroll_clamp_shift"
+      | "range_recompute"
+      | "manual_scroll_action"
+      | "external_relayout_or_manual";
+    if (next.usedPaintClamp && prev.paintScrollTop !== next.paintScrollTop) {
+      reason = "paint_clamp_shift";
+    } else if (next.usedMountedRangeClamp && clampChanged) {
+      reason = "mounted_range_clamp_shift";
+    } else if (
+      (prev.mutationSource?.startsWith("imperative_scroll_") ?? false) ||
+      (next.mutationSource?.startsWith("imperative_scroll_") ?? false)
+    ) {
+      reason = "manual_scroll_action";
+    } else if (next.clampedToMaxScroll !== undefined && prev.clampedToMaxScroll !== next.clampedToMaxScroll) {
+      reason = "max_scroll_clamp_shift";
+    } else if (clampChanged) {
+      reason = "mounted_range_clamp_shift";
     } else if (rangeChanged) {
       reason = "range_recompute";
     } else {
       reason = "external_relayout_or_manual";
+    }
+
+    const nearbyRawEvents = debugEvents
+      .filter((event) => {
+        if (event.type === "viewport_state") return false;
+        return Math.abs(event.timestamp - next.timestamp) <= 500;
+      });
+    const nearbyEvents = nearbyRawEvents
+      .map((event) => formatReplayEventSummary(event))
+      .slice(0, 8);
+    const outputActivity = classifyNearbyOutputActivity(nearbyRawEvents);
+
+    const nearbyManualScroll = debugEvents.find(
+      (event): event is Extract<TUIDebugEvent, { type: "viewport_manual_scroll" }> =>
+        event.type === "viewport_manual_scroll" &&
+        Math.abs(event.timestamp - next.timestamp) <= 500,
+    );
+
+    if (nearbyEvents.some((event) => event.startsWith("viewport_manual_scroll:"))) {
+      if ((nearbyManualScroll?.delta ?? 1) === 0) {
+        continue;
+      }
+      manualChanges.push({
+        at: next.timestamp,
+        mode: next.mode,
+        fromScrollTop: prev.scrollTop,
+        toScrollTop: next.scrollTop,
+        mutationSource: next.mutationSource ?? prev.mutationSource,
+        action: nearbyManualScroll?.action,
+        delta: nearbyManualScroll?.delta,
+        targetTop: nearbyManualScroll?.targetTop,
+      });
+      continue;
+    }
+
+    if (reason === "manual_scroll_action") {
+      manualChanges.push({
+        at: next.timestamp,
+        mode: next.mode,
+        fromScrollTop: prev.scrollTop,
+        toScrollTop: next.scrollTop,
+        mutationSource: next.mutationSource ?? prev.mutationSource,
+        action: nearbyManualScroll?.action,
+        delta: nearbyManualScroll?.delta,
+        targetTop: nearbyManualScroll?.targetTop,
+      });
+      continue;
     }
 
     suspiciousChanges.push({
@@ -368,6 +523,12 @@ export function buildViewportDiagnostics(debugEvents: TUIDebugEvent[]): {
         scrollTop: prev.scrollTop,
         clampMin: prev.clampMin,
         clampMax: prev.clampMax,
+        paintScrollTop: prev.paintScrollTop,
+        clampedToMaxScroll: prev.clampedToMaxScroll,
+        mutationSource: prev.mutationSource,
+        liveAnswerLength: prev.liveAnswerLength,
+        liveThinkingLength: prev.liveThinkingLength,
+        transcriptItemCount: prev.transcriptItemCount,
         rangeStart: prev.transcriptRangeStart,
         rangeEnd: prev.transcriptRangeEnd,
       },
@@ -375,16 +536,94 @@ export function buildViewportDiagnostics(debugEvents: TUIDebugEvent[]): {
         scrollTop: next.scrollTop,
         clampMin: next.clampMin,
         clampMax: next.clampMax,
+        paintScrollTop: next.paintScrollTop,
+        clampedToMaxScroll: next.clampedToMaxScroll,
+        mutationSource: next.mutationSource,
+        liveAnswerLength: next.liveAnswerLength,
+        liveThinkingLength: next.liveThinkingLength,
+        transcriptItemCount: next.transcriptItemCount,
         rangeStart: next.transcriptRangeStart,
         rangeEnd: next.transcriptRangeEnd,
       },
+      nearbyEvents,
+      outputActivity,
     });
   }
 
   return {
     eventCount: viewportEvents.length,
+    manualChanges,
     suspiciousChanges,
   };
+}
+
+function classifyNearbyOutputActivity(events: TUIDebugEvent[]): Array<"answer_stream" | "tool_output" | "bash_output"> {
+  const seen = new Set<"answer_stream" | "tool_output" | "bash_output">();
+  for (const event of events) {
+    if (
+      event.type === "stream_chunk_flushed" ||
+      event.type === "stream_finalized" ||
+      event.type === "stream_committed"
+    ) {
+      seen.add("answer_stream");
+    }
+    if (event.type === "tool_started" || event.type === "tool_finished" || event.type === "tool_runtime_state") {
+      seen.add("tool_output");
+      const toolName = String(event.toolName ?? "").toLowerCase();
+      if (toolName === "bash" || toolName.includes("bash") || toolName.includes("shell")) {
+        seen.add("bash_output");
+      }
+    }
+  }
+  return (["answer_stream", "bash_output", "tool_output"] as const).filter((activity) => seen.has(activity));
+}
+
+function formatReplayEventSummary(event: TUIDebugEvent): string {
+  switch (event.type) {
+    case "stream_run_started":
+      return `stream_run_started:${event.runId}`;
+    case "stream_chunk_flushed":
+      return `stream_chunk_flushed:${event.runId}:${event.displayLength}`;
+    case "stream_finalized":
+      return `stream_finalized:${event.reason}:${event.committedTextLength}`;
+    case "stream_committed":
+      return `stream_committed:${event.messageId}:${event.textLength}`;
+    case "stream_cleared":
+      return `stream_cleared:${event.reason}`;
+    case "tool_started":
+      return `tool_started:${event.toolName}`;
+    case "tool_finished":
+      return `tool_finished:${event.toolName}:${event.ok ? "ok" : "error"}`;
+    case "tool_runtime_state":
+      return `tool_runtime_state:${event.stage}:${event.toolName}`;
+    case "turn_phase": {
+      const extras: string[] = [];
+      if (typeof event.step === "number") extras.push(`step=${event.step}`);
+      if (typeof event.toolCallsSoFar === "number") extras.push(`tools=${event.toolCallsSoFar}`);
+      if (typeof event.toolCallCount === "number") extras.push(`tool_calls=${event.toolCallCount}`);
+      if (typeof event.finalizeAttempts === "number") extras.push(`attempts=${event.finalizeAttempts}`);
+      if (typeof event.retryWithToolInstructionCount === "number") {
+        extras.push(`retry_tool_intent=${event.retryWithToolInstructionCount}`);
+      }
+      if (typeof event.noProgressCount === "number") extras.push(`no_progress=${event.noProgressCount}`);
+      if (event.finalizeReason) extras.push(`reason=${event.finalizeReason}`);
+      return extras.length > 0
+        ? `turn_phase:${event.phase}:${event.detail}:${extras.join(",")}`
+        : `turn_phase:${event.phase}:${event.detail}`;
+    }
+    case "message_id_emitted":
+      return `message_id_emitted:${event.kind}`;
+    case "run_started":
+      return `run_started`;
+    case "run_completed":
+      return `run_completed:${event.turnState}:${event.stopReason}`;
+    case "run_failed":
+      return `run_failed:${event.turnState}:${event.stopReason ?? "unknown"}`;
+    case "viewport_manual_scroll":
+      return `viewport_manual_scroll:${event.action}:${event.targetTop ?? event.delta ?? 0}`;
+    default:
+      return event.type;
+  }
 }
 
 function writeArtifacts(
@@ -402,6 +641,7 @@ function writeArtifacts(
   const completedRun = [...debugEvents].reverse().find((event) => event.type === "run_completed" || event.type === "run_failed");
   const { viewportEventCount, viewportModesSeen, enteredSelectionMode, enteredHistoryMode, lastViewportState } =
     summarizeViewportDebugEvents(debugEvents);
+  const turnPhaseSummary = summarizeTurnPhaseDebugEvents(debugEvents);
   const viewportDiagnostics = buildViewportDiagnostics(debugEvents);
   writeFileSync(join(outputDir, "viewport-diagnostics.json"), JSON.stringify(viewportDiagnostics, null, 2), "utf8");
   writeFileSync(
@@ -432,6 +672,7 @@ function writeArtifacts(
         enteredSelectionMode,
         enteredHistoryMode,
         lastViewportState,
+        turnPhaseSummary,
         viewportDiagnostics,
         completedRun,
         outputDir,
@@ -691,11 +932,19 @@ export async function runReplay(options: ReplayOptions): Promise<void> {
       },
     },
   };
+  const replayNode = options.fixtureScenario
+    ? React.createElement(ReplayFixtureApp, {
+        prompt: options.prompt,
+        scenario: options.fixtureScenario,
+        debugHooks: replayAppOptions.debugHooks,
+      })
+    : React.createElement(App, { options: replayAppOptions });
+
   root.render(
     React.createElement(
       TuiShell,
       { mainScreen: options.shellMode },
-      React.createElement(App, { options: replayAppOptions }),
+      replayNode,
     ),
   );
 

@@ -1,5 +1,6 @@
 import type { TuiPresentationMode } from './presentation/contracts.js';
 import type { JarvisReasoningEffort } from '@jarvis/shared';
+import type { AgentTurnState } from '@jarvis/agent';
 
 export interface TUIOptions {
   model: string;
@@ -81,8 +82,40 @@ export type TUIDebugEvent =
       timestamp: number;
     }
   | {
+      type: "tool_runtime_state";
+      stage:
+        | "approval_requested"
+        | "approval_granted"
+        | "approval_denied"
+        | "dispatch_started"
+        | "dispatch_completed"
+        | "dispatch_failed";
+      toolName: string;
+      callId: string;
+      argsKey?: string;
+      risk?: string;
+      ok?: boolean;
+      reason?: string;
+      durationMs?: number;
+      timestamp: number;
+    }
+  | {
+      type: "turn_phase";
+      phase: "discover" | "analyze" | "finalize";
+      detail: string;
+      step?: number;
+      finalizeReason?: "stagnation" | "rejections" | null;
+      finalizeAttempts?: number;
+      toolCallsSoFar?: number;
+      toolCallCount?: number;
+      retryWithToolInstructionCount?: number;
+      noProgressCount?: number;
+      timestamp: number;
+    }
+  | {
       type: "run_completed";
       prompt: string;
+      turnState: AgentTurnState;
       elapsedMs: number;
       finalAnswerLength: number;
       finalAnswerPreview: string;
@@ -113,6 +146,7 @@ export type TUIDebugEvent =
   | {
       type: "run_failed";
       prompt: string;
+      turnState: AgentTurnState;
       elapsedMs: number;
       tokenEvents?: number;
       tokenChars?: number;
@@ -137,13 +171,29 @@ export type TUIDebugEvent =
       scrollTop: number;
   scrollHeight: number;
   viewportHeight: number;
-  pendingScrollDelta: number;
-  remainingScrollDistance: number;
+      pendingScrollDelta: number;
+      remainingScrollDistance: number;
       clampMin?: number;
       clampMax?: number;
+      paintScrollTop?: number;
+      clampedToMaxScroll?: number;
+      usedPaintClamp?: boolean;
+      usedMountedRangeClamp?: boolean;
+      followedThisFrame?: boolean;
+      mutationSource?: string;
+      liveAnswerLength?: number;
+      liveThinkingLength?: number;
+      transcriptItemCount?: number;
       transcriptTotalHeight?: number;
       transcriptRangeStart?: number;
       transcriptRangeEnd?: number;
+      timestamp: number;
+    }
+  | {
+      type: "viewport_manual_scroll";
+      action: "scroll_by" | "scroll_to_top" | "scroll_to_bottom";
+      delta?: number;
+      targetTop?: number;
       timestamp: number;
     };
 

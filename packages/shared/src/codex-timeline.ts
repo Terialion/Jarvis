@@ -1,4 +1,5 @@
 import type { ThreadEvent, ThreadItem } from './thread-events.js';
+import { sanitizeReasoningForDisplay } from './reasoning-quality.js';
 import { buildToolCardView, type PresentationTextLine, type PresentationTextSegment } from './interactive-presentation.js';
 
 function formatTokensCompact(value: number): string {
@@ -362,14 +363,16 @@ function buildItemView(
   turnElapsedMs?: number,
 ): CodexTimelineItemView | null {
   switch (item.type) {
-    case 'reasoning':
-      if (!normalizeText(item.text)) return null;
+    case 'reasoning': {
+      const reasoningText = sanitizeReasoningForDisplay(item.text);
+      if (!normalizeText(reasoningText)) return null;
       return {
         id: item.id,
         kind: 'reasoning',
         label: turnElapsedMs ? `Thought for ${formatElapsed(turnElapsedMs)}` : 'Thought',
-        text: truncate(item.text, 360),
+        text: truncate(reasoningText, 360),
       };
+    }
     case 'agent_message': {
       if (!normalizeText(item.text)) return null;
       const blockCount = Math.max(1, Math.ceil(item.text.length / 260));

@@ -178,6 +178,8 @@ function buildToolTitle(
       const pattern = typeof args.pattern === 'string' ? normalizeText(args.pattern) : '';
       return pattern ? `Grep(${truncate(pattern, 36)})` : 'Grep';
     }
+    case 'repo_map':
+      return 'Repo Map';
     case 'skill.load': {
       const skill = typeof args.skill === 'string' ? normalizeText(args.skill) : '';
       return skill ? `Skill(${skill})` : 'Skill';
@@ -234,6 +236,20 @@ function buildToolResultSummary(
       const pathLabel = getPathLabel(args.path ?? args.file_path, cwd);
       if (pathLabel) return `Read ${pathLabel}`;
       break;
+    }
+    case 'repo_map': {
+      const summary = parsed?.summary && typeof parsed.summary === 'object'
+        ? parsed.summary as Record<string, unknown>
+        : undefined;
+      const files = typeof summary?.filesScanned === 'number' ? summary.filesScanned : undefined;
+      const symbols = typeof summary?.symbolsIndexed === 'number' ? summary.symbolsIndexed : undefined;
+      const imports = typeof summary?.importsIndexed === 'number' ? summary.importsIndexed : undefined;
+      const parts = [
+        typeof files === 'number' ? `${files} file${files === 1 ? '' : 's'}` : undefined,
+        typeof symbols === 'number' ? `${symbols} symbol${symbols === 1 ? '' : 's'}` : undefined,
+        typeof imports === 'number' ? `${imports} import${imports === 1 ? '' : 's'}` : undefined,
+      ].filter(Boolean);
+      return parts.length > 0 ? `Mapped ${parts.join(', ')}` : 'Mapped repository';
     }
   }
 
@@ -307,6 +323,66 @@ function buildPreviewLines(lines: string[], limit = 10): { previewLines?: string
   };
 }
 
+function formatStringList(value: unknown, limit: number): string | undefined {
+  if (!Array.isArray(value)) return undefined;
+  const items = value
+    .filter((item): item is string => typeof item === 'string' && item.trim().length > 0)
+    .slice(0, limit);
+  return items.length > 0 ? items.join(', ') : undefined;
+}
+
+function formatObjectPathList(value: unknown, limit: number): string | undefined {
+  if (!Array.isArray(value)) return undefined;
+  const items = value
+    .map((item) => item && typeof item === 'object' ? (item as Record<string, unknown>).path : undefined)
+    .filter((item): item is string => typeof item === 'string' && item.trim().length > 0)
+    .slice(0, limit);
+  return items.length > 0 ? items.join(', ') : undefined;
+}
+
+function formatRepoMapSymbols(value: unknown, limit: number): string | undefined {
+  if (!Array.isArray(value)) return undefined;
+  const items = value
+    .map((item) => {
+      if (!item || typeof item !== 'object') return undefined;
+      const record = item as Record<string, unknown>;
+      return typeof record.kind === 'string' && typeof record.name === 'string'
+        ? `${record.kind}:${record.name}`
+        : undefined;
+    })
+    .filter((item): item is string => Boolean(item))
+    .slice(0, limit);
+  return items.length > 0 ? items.join(', ') : undefined;
+}
+
+function formatRepoMapImports(value: unknown, limit: number): string | undefined {
+  if (!Array.isArray(value)) return undefined;
+  const items = value
+    .map((item) => {
+      if (!item || typeof item !== 'object') return undefined;
+      const record = item as Record<string, unknown>;
+      return typeof record.kind === 'string' && typeof record.target === 'string'
+        ? `${record.kind}:${record.target}`
+        : undefined;
+    })
+    .filter((item): item is string => Boolean(item))
+    .slice(0, limit);
+  return items.length > 0 ? items.join(', ') : undefined;
+}
+
+function formatRepoMapDependencyGroups(value: unknown): string | undefined {
+  if (!value || typeof value !== 'object') return undefined;
+  const groups = value as Record<string, unknown>;
+  const parts: string[] = [];
+  for (const kind of ['external', 'internal', 'relative']) {
+    const group = groups[kind];
+    if (!group || typeof group !== 'object') continue;
+    const count = (group as Record<string, unknown>).count;
+    if (typeof count === 'number' && count > 0) parts.push(`${kind} ${count}`);
+  }
+  return parts.length > 0 ? parts.join(', ') : undefined;
+}
+
 function buildToolPreview(toolName: string, args: Record<string, unknown>, resultText?: string): Pick<ToolCardView, 'previewLines' | 'previewOverflowCount' | 'alwaysShowPreview' | 'previewKind'> {
   if ((toolName === 'write_file' || toolName === 'write') && typeof args.content === 'string') {
     return { ...buildPreviewLines(getLineArray(args.content), 10), alwaysShowPreview: true, previewKind: 'code' };
@@ -346,6 +422,28 @@ function buildToolPreview(toolName: string, args: Record<string, unknown>, resul
       lineNum += 1;
     }
     return { ...buildPreviewLines(preview, 15), alwaysShowPreview: true, previewKind: 'diff' };
+  }
+
+  if (toolName === 'repo_map') {
+    const parsed = parseJsonObject(resultText);
+    if (!parsed) return {};
+    const pkg = parsed.package && typeof parsed.package === 'object'
+      ? (parsed.package as Record<string, unknown>)
+      : undefined;
+    const entries = formatStringList(parsed.entries, 6);
+    const files = formatObjectPathList(parsed.files, 6);
+    const symbols = formatRepoMapSymbols(parsed.symbols, 6);
+    const dependencies = formatRepoMapDependencyGroups(parsed.importGroups);
+    const imports = formatRepoMapImports(parsed.imports, 6);
+    const lines = [
+      typeof pkg?.name === 'string' ? `package: ${pkg.name}` : undefined,
+      entries ? `entries: ${entries}` : undefined,
+      files ? `files: ${files}` : undefined,
+      symbols ? `symbols: ${symbols}` : undefined,
+      dependencies ? `deps: ${dependencies}` : undefined,
+      imports ? `imports: ${imports}` : undefined,
+    ].filter((line): line is string => Boolean(line));
+    return { ...buildPreviewLines(lines, 8), alwaysShowPreview: lines.length > 0, previewKind: 'code' };
   }
 
   return {};

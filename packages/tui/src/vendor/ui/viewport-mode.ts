@@ -46,6 +46,33 @@ export function shouldAutoScrollToBottomOnContentUpdate(input: {
   return remainingScrollDistance <= 3;
 }
 
+export function isUserViewportScrollMutationSource(mutationSource: string | undefined): boolean {
+  if (!mutationSource) return false;
+  if (mutationSource === "imperative_scroll_bottom") return false;
+  if (mutationSource === "render_follow") return false;
+  return (
+    mutationSource === "imperative_scroll_by" ||
+    mutationSource === "imperative_scroll_to" ||
+    mutationSource === "imperative_scroll_to_element" ||
+    mutationSource === "render_scroll_anchor"
+  );
+}
 export function shouldResumeLiveOutputFromBottomAction(hasSelection: boolean): boolean {
   return !hasSelection;
+}
+
+export function resolveViewportTopForFollowState(input: {
+  followOutput: boolean;
+  scrollTop: number;
+  scrollHeight: number;
+  viewportHeight: number;
+  pendingDelta?: number;
+}): number {
+  const { followOutput, scrollTop, scrollHeight, viewportHeight, pendingDelta = 0 } = input;
+  const maxScroll = Math.max(0, scrollHeight - viewportHeight);
+  if (followOutput && pendingDelta >= 0) {
+    return maxScroll;
+  }
+
+  return Math.max(0, Math.min(maxScroll, scrollTop + pendingDelta));
 }

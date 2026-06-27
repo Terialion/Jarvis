@@ -113,6 +113,37 @@ describe('ToolRuntime', () => {
     // 500 chars + JSON overhead < 1000, so no truncation
     expect(result.content).not.toContain('[truncated');
   });
+
+  it('emits lifecycle events for approval and execution boundaries', async () => {
+    const permissionManager = new PermissionManager();
+    permissionManager.setMode('default');
+    const events: string[] = [];
+
+    registry.register(
+      makeEntry({
+        name: 'write_file',
+        handler: () => JSON.stringify({ ok: true }),
+      }),
+    );
+
+    const rt2 = new ToolRuntime(registry, {
+      permissionManager,
+      onApprovalNeeded: async () => true,
+      onLifecycleEvent: (event) => {
+        events.push(`${event.stage}:${event.toolName}`);
+      },
+    });
+
+    const result = await rt2.execute('write_file', { path: 'foo.ts', content: 'x' });
+
+    expect(result.ok).toBe(true);
+    expect(events).toEqual([
+      'approval_requested:write_file',
+      'approval_granted:write_file',
+      'dispatch_started:write_file',
+      'dispatch_completed:write_file',
+    ]);
+  });
 });
 
 // ---- ApprovalGate ----

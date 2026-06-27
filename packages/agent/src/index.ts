@@ -130,6 +130,10 @@ export type {
   SystemPromptSection,
 } from './prompt-builder.js';
 
+// turn-state
+export { mapStopReasonToTurnState } from './turn-state.js';
+export type { AgentTurnState } from './turn-state.js';
+
 // cache-strategy
 export { supportsPromptCaching, markCacheable, injectCacheBreakpoints } from './cache-strategy.js';
 

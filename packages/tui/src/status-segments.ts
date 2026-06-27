@@ -28,6 +28,47 @@ export interface StatusSegmentInput {
   agentCounts?: { total: number; running: number; completed: number };
 }
 
+export interface ContextBreakdownSegmentInput {
+  systemPromptTokens?: number;
+  conversationTokens?: number;
+  skillsTokens?: number;
+  toolSchemasTokens?: number;
+  mcpToolsTokens?: number;
+}
+
+function formatPercent(value: number): string {
+  return Number.isInteger(value) ? String(value) : value.toFixed(1);
+}
+
+function formatTokensCompact(value: number): string {
+  if (value < 0) return '0';
+  if (value < 1000) return String(value);
+  if (value < 1_000_000) return formatWithUnit(value, 1_000, 'K');
+  return formatWithUnit(value, 1_000_000, 'M');
+}
+
+function formatWithUnit(value: number, divisor: number, unit: string): string {
+  const divided = value / divisor;
+  const decimals = divided < 10 ? 2 : divided < 100 ? 1 : 0;
+  let formatted = divided.toFixed(decimals);
+  formatted = formatted.replace(/0+$/, '').replace(/\.$/, '');
+  return `${formatted}${unit}`;
+}
+
+export function buildContextBreakdownSegments(input: ContextBreakdownSegmentInput): StatusLineSegment[] {
+  const parts: StatusLineSegment[] = [];
+  const system = input.systemPromptTokens ?? 0;
+  const conversation = input.conversationTokens ?? 0;
+  const skills = input.skillsTokens ?? 0;
+  const mcpTools = input.mcpToolsTokens ?? 0;
+  const nonMcpTools = Math.max(0, (input.toolSchemasTokens ?? 0) - mcpTools);
+  if (system > 0) parts.push({ content: `sys:${formatTokensCompact(system)}`, color: 'cyan' });
+  if (conversation > 0) parts.push({ content: `msg:${formatTokensCompact(conversation)}`, color: 'green' });
+  if (skills > 0) parts.push({ content: `skills:${formatTokensCompact(skills)}`, color: 'yellow' });
+  if (nonMcpTools > 0) parts.push({ content: `tools:${formatTokensCompact(nonMcpTools)}`, color: 'yellow' });
+  if (mcpTools > 0) parts.push({ content: `mcp:${formatTokensCompact(mcpTools)}`, color: 'red' });
+  return parts;
+}
 function formatElapsed(elapsedMs: number): string | null {
   if (elapsedMs <= 0) return null;
   const seconds = Math.floor(elapsedMs / 1000);
@@ -125,7 +166,7 @@ export function buildStatusSegments(input: StatusSegmentInput): StatusLineSegmen
     input.contextPercentRemaining !== undefined
   ) {
     segments.push({
-      content: `${input.totalTokens.toLocaleString()} tok | ${input.contextPercentRemaining}% left`,
+      content: `${input.totalTokens.toLocaleString()} tok | ${formatPercent(input.contextPercentRemaining)}% left`,
     });
   } else if (input.contextWindow !== undefined && input.contextWindow > 0) {
     segments.push({ content: `0 tok | 100% left`, color: 'gray' });
